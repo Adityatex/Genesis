@@ -1,5 +1,7 @@
 # Genesis — AI Browser Automation Assistant
 
+[![CI](https://github.com/Adityatex/Genesis/actions/workflows/ci.yml/badge.svg)](https://github.com/Adityatex/Genesis/actions/workflows/ci.yml)
+
 Open-source Brave/Chrome extension (Manifest V3) that injects a floating AI-powered sidebar into every webpage. Built with **WXT + React + TypeScript**. BYOK-only — no bundled keys.
 
 ![Genesis Extension](public/icons/icon128.png)
@@ -20,14 +22,15 @@ Open-source Brave/Chrome extension (Manifest V3) that injects a floating AI-powe
 
 - **Framework:** [WXT](https://wxt.dev/) (Vite-powered browser extension framework)
 - **UI:** React + TypeScript
-- **Styling:** Vanilla CSS with dark glassmorphic theme
+- **Styling:** Tailwind CSS v4 with a dark glassmorphic theme
+- **Testing:** Vitest + happy-dom, GitHub Actions CI (typecheck → test → build)
 - **AI:** Groq API (`llama-3.1-8b-instant`, BYOK)
 - **Architecture:** Manifest V3, Shadow DOM isolation, minimal permissions (`activeTab`, `scripting`, `storage`)
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Node.js 18+
+- Node.js 20.19+ (22 recommended)
 - Brave or Chrome browser
 
 ### Development
@@ -45,6 +48,16 @@ npm run build
 # Package as ZIP for store submission
 npm run zip
 ```
+
+### Testing
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm test            # unit tests (Vitest + happy-dom)
+npm run test:watch  # re-run on change
+```
+
+CI runs typecheck, tests and a production build on every push and pull request, and uploads the unpacked extension as a build artifact.
 
 ### Loading in Browser
 
@@ -67,10 +80,11 @@ npm run zip
 │   └── background.ts      # Service worker (Groq API proxy, BYOK-only)
 ├── lib/
 │   ├── api/                # Groq API client (BYOK)
-│   ├── agent/              # DOM snapshot + action executor + shared loop core
+│   ├── agent/              # DOM snapshot, action executor, action parser/validator, loop core
 │   ├── automation/         # Trustworthy form autofill
 │   ├── dom/                # DOM extraction & element detection
 │   └── utils/              # Messaging, error handling, markdown
+└── tests/                  # Vitest unit tests
 ```
 
 ## 🔐 API Key (BYOK)
