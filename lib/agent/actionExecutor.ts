@@ -18,6 +18,27 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Legacy keyCode values — many sites still check `e.keyCode === 13`
+const KEY_CODES: Record<string, number> = {
+  Enter: 13, Tab: 9, Escape: 27, Backspace: 8, ' ': 32,
+  ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40,
+};
+
+function makeKeyEvent(type: 'keydown' | 'keypress' | 'keyup', key: string): KeyboardEvent {
+  const event = new KeyboardEvent(type, {
+    key,
+    code: key.length === 1 ? `Key${key.toUpperCase()}` : key,
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  });
+  const keyCode = KEY_CODES[key] ?? (key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0);
+  // keyCode/which can't be set through the constructor
+  Object.defineProperty(event, 'keyCode', { get: () => keyCode });
+  Object.defineProperty(event, 'which', { get: () => keyCode });
+  return event;
+}
+
 function getElementByGenesisId(id: number): HTMLElement | null {
   return document.querySelector(`[data-genesis-id="${id}"]`) as HTMLElement | null;
 }
@@ -60,15 +81,16 @@ export async function executeAction(action: AgentAction): Promise<string> {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       await sleep(300);
       
-      // Focus + click
+      // Press/release first (menus and custom widgets often listen for these),
+      // then exactly ONE click — a second click would re-toggle checkboxes/menus.
+      const pointerInit = { bubbles: true, cancelable: true, composed: true, view: window };
+      el.dispatchEvent(new PointerEvent('pointerdown', pointerInit));
+      el.dispatchEvent(new MouseEvent('mousedown', pointerInit));
       el.focus();
+      el.dispatchEvent(new PointerEvent('pointerup', pointerInit));
+      el.dispatchEvent(new MouseEvent('mouseup', pointerInit));
       el.click();
-      
-      // For links, also try dispatching mousedown/mouseup
-      el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-      el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-      el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      
+
       const label = el.innerText?.trim().substring(0, 40) || el.getAttribute('aria-label') || `element ${action.elementId}`;
       return `✅ Clicked "${label}"`;
     }
@@ -109,12 +131,25 @@ export async function executeAction(action: AgentAction): Promise<string> {
       const el = getElementByGenesisId(action.elementId) as HTMLSelectElement | null;
       if (!el || el.tagName !== 'SELECT') return `❌ Element [${action.elementId}] is not a select dropdown.`;
       
+      // The model may pass either the option's value or its visible label
+      const wanted = (action.value || '').trim().toLowerCase();
+      const options = Array.from(el.options);
+      const option =
+        options.find(o => o.value.toLowerCase() === wanted) ||
+        options.find(o => o.text.trim().toLowerCase() === wanted) ||
+        options.find(o => wanted !== '' && o.text.trim().toLowerCase().includes(wanted));
+      if (!option) {
+        const available = options.slice(0, 15).map(o => `"${o.text.trim()}"`).join(', ');
+        return `❌ No option matching "${action.value}" in dropdown [${action.elementId}]. Options: ${available}`;
+      }
+
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       await sleep(200);
-      el.value = action.value || '';
+      el.value = option.value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
-      
-      return `✅ Selected "${action.value}" in dropdown [${action.elementId}]`;
+
+      return `✅ Selected "${option.text.trim()}" in dropdown [${action.elementId}]`;
     }
 
     case 'navigate': {
@@ -154,18 +189,21 @@ export async function executeAction(action: AgentAction): Promise<string> {
         ? getElementByGenesisId(action.elementId) || document.activeElement || document.body
         : document.activeElement || document.body;
       
-      target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
-      target.dispatchEvent(new KeyboardEvent('keypress', { key, bubbles: true }));
-      target.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true }));
-      
-      // Special handling for Enter on forms
-      if (key === 'Enter' && target instanceof HTMLElement) {
-        const form = target.closest('form');
-        if (form) {
-          form.dispatchEvent(new Event('submit', { bubbles: true }));
-        }
+      // If a page handler calls preventDefault() on keydown it has handled the key
+      // itself (e.g. a JS-driven search box), so we must not also submit the form.
+      const notHandled = target.dispatchEvent(makeKeyEvent('keydown', key));
+      if (notHandled) target.dispatchEvent(makeKeyEvent('keypress', key));
+      target.dispatchEvent(makeKeyEvent('keyup', key));
+
+      // Synthetic key events have no default action, so emulate the browser's
+      // implicit submission: Enter in a form <input> submits that form.
+      // requestSubmit() fires a real submit event AND performs the submission;
+      // dispatching a bare 'submit' Event does neither reliably.
+      if (key === 'Enter' && notHandled && target instanceof HTMLInputElement && target.form) {
+        target.form.requestSubmit();
+        return `✅ Pressed "Enter" and submitted the form`;
       }
-      
+
       return `✅ Pressed "${key}"`;
     }
 

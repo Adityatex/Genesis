@@ -7,6 +7,8 @@ import { createDOMSnapshot } from '@/lib/agent/domSnapshot';
 import { executeAction, type AgentAction } from '@/lib/agent/actionExecutor';
 
 export const MAX_AGENT_STEPS = 20;
+/** Consecutive unparseable/invalid model responses tolerated before aborting. */
+export const MAX_INVALID_RESPONSES = 3;
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -44,6 +46,7 @@ export async function executeAgentLoop(
   cb: AgentLoopCallbacks,
 ): Promise<AgentLoopOutcome> {
   let stepCount = startStep;
+  let invalidStreak = 0;
 
   try {
     while (stepCount < MAX_AGENT_STEPS && !cb.shouldStop()) {
@@ -67,9 +70,20 @@ export async function executeAgentLoop(
         break;
       }
 
+      if (!response?.success && response?.code === 'INVALID_ACTION') {
+        // Feed the error back through history so the model can correct itself
+        invalidStreak++;
+        actionHistory.push(`(invalid response) → ❌ ${response.error}. Respond with ONE valid JSON action.`);
+        if (invalidStreak >= MAX_INVALID_RESPONSES) {
+          throw new Error(`Model returned ${invalidStreak} invalid actions in a row. Last error: ${response.error}`);
+        }
+        continue;
+      }
+
       if (!response?.success) {
         throw new Error(response?.error || 'Agent step failed');
       }
+      invalidStreak = 0;
 
       const agentAction: AgentAction = response.data.action;
       console.log('[Genesis] Agent action received:', JSON.stringify(agentAction));

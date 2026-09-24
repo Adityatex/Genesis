@@ -3,6 +3,7 @@
 
 import { summarizePage, explainText, chatWithPage, planAgentStep } from '@/lib/api/groqClient';
 import { formatError } from '@/lib/utils/errorHandler';
+import { parseAgentAction } from '@/lib/agent/parseAction';
 
 declare var chrome: any;
 
@@ -91,13 +92,13 @@ export default defineBackground(() => {
             const { goal, domSnapshot, actionHistory, stepCount } = payload;
             const rawResponse = await planAgentStep(goal, domSnapshot, actionHistory || [], apiKey);
             console.log('[Genesis] LLM raw response:', rawResponse);
-            let parsedAction: any;
-            try {
-              const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
-              parsedAction = JSON.parse(jsonMatch ? jsonMatch[0] : rawResponse);
-            } catch {
-              parsedAction = { action: 'done', summary: rawResponse };
+            const parsed = parseAgentAction(rawResponse);
+            if (!parsed.ok) {
+              // Let the loop record the failure and re-plan instead of faking "done"
+              sendResponse({ success: false, code: 'INVALID_ACTION', error: parsed.error });
+              break;
             }
+            const parsedAction = parsed.action;
 
             console.log('[Genesis] Parsed action:', parsedAction.action, parsedAction.url || parsedAction.elementId || '');
 

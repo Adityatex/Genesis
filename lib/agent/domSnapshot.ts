@@ -73,7 +73,20 @@ export interface SnapshotElement {
   placeholder?: string;
   checked?: boolean;
   disabled?: boolean;
+  options?: string[];
   selector: string;
+}
+
+const MAX_SELECT_OPTIONS = 15;
+
+/** Visible labels of a <select>'s options, so the model can pick a valid one. */
+function getSelectOptions(el: Element): string[] | undefined {
+  if (!(el instanceof HTMLSelectElement)) return undefined;
+  const labels = Array.from(el.options)
+    .map(o => truncate(o.text, 40))
+    .filter(Boolean);
+  if (labels.length <= MAX_SELECT_OPTIONS) return labels;
+  return [...labels.slice(0, MAX_SELECT_OPTIONS), `…+${labels.length - MAX_SELECT_OPTIONS} more`];
 }
 
 function buildUniqueSelector(el: Element, index: number): string {
@@ -140,6 +153,7 @@ export function createDOMSnapshot(): { text: string; elements: SnapshotElement[]
         placeholder,
         checked,
         disabled,
+        options: getSelectOptions(el),
         selector: buildUniqueSelector(el, id),
       });
     });
@@ -168,6 +182,7 @@ export function createDOMSnapshot(): { text: string; elements: SnapshotElement[]
     if (el.value) entry += ` value="${el.value}"`;
     if (el.checked) entry += ` [checked]`;
     if (el.disabled) entry += ` [disabled]`;
+    if (el.options) entry += ` options=[${el.options.map(o => JSON.stringify(o)).join(', ')}]`;
     lines.push(entry);
   }
 
