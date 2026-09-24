@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+:host {
+  all: initial;
+}
+
+#genesis-sidebar-root {
+  position: fixed !important;
+  top: 0 !important;
+  right: 0 !important;
+  height: 100vh !important;
+  z-index: 2147483647 !important;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif !important;
+  pointer-events: none;
+}
+
+#genesis-sidebar-root > * {
+  pointer-events: auto;
+}
+
+/* Markdown Rendering Specifics */
+.md-h1 {
+  font-size: 16px;
+  font-weight: 700;
+  color: #f8fafc;
+  margin-bottom: 6px;
+  margin-top: 4px;
+}
+
+.md-h2 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f1f5f9;
+  margin-bottom: 6px;
+  margin-top: 4px;
+}
+
+.md-h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: #3b82f6;
+  margin-bottom: 4px;
+  margin-top: 8px;
+}
+
+.code-block {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: 'Courier New', 'Fira Code', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-x: auto;
+  margin: 6px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #cbd5e1;
+}
+
+.inline-code {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+}
+
+.md-hr {
+  border: none;
+  border-top: 1px solid #1e293b;
+  margin: 10px 0;
+}
+
+.md-quote {
+  border-left: 2px solid #3b82f6;
+  padding: 4px 10px;
+  margin: 6px 0;
+  background: rgba(59, 130, 246, 0.05);
+  color: #94a3b8;
+  font-style: italic;
+  border-radius: 0 4px 4px 0;
+}
+
+.md-ul {
+  padding-left: 14px;
+  margin: 4px 0;
+  list-style: none;
+}
+
+.md-li {
+  position: relative;
+  padding-left: 10px;
+  margin-bottom: 2px;
+}
+
+.md-li::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  color: #60a5fa;
+  font-size: 12px;
+}
+
+.md-oli {
+  margin-left: 14px;
+  margin-bottom: 2px;
+}
+
+strong {
+  color: #f8fafc;
+  font-weight: 600;
+}
+
+em {
+  color: #94a3b8;
+}

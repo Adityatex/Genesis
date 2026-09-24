@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# WXT / build output (never commit - contains bundled secrets)
+.output/
+.wxt/
+*.zip
+
+# Env / keys (never commit Groq keys)
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+build_log.txt
