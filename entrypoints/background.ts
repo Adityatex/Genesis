@@ -1,7 +1,11 @@
 // entrypoints/background.ts
-// Background service worker — message router, Groq API proxy, storage management
+// Background service worker — message router, LLM API proxy, storage management
 
-import { summarizePage, explainText, chatWithPage, planAgentStep, DEFAULT_MODEL, type GroqAuth } from '@/lib/api/groqClient';
+import { summarizePage, explainText, chatWithPage, planAgentStep, listModels } from '@/lib/api/llmClient';
+import {
+  PROVIDERS, PROVIDER_IDS, SETTINGS_KEY, LEGACY_KEYS, readSettings, resolveConfig, configProblem,
+  validateBaseUrl, maskKey, type LLMConfig, type ProviderId, type StoredLLMSettings,
+} from '@/lib/api/providers';
 import { formatError } from '@/lib/utils/errorHandler';
 import { parseAgentAction } from '@/lib/agent/parseAction';
 
@@ -22,15 +26,21 @@ export default defineBackground(() => {
     console.log('[Genesis] Installed — BYOK mode, no default key stored');
   });
 
-  // Get the current API key (BYOK-only, never hardcoded)
-  async function getApiKey(): Promise<string> {
-    const stored: any = await browser.storage.local.get('groqApiKey');
-    return stored.groqApiKey || '';
+  // Provider settings (BYOK: keys are never hardcoded, and only this worker reads them)
+  async function loadSettings(): Promise<StoredLLMSettings> {
+    return readSettings(await browser.storage.local.get([SETTINGS_KEY, ...LEGACY_KEYS]));
   }
 
-  async function getAuth(): Promise<GroqAuth> {
-    const stored: any = await browser.storage.local.get(['groqApiKey', 'groqModel']);
-    return { apiKey: stored.groqApiKey || '', model: stored.groqModel || DEFAULT_MODEL };
+  /** Config for the active provider, or throws a message saying what's missing. */
+  async function requireConfig(): Promise<LLMConfig> {
+    const config = resolveConfig(await loadSettings());
+    const problem = configProblem(config);
+    if (problem) throw new Error(problem);
+    return config;
+  }
+
+  function isProvider(id: unknown): id is ProviderId {
+    return typeof id === 'string' && (PROVIDER_IDS as string[]).includes(id);
   }
 
   // Central message handler
@@ -41,61 +51,76 @@ export default defineBackground(() => {
     (async () => {
       try {
         switch (action) {
-          case 'GET_API_KEY': {
-            const key = await getApiKey();
-            // Mask the key for display
-            const masked = key ? `${key.substring(0, 8)}...${key.substring(key.length - 4)}` : 'Not set';
-            sendResponse({ success: true, data: { masked, hasKey: !!key } });
+          case 'GET_LLM_SETTINGS': {
+            // The popup only ever sees masked keys
+            const settings = await loadSettings();
+            const maskedKeys = Object.fromEntries(PROVIDER_IDS.map(id => [id, maskKey(settings.keys[id] ?? '')]));
+            sendResponse({
+              success: true,
+              data: { provider: settings.provider, models: settings.models, customBaseUrl: settings.customBaseUrl ?? '', maskedKeys },
+            });
             break;
           }
 
-          case 'SET_API_KEY': {
-            await browser.storage.local.set({ groqApiKey: payload.apiKey });
-            sendResponse({ success: true, data: { message: 'API key updated successfully' } });
+          case 'SAVE_LLM_SETTINGS': {
+            const { provider, model, apiKey, customBaseUrl } = payload ?? {};
+            if (!isProvider(provider)) throw new Error('Unknown provider');
+            if (provider === 'custom') {
+              const urlError = validateBaseUrl(customBaseUrl ?? '');
+              if (urlError) throw new Error(urlError);
+            }
+            const settings = await loadSettings();
+            settings.provider = provider;
+            if (typeof model === 'string') settings.models[provider] = model.trim();
+            // An empty key field means "keep the saved key"
+            if (typeof apiKey === 'string' && apiKey.trim()) settings.keys[provider] = apiKey.trim();
+            if (provider === 'custom') settings.customBaseUrl = customBaseUrl.trim();
+            await browser.storage.local.set({ [SETTINGS_KEY]: settings });
+            await browser.storage.local.remove([...LEGACY_KEYS]); // migrated
+            sendResponse({ success: true, data: { maskedKey: maskKey(settings.keys[provider] ?? '') } });
+            break;
+          }
+
+          case 'LIST_MODELS': {
+            // Uses a key typed into the popup (not saved yet) or the saved one
+            const { provider, apiKey, customBaseUrl } = payload ?? {};
+            if (!isProvider(provider)) throw new Error('Unknown provider');
+            const settings = await loadSettings();
+            if (typeof apiKey === 'string' && apiKey.trim()) settings.keys[provider] = apiKey.trim();
+            if (provider === 'custom') settings.customBaseUrl = customBaseUrl ?? '';
+            const config = resolveConfig(settings, provider);
+            const urlError = config.baseUrl ? validateBaseUrl(config.baseUrl) : 'Enter the server URL first';
+            if (urlError) throw new Error(urlError);
+            if (PROVIDERS[provider].needsKey && !config.apiKey) throw new Error(`Enter your ${config.label} API key first`);
+            sendResponse({ success: true, data: { models: await listModels(config) } });
             break;
           }
 
           case 'SUMMARIZE': {
-            const auth = await getAuth();
-            if (!auth.apiKey) {
-              sendResponse({ success: false, error: 'No API key configured. Please set your Groq API key.' });
-              break;
-            }
-            const summary = await summarizePage(payload.text, auth);
+            const config = await requireConfig();
+            const summary = await summarizePage(payload.text, config);
             sendResponse({ success: true, data: { result: summary } });
             break;
           }
 
           case 'EXPLAIN': {
-            const auth = await getAuth();
-            if (!auth.apiKey) {
-              sendResponse({ success: false, error: 'No API key configured.' });
-              break;
-            }
-            const explanation = await explainText(payload.text, auth);
+            const config = await requireConfig();
+            const explanation = await explainText(payload.text, config);
             sendResponse({ success: true, data: { result: explanation } });
             break;
           }
 
           case 'CHAT': {
-            const auth = await getAuth();
-            if (!auth.apiKey) {
-              sendResponse({ success: false, error: 'No API key configured.' });
-              break;
-            }
-            const reply = await chatWithPage(payload.message, payload.pageContext || '', auth);
+            const config = await requireConfig();
+            const reply = await chatWithPage(payload.message, payload.pageContext || '', config);
             sendResponse({ success: true, data: { result: reply } });
             break;
           }
 
           case 'AGENT_STEP': {
-            const auth = await getAuth();
-            if (!auth.apiKey) {
-              sendResponse({ success: false, error: 'No API key configured.' });
-              break;
-            }
+            const config = await requireConfig();
             const { goal, domSnapshot, actionHistory, stepCount } = payload;
-            const rawResponse = await planAgentStep(goal, domSnapshot, actionHistory || [], auth);
+            const rawResponse = await planAgentStep(goal, domSnapshot, actionHistory || [], config);
             console.log('[Genesis] LLM raw response:', rawResponse);
             const parsed = parseAgentAction(rawResponse);
             if (!parsed.ok) {

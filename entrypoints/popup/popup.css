@@ -311,3 +311,62 @@ body {
   font-size: 10px;
   color: var(--text-secondary);
 }
+
+/* AI provider section */
+.provider-select {
+  width: 100%;
+  cursor: pointer;
+  appearance: auto;
+}
+
+.provider-select option {
+  background: #14142a;
+  color: var(--text-primary);
+}
+
+.section > .api-input,
+.section > .current-key {
+  margin-top: 8px;
+}
+
+.hint {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.hint a {
+  color: var(--accent-blue);
+  text-decoration: none;
+}
+
+.hint a:hover {
+  text-decoration: underline;
+}
+
+.section > .input-group {
+  margin-top: 8px;
+}
+
+.secondary-btn {
+  flex-shrink: 0;
+  padding: 0 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color var(--transition);
+}
+
+.secondary-btn:hover:not(:disabled) {
+  border-color: var(--accent-blue);
+}
+
+.secondary-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

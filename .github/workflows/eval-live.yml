@@ -1,7 +1,8 @@
 name: Live eval
 
-# Runs the benchmark against the real Groq API. Manual only: it costs API
-# calls and results vary run to run. Needs a GROQ_API_KEY repository secret.
+# Runs the benchmark against a real LLM provider. Manual only: it costs API
+# calls and results vary run to run. Needs the provider's key as a repository
+# secret: GROQ_API_KEY, DEEPSEEK_API_KEY, OPENAI_API_KEY or OPENROUTER_API_KEY.
 on:
   workflow_dispatch:
     inputs:
@@ -11,8 +12,11 @@ on:
       tasks:
         description: Comma-separated task ids (blank = all)
         default: ''
+      provider:
+        description: Provider (groq, deepseek, openai, openrouter)
+        default: groq
       model:
-        description: Groq model id (blank = extension default)
+        description: Model id (blank = provider default; required for providers without one)
         default: ''
 
 jobs:
@@ -34,10 +38,14 @@ jobs:
       - name: Live eval
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          PROVIDER: ${{ inputs.provider }}
           TRIALS: ${{ inputs.trials }}
           TASKS: ${{ inputs.tasks }}
           MODEL: ${{ inputs.model }}
-        run: npm run eval -- --trials "$TRIALS" ${TASKS:+--task "$TASKS"} ${MODEL:+--model "$MODEL"}
+        run: npm run eval -- --provider "$PROVIDER" --trials "$TRIALS" ${TASKS:+--task "$TASKS"} ${MODEL:+--model "$MODEL"}
 
       - name: Job summary
         if: always()

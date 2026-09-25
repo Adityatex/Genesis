@@ -17,7 +17,8 @@ export default defineConfig({
     version: '1.0.0',
     description: 'AI-powered browser automation assistant for text extraction, trustworthy form filling, and intelligent page summarization.',
     permissions: ['activeTab', 'scripting', 'storage'],
-    host_permissions: ['<all_urls>', 'https://api.groq.com/*'],
+    // <all_urls> covers every LLM provider, including a local Ollama
+    host_permissions: ['<all_urls>'],
     icons: {
       '16': 'icons/icon16.png',
       '48': 'icons/icon48.png',

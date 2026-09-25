@@ -3,10 +3,11 @@
 // task's goal into the real sidebar, and grades the result from what the
 // fixture server recorded.
 //
-//   npm run eval                 live run against Groq (needs GROQ_API_KEY)
+//   npm run eval                 live run (default provider Groq, needs GROQ_API_KEY)
 //   npm run eval:mock            scripted planner, no API calls (used in CI)
 //   ... -- --task login,todo-enter --trials 3 --headed --verbose
-//   ... -- --model openai/gpt-oss-120b     (default: the extension's DEFAULT_MODEL)
+//   ... -- --provider deepseek --model <id>   (key from DEEPSEEK_API_KEY or LLM_API_KEY)
+//   ... -- --provider custom --base-url https://host/v1 --model <id>
 
 import { chromium, type APIResponse, type BrowserContext, type Page, type Route } from 'playwright';
 import fs from 'node:fs';
@@ -15,9 +16,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { startFixtureServer, type FixtureServer } from './server.mts';
+import { redact } from './redact.mts';
 import { TASKS, type Task, type MockStep } from './tasks.mts';
 import { isAgentCommand } from '../lib/agent/loop.ts';
-import { DEFAULT_MODEL } from '../lib/api/groqClient.ts';
+import {
+  PROVIDERS, PROVIDER_IDS, SETTINGS_KEY, resolveConfig, validateBaseUrl,
+  type ProviderId, type StoredLLMSettings,
+} from '../lib/api/providers.ts';
 
 // Only exists inside the extension's service worker (see worker.evaluate below)
 declare const chrome: any;
@@ -36,11 +41,20 @@ const { values: args } = parseArgs({
     timeout: { type: 'string' },
     verbose: { type: 'boolean', default: false },
     model: { type: 'string' },
-    tpm: { type: 'string', default: '7000' },
+    provider: { type: 'string', default: 'groq' },
+    'base-url': { type: 'string' },
+    tpm: { type: 'string' },
   },
 });
 
 const MODE = args.mock ? 'mock' : 'live';
+if (!(PROVIDER_IDS as string[]).includes(args.provider!)) {
+  console.error(`Unknown --provider "${args.provider}". Known: ${PROVIDER_IDS.join(', ')}`);
+  process.exit(1);
+}
+const PROVIDER = args.provider as ProviderId;
+/** Where the extension will send requests; the harness intercepts that origin. */
+const LLM = resolveConfig({ provider: PROVIDER, models: args.model ? { [PROVIDER]: args.model } : {}, keys: {}, customBaseUrl: args['base-url'] });
 const TRIALS = Math.max(1, Number(args.trials));
 const TIMEOUT_MS = Number(args.timeout ?? (args.mock ? 90 : 300)) * 1000;
 
@@ -51,7 +65,8 @@ type Outcome = 'done' | 'max-steps' | 'error' | 'timeout' | 'rate-limited';
 // under that so the benchmark measures the agent, not the quota. Waits are
 // capped below the extension's 15s request timeout; if we still get a 429 the
 // extension's own retry/backoff handles it.
-const TPM_BUDGET = Number(args.tpm);
+// Pacing defaults on only for Groq's free tier; pass --tpm for other providers
+const TPM_BUDGET = Number(args.tpm ?? (PROVIDER === 'groq' ? 7000 : Infinity));
 /** Set to Groq's message once a per-day quota (tokens or requests) is exhausted. */
 let dailyLimitHit: string | undefined;
 const MAX_THROTTLE_MS = 12_000;
@@ -91,23 +106,20 @@ interface RunResult {
 
 // ---------------------------------------------------------------- helpers
 
-/**
- * Playwright errors include full request headers, so the Groq key can end up
- * in anything we print. Every error message goes through this first.
- */
-function redact(text: string): string {
-  return text
-    .replace(/gsk_[A-Za-z0-9]+/g, 'gsk_***')
-    .replace(/org_[A-Za-z0-9]+/g, 'org_***')
-    .replace(/(authorization:s*Bearers+)S+/gi, '$1***');
-}
+/** Env var holding the key for a provider, e.g. DEEPSEEK_API_KEY. */
+const keyVar = (provider: ProviderId) => `${provider.toUpperCase()}_API_KEY`;
 
-function loadApiKey(): string {
-  if (process.env.GROQ_API_KEY) return process.env.GROQ_API_KEY;
+/** Key from <PROVIDER>_API_KEY or LLM_API_KEY, in the environment or .env. */
+function loadApiKey(provider: ProviderId): string {
+  const names = [keyVar(provider), 'LLM_API_KEY'];
+  for (const name of names) if (process.env[name]) return process.env[name]!;
   const envFile = path.join(ROOT, '.env');
   if (fs.existsSync(envFile)) {
-    const m = fs.readFileSync(envFile, 'utf8').match(/^GROQ_API_KEY=(.+)$/m);
-    if (m?.[1].trim()) return m[1].trim();
+    const env = fs.readFileSync(envFile, 'utf8');
+    for (const name of names) {
+      const m = env.match(new RegExp(`^${name}=(.+)$`, 'm'));
+      if (m?.[1].trim()) return m[1].trim();
+    }
   }
   return '';
 }
@@ -165,9 +177,15 @@ async function launch(apiKey: string): Promise<{ context: BrowserContext; userDa
     args: [`--disable-extensions-except=${EXTENSION_DIR}`, `--load-extension=${EXTENSION_DIR}`],
   });
   const worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker', { timeout: 15_000 });
+  const settings: StoredLLMSettings = {
+    provider: PROVIDER,
+    models: args.model ? { [PROVIDER]: args.model } : {},
+    keys: apiKey ? { [PROVIDER]: apiKey } : {},
+    customBaseUrl: PROVIDER === 'custom' ? args['base-url'] : undefined,
+  };
   await worker.evaluate(
-    ([key, model]) => chrome.storage.local.set(model ? { groqApiKey: key, groqModel: model } : { groqApiKey: key }),
-    [apiKey, args.model ?? ''] as const,
+    ([key, value]) => chrome.storage.local.set({ [key]: value }),
+    [SETTINGS_KEY, settings] as const,
   );
   return { context, userDataDir };
 }
@@ -193,7 +211,7 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
   };
 
   const planMock = mockPlanner(task.mockPlan);
-  await context.route('https://api.groq.com/**', async (route: Route) => {
+  await context.route(`${new URL(LLM.baseUrl).origin}/**`, async (route: Route) => {
     result.llmCalls++;
     log(`planner call #${result.llmCalls}`);
     if (MODE === 'mock') {
@@ -316,9 +334,18 @@ async function main() {
     console.error('No built extension found. Run `npm run build` first.');
     process.exit(1);
   }
-  const apiKey = MODE === 'mock' ? 'mock-key' : loadApiKey();
-  if (!apiKey) {
-    console.error('Live mode needs GROQ_API_KEY (env var or .env file). Use --mock for a scripted run.');
+  const apiKey = MODE === 'mock' ? 'mock-key' : loadApiKey(PROVIDER);
+  if (!apiKey && PROVIDERS[PROVIDER].needsKey) {
+    console.error(`Live mode with ${LLM.label} needs ${keyVar(PROVIDER)} or LLM_API_KEY (env var or .env file). Use --mock for a scripted run.`);
+    process.exit(1);
+  }
+  const urlError = LLM.baseUrl ? validateBaseUrl(LLM.baseUrl) : 'pass --base-url for the custom provider';
+  if (urlError) {
+    console.error(`Bad provider URL: ${urlError}`);
+    process.exit(1);
+  }
+  if (MODE === 'live' && !LLM.model) {
+    console.error(`${LLM.label} has no default model; pass --model <id>.`);
     process.exit(1);
   }
 
@@ -338,7 +365,8 @@ async function main() {
     // Rough budget from the baseline: ~2.5k tokens per standard run, up to
     // ~10k for a hard run that fails and uses all its steps
     const estimate = tasks.reduce((sum, t) => sum + (t.category === 'hard' ? 10_000 : 2_500), 0) * TRIALS;
-    console.log(`Estimated usage: up to ~${Math.round(estimate / 1000)}k tokens. Groq's free tier allows 200k tokens per model per day (rolling).\n`);
+    const quota = PROVIDER === 'groq' ? " Groq's free tier allows 200k tokens per model per day (rolling)." : '';
+    console.log(`${LLM.label} · ${LLM.model}. Estimated usage: up to ~${Math.round(estimate / 1000)}k tokens.${quota}\n`);
   }
 
   const server = await startFixtureServer();
@@ -367,7 +395,7 @@ async function main() {
   const meta = {
     mode: MODE,
     date: new Date().toISOString(),
-    model: MODE === 'mock' ? 'scripted mock planner' : `${args.model ?? DEFAULT_MODEL} (Groq)`,
+    model: MODE === 'mock' ? 'scripted mock planner' : `${LLM.model} (${LLM.label})`,
     tasks: String(tasks.length),
     trials: String(TRIALS),
   };

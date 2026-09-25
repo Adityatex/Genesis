@@ -24,7 +24,7 @@ Open-source Brave/Chrome extension (Manifest V3) that injects a floating AI-powe
 - **UI:** React + TypeScript
 - **Styling:** Tailwind CSS v4 with a dark glassmorphic theme
 - **Testing:** Vitest + happy-dom, GitHub Actions CI (typecheck → test → build)
-- **AI:** Groq API (default `qwen/qwen3.8-27b`, any Groq model via settings, BYOK)
+- **AI:** any OpenAI-compatible provider: Groq (default, `qwen/qwen3.8-27b`), DeepSeek, OpenAI, OpenRouter, local Ollama, or a custom server. Bring your own key
 - **Architecture:** Manifest V3, Shadow DOM isolation, minimal permissions (`activeTab`, `scripting`, `storage`)
 
 ## 🚀 Getting Started
@@ -66,7 +66,7 @@ CI runs typecheck, tests and a production build on every push and pull request, 
 ```bash
 npm run build
 npm run eval:mock   # scripted planner, no API key (runs in CI)
-npm run eval        # live against Groq, reports success rate / LLM calls / tokens / time
+npm run eval        # live against a real provider (Groq by default, --provider to change), reports success rate / LLM calls / tokens / time
 ```
 
 The suite has 10 standard tasks (forms, dropdowns, radios, multi-page flows, slow backends, JS apps, extraction) and 5 hard ones aimed at known limits: long pages, custom widgets, iframes, Shadow DOM and rich-text editors. See [eval/README.md](eval/README.md).
@@ -98,9 +98,9 @@ The hard tasks fail because of how the agent sees and acts on the page, not beca
 │   │   ├── hooks/          # useChatMessages, useAgentLoop, useWorkspaceTools
 │   │   ├── components/     # GenesisLogo, FloatingFab, Header, ToolsGrid, MessageList, ChatInput
 │   │   └── sidebar.css     # Dark glassmorphic theme
-│   └── background.ts      # Service worker (Groq API proxy, BYOK-only)
+│   └── background.ts      # Service worker (LLM API proxy, BYOK-only)
 ├── lib/
-│   ├── api/                # Groq API client (BYOK)
+│   ├── api/                # Provider presets + OpenAI-compatible LLM client (BYOK)
 │   ├── agent/              # DOM snapshot, action executor, action parser/validator, loop core
 │   ├── automation/         # Trustworthy form autofill
 │   ├── dom/                # DOM extraction & element detection
@@ -109,9 +109,22 @@ The hard tasks fail because of how the agent sees and acts on the page, not beca
 └── tests/                  # Vitest unit tests
 ```
 
-## 🔐 API Key (BYOK)
+## 🔐 AI provider and API key (BYOK)
 
-The extension uses the Groq API with your own key. Get one at https://console.groq.com, paste it in the popup. Your key is stored in `chrome.storage.local` and only accessed by the background service worker — never exposed to content scripts, never committed. See `.env.example`.
+Open the extension popup and pick a provider under **AI model**:
+
+| Provider | Key | Notes |
+|---|---|---|
+| Groq (default) | [console.groq.com](https://console.groq.com/keys) | Free tier; default model `qwen/qwen3.8-27b` (see [baseline](eval/BASELINE.md)) |
+| DeepSeek | [platform.deepseek.com](https://platform.deepseek.com/api_keys) | |
+| OpenAI | [platform.openai.com](https://platform.openai.com/api-keys) | |
+| OpenRouter | [openrouter.ai](https://openrouter.ai/keys) | Many models behind one key |
+| Ollama (local) | none | Runs on your machine. Start Ollama with `OLLAMA_ORIGINS=chrome-extension://*` |
+| Custom | optional | Any OpenAI-compatible `/chat/completions` server |
+
+Paste your key, click **Load models** to list the models your key can actually use, pick one, and **Save**. Model names aren't hardcoded because providers retire them; Groq retired this project's original default. The client adapts to provider differences: if a server rejects JSON mode, `max_tokens` or `temperature`, it adjusts the request and retries.
+
+Keys are stored per provider in `chrome.storage.local` and read only by the background service worker. They are never exposed to content scripts, never shown back in full, and never committed. Keys and page content are only sent over HTTPS, except to servers on localhost. See [PRIVACY.md](PRIVACY.md).
 
 ## 📄 License
 

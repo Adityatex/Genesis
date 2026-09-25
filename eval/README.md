@@ -7,25 +7,27 @@ Tasks are graded by what actually happened, not by what the agent says. The fixt
 ```bash
 npm run build                 # the harness tests .output/chrome-mv3
 npm run eval:mock             # scripted planner, no API key, deterministic
-npm run eval                  # live run against Groq (GROQ_API_KEY in env or .env)
+npm run eval                  # live run, Groq by default (GROQ_API_KEY in env or .env)
 
 # options (after --)
 npm run eval -- --task login,todo-enter   # subset
 npm run eval -- --trials 3                # repeat each task (live results vary)
 npm run eval -- --headed --verbose        # watch it, stream [Genesis] logs + timings
+npm run eval -- --provider deepseek --model <id>              # other providers: key from DEEPSEEK_API_KEY etc.
+npm run eval -- --provider custom --base-url https://host/v1 --model <id>   # key from LLM_API_KEY
 ```
 
 Results are written to `eval/results/` (gitignored): one JSON file per run, plus `latest-<mode>.md`.
 
 ## Quotas (Groq free tier)
 
-Each model gets about **8k tokens/minute**, **1,000 requests/day** and **200k tokens/day** (a rolling window). The harness paces calls under the per-minute limit. A full live suite (17 tasks × 3 trials) can use most of a model's daily tokens, so run subsets with `--task` when you can. If a daily limit is hit, the run stops early and prints Groq's message saying when tokens free up. Runs that end on a 429 are marked `rate-limited` and left out of success rates.
+Pacing is on by default only for Groq (pass `--tpm` to pace other providers). On Groq's free tier, each model gets about **8k tokens/minute**, **1,000 requests/day** and **200k tokens/day** (a rolling window). The harness paces calls under the per-minute limit. A full live suite (17 tasks × 3 trials) can use most of a model's daily tokens, so run subsets with `--task` when you can. If a daily limit is hit, the run stops early and prints Groq's message saying when tokens free up. Runs that end on a 429 are marked `rate-limited` and left out of success rates.
 
 ## Modes
 
-**Live** proxies the extension's real Groq calls and records LLM calls, tokens and time per task. This is the benchmark number.
+**Live** proxies the extension's real provider calls and records LLM calls, tokens and time per task. This is the benchmark number.
 
-**Mock** answers the extension's Groq calls with each task's `mockPlan`. Every step's `target` regex is matched against the same DOM snapshot the model would get, so mock runs exercise the real snapshot, executor and navigation-resume code in a real browser, only without an LLM. If an element isn't in the snapshot, the mock gives up, which is how a real model fails too. CI runs the mock suite on every push.
+**Mock** answers the extension's provider calls with each task's `mockPlan`. Every step's `target` regex is matched against the same DOM snapshot the model would get, so mock runs exercise the real snapshot, executor and navigation-resume code in a real browser, only without an LLM. If an element isn't in the snapshot, the mock gives up, which is how a real model fails too. CI runs the mock suite on every push.
 
 ## Tasks
 

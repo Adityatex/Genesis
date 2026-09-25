@@ -1,7 +1,9 @@
 # Privacy Policy — Genesis AI Browser Assistant
 
 - No analytics, no tracking, no remote servers operated by us.
-- Your Groq API key is stored only in `chrome.storage.local` on your device.
-- Page text / DOM snapshots are sent only to `https://api.groq.com` when you explicitly trigger Summarize, Explain, Chat, or Agent actions.
-- We never sell, share, or retain your browsing data.
+- You choose the AI provider (Groq, DeepSeek, OpenAI, OpenRouter, a local Ollama, or a custom OpenAI-compatible server) and bring your own API key.
+- API keys are stored only in `chrome.storage.local` on your device and are read only by the extension's background service worker. They are never shown back in full, and are sent only to the provider they belong to.
+- Page text / DOM snapshots are sent only to the provider you selected, and only when you trigger Summarize, Explain, Chat, or Agent actions. With Ollama they never leave your machine.
+- Keys and page content are only ever sent over HTTPS, except to servers on your own machine (localhost).
+- We never sell, share, or retain your browsing data. Your provider's own privacy policy applies to what you send it.
 - Contact: open a GitHub issue at https://github.com/Adityatex/Genesis/issues

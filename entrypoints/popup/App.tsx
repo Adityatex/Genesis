@@ -1,51 +1,98 @@
 import { useState, useEffect } from 'react';
 import { loadStoredProfile, saveStoredProfile, PROFILE_FIELDS, type AutofillProfile } from '@/lib/automation/profile';
+import { PROVIDERS, PROVIDER_IDS, type ProviderId } from '@/lib/api/providers';
+
+type Status = 'idle' | 'saving' | 'saved' | 'error';
 
 export default function App() {
+  // AI provider settings. Keys stay in the background worker; the popup only
+  // ever receives masked versions.
+  const [provider, setProvider] = useState<ProviderId>('groq');
+  const [savedModels, setSavedModels] = useState<Partial<Record<ProviderId, string>>>({});
+  const [maskedKeys, setMaskedKeys] = useState<Partial<Record<ProviderId, string>>>({});
+  const [customBaseUrl, setCustomBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
-  const [maskedKey, setMaskedKey] = useState('');
-  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [model, setModel] = useState('');
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [status, setStatus] = useState<Status>('idle');
   const [message, setMessage] = useState('');
   const [profile, setProfile] = useState<AutofillProfile>({ fullname: '', email: '', phone: '', address: '', city: '', state: '', zip: '', country: '' });
   const [profileStatus, setProfileStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [profileMessage, setProfileMessage] = useState('');
 
   useEffect(() => {
-    // Load current key status on mount
-    browser.runtime.sendMessage({ action: 'GET_API_KEY' }).then((res: any) => {
-      if (res?.success) {
-        setMaskedKey(res.data.masked);
-      }
+    browser.runtime.sendMessage({ action: 'GET_LLM_SETTINGS' }).then((res: any) => {
+      if (!res?.success) return;
+      const { provider: p, models, customBaseUrl: url, maskedKeys: masked } = res.data;
+      setProvider(p);
+      setSavedModels(models);
+      setMaskedKeys(masked);
+      setCustomBaseUrl(url);
+      setModel(models[p] || PROVIDERS[p as ProviderId].defaultModel || '');
     });
     loadStoredProfile().then(setProfile).catch(() => {});
   }, []);
 
+  const preset = PROVIDERS[provider];
+
+  const showMessage = (s: Status, text: string) => {
+    setStatus(s);
+    setMessage(text);
+  };
+
+  const handleProviderChange = (p: ProviderId) => {
+    setProvider(p);
+    setModel(savedModels[p] || PROVIDERS[p].defaultModel || '');
+    setApiKey('');
+    setAvailableModels([]);
+    showMessage('idle', '');
+  };
+
+  const handleLoadModels = async () => {
+    setLoadingModels(true);
+    showMessage('idle', '');
+    try {
+      const res = await browser.runtime.sendMessage({
+        action: 'LIST_MODELS',
+        payload: { provider, apiKey: apiKey.trim(), customBaseUrl: customBaseUrl.trim() },
+      });
+      if (!res?.success) throw new Error(res?.error || 'Could not load models');
+      const models: string[] = res.data.models;
+      setAvailableModels(models);
+      showMessage(models.length ? 'saved' : 'error', models.length
+        ? `${models.length} models available. Pick one in the Model field.`
+        : `${preset.label} returned no models for this key.`);
+    } catch (err: any) {
+      showMessage('error', err.message);
+    } finally {
+      setLoadingModels(false);
+    }
+  };
+
   const handleSave = async () => {
-    if (!apiKey.trim()) {
-      setStatus('error');
-      setMessage('Please enter an API key');
+    if (preset.needsKey && !apiKey.trim() && !maskedKeys[provider]) {
+      showMessage('error', `Enter your ${preset.label} API key`);
+      return;
+    }
+    if (!model.trim()) {
+      showMessage('error', 'Choose a model ("Load models" lists what your key can use)');
       return;
     }
 
     setStatus('saving');
     try {
       const res = await browser.runtime.sendMessage({
-        action: 'SET_API_KEY',
-        payload: { apiKey: apiKey.trim() },
+        action: 'SAVE_LLM_SETTINGS',
+        payload: { provider, model: model.trim(), apiKey: apiKey.trim(), customBaseUrl: customBaseUrl.trim() },
       });
-
-      if (res?.success) {
-        setStatus('saved');
-        setMessage('API key saved successfully!');
-        setMaskedKey(`${apiKey.substring(0, 8)}...${apiKey.substring(apiKey.length - 4)}`);
-        setApiKey('');
-        setTimeout(() => setStatus('idle'), 2000);
-      } else {
-        throw new Error(res?.error || 'Failed to save');
-      }
+      if (!res?.success) throw new Error(res?.error || 'Failed to save');
+      setMaskedKeys((m) => ({ ...m, [provider]: res.data.maskedKey }));
+      setSavedModels((m) => ({ ...m, [provider]: model.trim() }));
+      setApiKey('');
+      showMessage('saved', `Saved. Genesis now uses ${preset.label} · ${model.trim()}`);
     } catch (err: any) {
-      setStatus('error');
-      setMessage(err.message);
+      showMessage('error', err.message);
     }
   };
 
@@ -91,40 +138,80 @@ export default function App() {
         <span>Active on all pages</span>
       </div>
 
-      {/* API Key Section */}
+      {/* AI Provider Section */}
       <div className="section">
-        <label className="section-label">Groq API Key</label>
-        {maskedKey && (
-          <div className="current-key">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-              <path d="M7 11V7a5 5 0 0110 0v4" />
-            </svg>
-            <span>{maskedKey}</span>
-          </div>
+        <label className="section-label" htmlFor="provider">AI model</label>
+        <select
+          id="provider"
+          className="api-input provider-select"
+          value={provider}
+          onChange={(e) => handleProviderChange(e.target.value as ProviderId)}
+        >
+          {PROVIDER_IDS.map((id) => (
+            <option key={id} value={id}>{PROVIDERS[id].label}</option>
+          ))}
+        </select>
+        {(preset.note || preset.keyUrl) && (
+          <p className="hint">
+            {preset.note}{preset.note && preset.keyUrl ? ' ' : ''}
+            {preset.keyUrl && <a href={preset.keyUrl} target="_blank" rel="noreferrer">Get a key</a>}
+          </p>
         )}
-        <div className="input-group">
+
+        {provider === 'custom' && (
           <input
-            type="password"
-            placeholder="Paste Groq API key..."
-            value={apiKey}
-            onChange={(e) => {
-              setApiKey(e.target.value);
-              setStatus('idle');
-            }}
-            onKeyDown={(e) => e.key === 'Enter' && handleSave()}
+            type="url"
+            placeholder="Server URL, e.g. https://host/v1"
+            value={customBaseUrl}
+            onChange={(e) => setCustomBaseUrl(e.target.value)}
             className="api-input"
           />
-          <button onClick={handleSave} className="save-btn" disabled={status === 'saving'}>
-            {status === 'saving' ? (
-              <span className="spinner"></span>
-            ) : (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
+        )}
+
+        {(preset.needsKey || provider === 'custom') && (
+          <>
+            {maskedKeys[provider] && (
+              <div className="current-key">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0110 0v4" />
+                </svg>
+                <span>{maskedKeys[provider]}</span>
+              </div>
             )}
+            <input
+              type="password"
+              placeholder={maskedKeys[provider]
+                ? 'Paste a new key to replace it'
+                : `Paste ${preset.label} API key${preset.needsKey ? '' : ' (if needed)'}...`}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              className="api-input"
+            />
+          </>
+        )}
+
+        <div className="input-group">
+          <input
+            list="model-options"
+            placeholder={preset.defaultModel ?? 'Model id'}
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSave()}
+            className="api-input"
+            aria-label="Model"
+          />
+          <datalist id="model-options">
+            {availableModels.map((m) => <option key={m} value={m} />)}
+          </datalist>
+          <button onClick={handleLoadModels} className="secondary-btn" disabled={loadingModels} title="List the models your key can use">
+            {loadingModels ? <span className="spinner"></span> : 'Load models'}
           </button>
         </div>
+
+        <button onClick={handleSave} className="profile-save-btn" disabled={status === 'saving'}>
+          {status === 'saving' ? 'Saving…' : 'Save'}
+        </button>
         {message && (
           <div className={`message ${status}`}>{message}</div>
         )}
