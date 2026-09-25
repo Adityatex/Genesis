@@ -1,6 +1,8 @@
 // lib/agent/actionExecutor.ts
 // Executes structured actions on the DOM returned by the LLM agent
 
+import { getElementById } from '@/lib/agent/domSnapshot';
+
 export interface AgentAction {
   action: 'click' | 'type' | 'clear_and_type' | 'select' | 'navigate' | 'scroll' | 'read' | 'wait' | 'done' | 'press_key';
   elementId?: number;
@@ -39,9 +41,6 @@ function makeKeyEvent(type: 'keydown' | 'keypress' | 'keyup', key: string): Keyb
   return event;
 }
 
-function getElementByGenesisId(id: number): HTMLElement | null {
-  return document.querySelector(`[data-genesis-id="${id}"]`) as HTMLElement | null;
-}
 
 // Elements can live in iframes, which have their own window and constructors,
 // so `el instanceof HTMLInputElement` is false there. Check tag names instead
@@ -109,7 +108,7 @@ const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
  * were done when they weren't.
  */
 async function typeText(elementId: number, text: string, clear: boolean): Promise<string> {
-  const el = getElementByGenesisId(elementId);
+  const el = getElementById(elementId);
   if (!el) return `❌ Element [${elementId}] not found.`;
 
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -146,7 +145,7 @@ export async function executeAction(action: AgentAction): Promise<string> {
   switch (action.action) {
     case 'click': {
       if (action.elementId === undefined) return '❌ No element ID provided for click.';
-      const el = getElementByGenesisId(action.elementId);
+      const el = getElementById(action.elementId);
       if (!el) return `❌ Element [${action.elementId}] not found on page.`;
       
       // Scroll into view first
@@ -175,7 +174,7 @@ export async function executeAction(action: AgentAction): Promise<string> {
 
     case 'select': {
       if (action.elementId === undefined) return '❌ No element ID provided for select.';
-      const el = getElementByGenesisId(action.elementId) as HTMLSelectElement | null;
+      const el = getElementById(action.elementId) as HTMLSelectElement | null;
       if (!el || el.tagName !== 'SELECT') return `❌ Element [${action.elementId}] is not a select dropdown.`;
       
       // The model may pass either the option's value or its visible label
@@ -225,7 +224,7 @@ export async function executeAction(action: AgentAction): Promise<string> {
         const text = document.body.innerText?.substring(0, 2000) || '';
         return `📖 Page text: ${text.substring(0, 500)}...`;
       }
-      const el = getElementByGenesisId(action.elementId);
+      const el = getElementById(action.elementId);
       if (!el) return `❌ Element [${action.elementId}] not found.`;
       return `📖 Content of [${action.elementId}]: "${el.innerText?.substring(0, 500) || ''}"`;
     }
@@ -233,7 +232,7 @@ export async function executeAction(action: AgentAction): Promise<string> {
     case 'press_key': {
       const key = action.key || 'Enter';
       const target = action.elementId !== undefined
-        ? getElementByGenesisId(action.elementId) || document.activeElement || document.body
+        ? getElementById(action.elementId) || document.activeElement || document.body
         : document.activeElement || document.body;
       
       // If a page handler calls preventDefault() on keydown it has handled the key

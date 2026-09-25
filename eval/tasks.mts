@@ -196,7 +196,18 @@ export const TASKS: Task[] = [
       { action: 'type', target: /"Cardholder name"/, text: 'Ada Lovelace' },
       { action: 'click', target: /"Pay \$42\.00"/ },
     ],
-    knownIssue: 'Snapshot skips iframes',
+  },
+  {
+    id: 'iframe-cross-origin',
+    category: 'hard',
+    start: '/iframe-cross-origin.html',
+    goal: 'Fill in the cardholder name Ada Lovelace in the payment form and submit it',
+    check: r => hit(r.events, '/api/pay', d => norm(d.cardholder) === 'ada lovelace'),
+    mockPlan: [
+      { action: 'type', target: /"Cardholder name"/, text: 'Ada Lovelace' },
+      { action: 'click', target: /"Pay $42.00"/ },
+    ],
+    knownIssue: 'Cross-origin iframes (e.g. Stripe) are unreachable from the top frame; needs a content script in every frame',
   },
   {
     id: 'shadow-dom-button',
@@ -205,7 +216,14 @@ export const TASKS: Task[] = [
     goal: 'Subscribe to the newsletter',
     check: r => hit(r.events, '/api/subscribe'),
     mockPlan: [{ action: 'click', target: /"Subscribe"/ }],
-    knownIssue: 'Snapshot does not pierce shadow roots',
+  },
+  {
+    id: 'shadow-dom-closed',
+    category: 'hard',
+    start: '/shadow-dom-closed.html',
+    goal: 'Click Reject all on the cookie banner',
+    check: r => hit(r.events, '/api/consent', d => d.choice === 'Reject all'),
+    mockPlan: [{ action: 'click', target: /"Reject all"/ }],
   },
   {
     id: 'contenteditable-message',

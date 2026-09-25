@@ -1,7 +1,7 @@
 // lib/agent/domSnapshot.ts
 // Creates a compact, LLM-friendly representation of the current page DOM
 
-const INTERACTIVE_SELECTORS = [
+const INTERACTIVE_SELECTOR = [
   'a[href]',
   'button',
   'input',
@@ -12,21 +12,96 @@ const INTERACTIVE_SELECTORS = [
   '[role="tab"]',
   '[role="menuitem"]',
   '[contenteditable="true"]',
-];
+].join(',');
 
-const LANDMARK_TAGS = new Set([
-  'H1', 'H2', 'H3', 'H4', 'NAV', 'MAIN', 'HEADER', 'FOOTER', 'FORM',
-]);
-
+// Subtrees that never contain anything the agent can use
 const SKIP_TAGS = new Set([
-  'SCRIPT', 'STYLE', 'NOSCRIPT', 'SVG', 'CANVAS', 'TEMPLATE', 'IFRAME',
+  'SCRIPT', 'STYLE', 'NOSCRIPT', 'SVG', 'CANVAS', 'TEMPLATE', 'HEAD',
 ]);
+
+// Genesis's own sidebar is a shadow-root UI on the page; never show it to the agent
+const OWN_UI_TAG = 'GENESIS-SIDEBAR';
+
+// ---------------------------------------------------------------- element registry
+// Maps snapshot IDs to live elements. A querySelector on a data attribute can't
+// see into shadow roots or iframes, so the executor looks elements up here.
+
+const registry = new Map<number, Element>();
+
+export function getElementById(id: number): HTMLElement | null {
+  const el = registry.get(id);
+  if (el?.isConnected) return el as HTMLElement;
+  // Fallback for elements tagged outside a snapshot (e.g. unit tests)
+  return document.querySelector(`[data-genesis-id="${id}"]`) as HTMLElement | null;
+}
+
+// ---------------------------------------------------------------- traversal
+
+/** Open shadow root, or a closed one via the extension-only chrome.dom API. */
+function shadowRootOf(el: Element): ShadowRoot | null {
+  const openOrClosed = (globalThis as any).chrome?.dom?.openOrClosedShadowRoot;
+  if (typeof openOrClosed === 'function') {
+    try {
+      return openOrClosed(el) ?? null;
+    } catch { /* not a shadow host */ }
+  }
+  return el.shadowRoot;
+}
+
+/** Same-origin iframe document; cross-origin frames throw or return null. */
+function frameDocumentOf(el: Element): Document | null {
+  if (el.tagName !== 'IFRAME' && el.tagName !== 'FRAME') return null;
+  try {
+    return (el as HTMLIFrameElement).contentDocument;
+  } catch {
+    return null;
+  }
+}
+
+function frameLabel(frame: Element): string {
+  return truncate(frame.getAttribute('title') || frame.getAttribute('name') || frame.getAttribute('src') || 'iframe', 40);
+}
+
+interface Found {
+  el: Element;
+  /** Label of the iframe the element lives in, if any. */
+  frame?: string;
+}
+
+/**
+ * Every interactive element in document order, including those inside
+ * (open or extension-reachable closed) shadow roots and same-origin iframes.
+ */
+function collectInteractive(root: Document | ShadowRoot, frame: string | undefined, out: Found[]): void {
+  // nodeType, not instanceof: an iframe's Document comes from another realm
+  const doc = root.nodeType === Node.DOCUMENT_NODE ? (root as Document) : (root.ownerDocument as Document);
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+    acceptNode: (node) =>
+      SKIP_TAGS.has((node as Element).tagName) || (node as Element).tagName === OWN_UI_TAG
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT,
+  });
+
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const el = node as Element;
+    if (el.matches(INTERACTIVE_SELECTOR)) out.push({ el, frame });
+
+    const shadow = shadowRootOf(el);
+    if (shadow) collectInteractive(shadow, frame, out);
+
+    const frameDoc = frameDocumentOf(el);
+    if (frameDoc && isVisible(el)) collectInteractive(frameDoc, frameLabel(el), out);
+  }
+}
+
+// ---------------------------------------------------------------- element details
 
 function isVisible(el: Element): boolean {
-  if (!(el instanceof HTMLElement)) return false;
+  // No `instanceof HTMLElement`: iframe elements come from another realm
+  if (typeof (el as HTMLElement).getBoundingClientRect !== 'function') return false;
   const rect = el.getBoundingClientRect();
   if (rect.width === 0 && rect.height === 0) return false;
-  const style = window.getComputedStyle(el);
+  const style = (el.ownerDocument.defaultView ?? window).getComputedStyle(el);
   if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
   if (el.getAttribute('aria-hidden') === 'true') return false;
   return true;
@@ -74,6 +149,8 @@ export interface SnapshotElement {
   checked?: boolean;
   disabled?: boolean;
   options?: string[];
+  /** Label of the iframe the element is in, if any. */
+  frame?: string;
   selector: string;
 }
 
@@ -81,32 +158,75 @@ const MAX_SELECT_OPTIONS = 15;
 
 /** Visible labels of a <select>'s options, so the model can pick a valid one. */
 function getSelectOptions(el: Element): string[] | undefined {
-  if (!(el instanceof HTMLSelectElement)) return undefined;
-  const labels = Array.from(el.options)
+  if (el.tagName !== 'SELECT') return undefined;
+  const labels = Array.from((el as HTMLSelectElement).options)
     .map(o => truncate(o.text, 40))
     .filter(Boolean);
   if (labels.length <= MAX_SELECT_OPTIONS) return labels;
   return [...labels.slice(0, MAX_SELECT_OPTIONS), `…+${labels.length - MAX_SELECT_OPTIONS} more`];
 }
 
-function buildUniqueSelector(el: Element, index: number): string {
-  // Use data attribute we inject for reliable targeting
-  return `[data-genesis-id="${index}"]`;
+function describe(el: Element, id: number, frame: string | undefined): SnapshotElement {
+  const tag = el.tagName.toLowerCase();
+  const input = el as HTMLInputElement;
+  // Editors have no .value; show their text so the model can see what's typed
+  const value = ((el as HTMLElement).isContentEditable ? (el as HTMLElement).innerText : input.value) || undefined;
+  const href = tag === 'a' ? (el as HTMLAnchorElement).href : undefined;
+
+  return {
+    id,
+    tag,
+    role: el.getAttribute('role') || tag,
+    label: getLabel(el),
+    type: el.getAttribute('type') || undefined,
+    href: href ? truncate(href, 100) : undefined,
+    value: value ? truncate(value, 50) : undefined,
+    placeholder: el.getAttribute('placeholder') || undefined,
+    checked: input.checked || undefined,
+    disabled: input.disabled || undefined,
+    options: getSelectOptions(el),
+    frame,
+    selector: `[data-genesis-id="${id}"]`,
+  };
 }
+
+export function formatElement(el: SnapshotElement): string {
+  let entry = `[${el.id}] <${el.tag}>`;
+  if (el.type) entry += ` type="${el.type}"`;
+  if (el.label) entry += ` "${el.label}"`;
+  if (el.placeholder) entry += ` placeholder="${el.placeholder}"`;
+  if (el.href) entry += ` href="${el.href}"`;
+  if (el.value) entry += ` value="${el.value}"`;
+  if (el.checked) entry += ` [checked]`;
+  if (el.disabled) entry += ` [disabled]`;
+  if (el.options) entry += ` options=[${el.options.map(o => JSON.stringify(o)).join(', ')}]`;
+  if (el.frame) entry += ` (in frame "${el.frame}")`;
+  return entry;
+}
+
+// ---------------------------------------------------------------- snapshot
 
 /**
  * Create a compact snapshot of the page for the LLM.
- * Tags each interactive element with a data-genesis-id for reliable targeting.
- * Returns a text representation + the element map.
+ * Registers each interactive element under a numeric ID (and tags it with
+ * data-genesis-id for debugging). Returns a text representation + the elements.
  */
 export function createDOMSnapshot(): { text: string; elements: SnapshotElement[] } {
-  const elements: SnapshotElement[] = [];
-  let idCounter = 0;
+  // Clean up the previous snapshot's IDs, wherever those elements live
+  for (const el of registry.values()) el.removeAttribute('data-genesis-id');
+  registry.clear();
 
-  // Clean up any previous genesis IDs
-  document.querySelectorAll('[data-genesis-id]').forEach(el => {
-    el.removeAttribute('data-genesis-id');
-  });
+  const found: Found[] = [];
+  collectInteractive(document, undefined, found);
+
+  const elements: SnapshotElement[] = [];
+  for (const { el, frame } of found) {
+    if (!isVisible(el)) continue;
+    const id = elements.length;
+    registry.set(id, el);
+    el.setAttribute('data-genesis-id', String(id));
+    elements.push(describe(el, id, frame));
+  }
 
   // Collect landmark text for page context
   const landmarks: string[] = [];
@@ -117,56 +237,11 @@ export function createDOMSnapshot(): { text: string; elements: SnapshotElement[]
     }
   });
 
-  // Collect interactive elements
-  const seen = new Set<Element>();
-  for (const selector of INTERACTIVE_SELECTORS) {
-    document.querySelectorAll(selector).forEach(el => {
-      if (seen.has(el)) return;
-      if (SKIP_TAGS.has(el.tagName)) return;
-      if (!isVisible(el)) return;
-
-      // Skip elements inside our own shadow DOM
-      if (el.closest('#genesis-sidebar-root') || el.closest('genesis-sidebar')) return;
-
-      seen.add(el);
-      const id = idCounter++;
-      el.setAttribute('data-genesis-id', String(id));
-
-      const tag = el.tagName.toLowerCase();
-      const role = el.getAttribute('role') || tag;
-      const label = getLabel(el);
-      const type = el.getAttribute('type') || undefined;
-      const href = tag === 'a' ? (el as HTMLAnchorElement).href : undefined;
-      // Editors have no .value; show their text so the model can see what's typed
-      const value = ((el as HTMLElement).isContentEditable
-        ? (el as HTMLElement).innerText
-        : (el as HTMLInputElement).value) || undefined;
-      const placeholder = el.getAttribute('placeholder') || undefined;
-      const checked = (el as HTMLInputElement).checked || undefined;
-      const disabled = (el as HTMLInputElement).disabled || undefined;
-
-      elements.push({
-        id,
-        tag,
-        role,
-        label,
-        type,
-        href: href ? truncate(href, 100) : undefined,
-        value: value ? truncate(value, 50) : undefined,
-        placeholder,
-        checked,
-        disabled,
-        options: getSelectOptions(el),
-        selector: buildUniqueSelector(el, id),
-      });
-    });
-  }
-
   // Build text representation
   const lines: string[] = [];
   lines.push(`PAGE: ${document.title}`);
   lines.push(`URL: ${window.location.href}`);
-  
+
   if (landmarks.length > 0) {
     lines.push('');
     lines.push('--- PAGE STRUCTURE ---');
@@ -175,19 +250,7 @@ export function createDOMSnapshot(): { text: string; elements: SnapshotElement[]
 
   lines.push('');
   lines.push(`--- INTERACTIVE ELEMENTS (${elements.length}) ---`);
-  
-  for (const el of elements) {
-    let entry = `[${el.id}] <${el.tag}>`;
-    if (el.type) entry += ` type="${el.type}"`;
-    if (el.label) entry += ` "${el.label}"`;
-    if (el.placeholder) entry += ` placeholder="${el.placeholder}"`;
-    if (el.href) entry += ` href="${el.href}"`;
-    if (el.value) entry += ` value="${el.value}"`;
-    if (el.checked) entry += ` [checked]`;
-    if (el.disabled) entry += ` [disabled]`;
-    if (el.options) entry += ` options=[${el.options.map(o => JSON.stringify(o)).join(', ')}]`;
-    lines.push(entry);
-  }
+  for (const el of elements) lines.push(formatElement(el));
 
   // Add visible body text snippet for context
   const bodyText = document.body.innerText || '';

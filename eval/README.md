@@ -31,9 +31,9 @@ Results are written to `eval/results/` (gitignored): one JSON file per run, plus
 | navigation | `store-add-to-cart`, `slow-submit` | multi-page flows, resuming after navigation, slow backends |
 | js-app | `todo-enter` | JS keydown handlers that `preventDefault()` |
 | extraction | `order-status` | reading an answer off the page |
-| hard | `long-page-link`, `custom-dropdown`, `iframe-payment`, `shadow-dom-button`, `contenteditable-message` | known limits of the current agent (see `knownIssue` in `tasks.mts`) |
+| hard | `long-page-link`, `custom-dropdown`, `iframe-payment`, `iframe-cross-origin`, `shadow-dom-button`, `shadow-dom-closed`, `contenteditable-message` | pages that are hard for agents to see or act on. Tasks the agent can't do yet are marked with a `knownIssue` in `tasks.mts` |
 
-Hard tasks are expected to fail in mock mode for now. The mock run fails CI if a normal task regresses **or** a known-issue task starts passing. When you fix one, delete its `knownIssue` so it becomes a regression test.
+Tasks with a `knownIssue` are expected to fail in mock mode. The mock run fails CI if a normal task regresses **or** a known-issue task starts passing. When you fix one, delete its `knownIssue` so it becomes a regression test.
 
 ## Adding a task
 

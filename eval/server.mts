@@ -77,13 +77,19 @@ export async function startFixtureServer(port = 0): Promise<FixtureServer> {
       return;
     }
     try {
-      const body = await fs.readFile(file);
+      let body: Buffer | string = await fs.readFile(file);
+      if (file.endsWith('.html')) {
+        // Pages on 127.0.0.1 can embed frames from localhost: a different origin
+        body = body.toString('utf8').replaceAll('{{OTHER_ORIGIN}}', `http://localhost:${actualPort}`);
+      }
       res.writeHead(200, { 'content-type': file.endsWith('.html') ? 'text/html' : 'application/octet-stream' }).end(body);
     } catch {
       res.writeHead(404, { 'content-type': 'text/html' }).end(page('Page not found', `<p>${url.pathname} does not exist.</p>`));
     }
   });
 
+  // Loopback only. http://localhost:<port> reaches the same socket but is a
+  // different origin from http://127.0.0.1:<port>, which the cross-origin task uses.
   await new Promise<void>(resolve => server.listen(port, '127.0.0.1', resolve));
   const { port: actualPort } = server.address() as AddressInfo;
 

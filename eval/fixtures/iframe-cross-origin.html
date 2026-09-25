@@ -1,0 +1,8 @@
+<!doctype html>
+<html><head><title>Checkout</title></head>
+<body>
+  <h1>Checkout</h1>
+  <p>Order total: $42.00</p>
+  <!-- Like Stripe: the payment form is served from another origin -->
+  <iframe src="{{OTHER_ORIGIN}}/payment-frame.html" title="Secure payment form" width="400" height="220"></iframe>
+</body></html>

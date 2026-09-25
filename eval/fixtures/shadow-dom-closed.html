@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><title>Cookie settings</title></head>
+<body>
+  <h1>Cookie settings</h1>
+  <p>Choose which cookies we may use.</p>
+  <!-- Closed shadow root: invisible to page scripts, reachable by extensions via chrome.dom -->
+  <consent-banner></consent-banner>
+  <script>
+    customElements.define('consent-banner', class extends HTMLElement {
+      connectedCallback() {
+        const root = this.attachShadow({ mode: 'closed' });
+        root.innerHTML = '<button>Accept all</button> <button>Reject all</button>';
+        root.querySelectorAll('button').forEach(b => b.addEventListener('click', async () => {
+          await fetch('/api/consent', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ choice: b.textContent }) });
+        }));
+      }
+    });
+  </script>
+</body></html>

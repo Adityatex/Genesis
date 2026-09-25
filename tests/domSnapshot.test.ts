@@ -45,3 +45,35 @@ describe('createDOMSnapshot', () => {
     expect(elements).toHaveLength(2);
   });
 });
+
+describe('shadow DOM', () => {
+  it('finds elements inside open shadow roots and the executor can click them', async () => {
+    document.body.innerHTML = '<div id="host"></div><button>Outside</button>';
+    const root = document.getElementById('host')!.attachShadow({ mode: 'open' });
+    root.innerHTML = '<button>Subscribe</button>';
+    const onClick = vi.fn();
+    root.querySelector('button')!.addEventListener('click', onClick);
+
+    const { text, elements } = createDOMSnapshot();
+    const sub = elements.find(e => e.label === 'Subscribe');
+    expect(sub).toBeDefined();
+    expect(text).toContain('"Subscribe"');
+
+    Element.prototype.scrollIntoView = vi.fn();
+    const { executeAction } = await import('@/lib/agent/actionExecutor');
+    await executeAction({ action: 'click', elementId: sub!.id });
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('lists elements in document order, shadow content where its host is', () => {
+    document.body.innerHTML = '<button>First</button><div id="host"></div><button>Last</button>';
+    document.getElementById('host')!.attachShadow({ mode: 'open' }).innerHTML = '<button>Middle</button>';
+    expect(createDOMSnapshot().elements.map(e => e.label)).toEqual(['First', 'Middle', 'Last']);
+  });
+
+  it("never includes Genesis's own sidebar", () => {
+    document.body.innerHTML = '<button>Page button</button><genesis-sidebar></genesis-sidebar>';
+    document.querySelector('genesis-sidebar')!.attachShadow({ mode: 'open' }).innerHTML = '<button>Send</button>';
+    expect(createDOMSnapshot().elements.map(e => e.label)).toEqual(['Page button']);
+  });
+});
