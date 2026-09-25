@@ -10,7 +10,7 @@ Open-source Brave/Chrome extension (Manifest V3) that injects a floating AI-powe
 
 | Feature | Description |
 |---|---|
-| 🤖 **Autonomous Agent** | DOM snapshot → LLM planner → 10-action executor, resumes across navigations (20-step budget) |
+| 🤖 **Autonomous Agent** | DOM snapshot → LLM planner → action executor with real (trusted) mouse and keyboard input, resumes across navigations (20-step budget) |
 | 📝 **Text Extraction** | Extract all visible text from any webpage using TreeWalker API |
 | 🔍 **Element Detection** | Detect all interactive elements (inputs, buttons, dropdowns, etc.) |
 | ✏️ **Trustworthy Form Auto-Fill** | Fill forms with *your own* profile data (React/Angular compatible). Edit it in the popup — stored only in `chrome.storage.local`. No exam auto-solving. |
@@ -69,7 +69,7 @@ npm run eval:mock   # scripted planner, no API key (runs in CI)
 npm run eval        # live against a real provider (Groq by default, --provider to change), reports success rate / LLM calls / tokens / time
 ```
 
-The suite has 10 standard tasks (forms, dropdowns, radios, multi-page flows, slow backends, JS apps, extraction) and 7 hard ones that are hard for agents to see or act on: long pages, custom widgets, iframes, open and closed Shadow DOM, and rich-text editors. See [eval/README.md](eval/README.md).
+The suite has 10 standard tasks (forms, dropdowns, radios, multi-page flows, slow backends, JS apps, extraction) and 9 hard ones that are hard for agents to see or act on: long pages, custom widgets, iframes, open and closed Shadow DOM, rich-text editors, and sites that only accept real (trusted) input. See [eval/README.md](eval/README.md).
 
 **Results** (2026-09-25, live runs, [full results](eval/BASELINE.md)):
 
@@ -77,10 +77,11 @@ The suite has 10 standard tasks (forms, dropdowns, radios, multi-page flows, slo
 |---|---|---|
 | Original five (long page, custom dropdown, iframe form, Shadow DOM button, rich-text editor) | **0/5** | **15/15** |
 | Closed shadow root (new) | n/a | 3/3 |
+| Sites that ignore scripted input: bot-protected button, keystroke-only editor (new) | 0/2 with scripted input | 6/6 with trusted input |
 | Cross-origin iframe (new, known issue) | n/a | 0/3 |
-| Standard tasks (regression check) | 30/30 | 40/40 |
+| Standard tasks (regression check) | 30/30 | 50/50 |
 
-"Before" is Qwen on Groq; "after" is `deepseek-flash`, since Qwen ran out of free daily quota mid-run. Its after-fix runs that got a response were also 9/9. The hard-task failures were never about the model: before the fixes, the elements weren't even in what the model received. The fixes changed how the agent sees and acts on the page: it now reaches into Shadow DOM, iframes and ARIA widgets, types into rich-text editors, fits long pages into a size budget with a `find` action, and checks that each action actually worked.
+"Before" is Qwen on Groq; "after" is `deepseek-flash`, since Qwen ran out of free daily quota mid-run. Its after-fix runs that got a response were also 9/9. The hard-task failures were never about the model: before the fixes, the elements weren't even in what the model received. The fixes changed how the agent sees and acts on the page: it now reaches into Shadow DOM, iframes and ARIA widgets, types into rich-text editors, fits long pages into a size budget with a `find` action, checks that each action actually worked, and clicks and types through Chrome's DevTools Protocol, so pages see real input. That last part shows Chrome's "debugging this browser" banner while the agent works, and can be turned off in the popup.
 
 ### Loading in Browser
 

@@ -13,6 +13,7 @@ npm run eval                  # live run, Groq by default (GROQ_API_KEY in env o
 npm run eval -- --task login,todo-enter   # subset
 npm run eval -- --trials 3                # repeat each task (live results vary)
 npm run eval -- --headed --verbose        # watch it, stream [Genesis] logs + timings
+npm run eval -- --scripted-input          # turn off trusted (DevTools Protocol) input to compare
 npm run eval -- --provider deepseek --model <id>              # other providers: key from DEEPSEEK_API_KEY etc.
 npm run eval -- --provider custom --base-url https://host/v1 --model <id>   # key from LLM_API_KEY
 ```
@@ -37,7 +38,7 @@ Pacing is on by default only for Groq (pass `--tpm` to pace other providers). On
 | navigation | `store-add-to-cart`, `slow-submit` | multi-page flows, resuming after navigation, slow backends |
 | js-app | `todo-enter` | JS keydown handlers that `preventDefault()` |
 | extraction | `order-status` | reading an answer off the page |
-| hard | `long-page-link`, `custom-dropdown`, `iframe-payment`, `iframe-cross-origin`, `shadow-dom-button`, `shadow-dom-closed`, `contenteditable-message` | pages that are hard for agents to see or act on. Tasks the agent can't do yet are marked with a `knownIssue` in `tasks.mts` |
+| hard | `long-page-link`, `custom-dropdown`, `iframe-payment`, `iframe-cross-origin`, `shadow-dom-button`, `shadow-dom-closed`, `trusted-click`, `trusted-typing`, `contenteditable-message` | pages that are hard for agents to see or act on. Tasks the agent can't do yet are marked with a `knownIssue` in `tasks.mts` |
 
 Tasks with a `knownIssue` are expected to fail in mock mode. The mock run fails CI if a normal task regresses **or** a known-issue task starts passing. When you fix one, delete its `knownIssue` so it becomes a regression test.
 

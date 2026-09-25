@@ -2,6 +2,19 @@
 
 All runs are live: real model, real extension, real Chromium. A run passes only if the right requests reached the test server **and** the agent finished cleanly.
 
+## Trusted input (2026-09-26)
+
+Clicks and typing used to be script-generated DOM events (`isTrusted === false`), which many sites ignore. Since `d968e9a` the agent sends real mouse and keyboard input through the Chrome DevTools Protocol, and falls back to scripted events when that's unavailable. Two new hard tasks model sites that only accept real input:
+
+| Hard task | What it tests | Scripted input | Trusted input (deepseek-flash) |
+|---|---|---|---|
+| `trusted-click` | bot-protected button that ignores untrusted clicks | fails | **3/3** |
+| `trusted-typing` | keystroke-driven editor (not an input), like Google Docs or a terminal | fails | **3/3** |
+
+"Scripted input" was checked in real Chromium with `--scripted-input` (mock planner, the same actions): both fail, because the page ignores the events. Regression check with trusted input on: **16/16** on the other tasks the agent can reach (10 standard + 6 hard, 1 trial each); `iframe-cross-origin` is still the known issue.
+
+---
+
 ## After the fixes (2026-09-25)
 
 The hard tasks, before and after the snapshot and executor fixes (`ca4023c`–`9cecd24`):
