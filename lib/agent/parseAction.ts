@@ -10,7 +10,7 @@ export type ParseResult =
 
 const ACTIONS: ReadonlySet<AgentAction['action']> = new Set([
   'click', 'type', 'clear_and_type', 'select', 'navigate',
-  'scroll', 'read', 'wait', 'done', 'press_key',
+  'scroll', 'read', 'wait', 'done', 'press_key', 'find',
 ]);
 
 /**
@@ -73,7 +73,8 @@ export function parseAgentAction(raw: string): ParseResult {
   const action: AgentAction = { action: name };
   const elementId = toElementId(obj.elementId);
   if (elementId !== undefined) action.elementId = elementId;
-  const text = optionalString(obj.text);
+  // Models sometimes call find's search text "query"
+  const text = optionalString(obj.text ?? (name === 'find' ? obj.query : undefined));
   if (text !== undefined) action.text = text;
   const value = optionalString(obj.value);
   if (value !== undefined) action.value = value;
@@ -110,6 +111,9 @@ export function parseAgentAction(raw: string): ParseResult {
       action.url = parsed.href;
       break;
     }
+    case 'find':
+      if (!action.text?.trim()) return { ok: false, error: 'find requires text to search for' };
+      break;
     case 'scroll':
       action.direction = obj.direction === 'up' ? 'up' : 'down';
       break;

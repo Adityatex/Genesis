@@ -124,14 +124,15 @@ function mockPlanner(plan: MockStep[]) {
   return (prompt: string): string => {
     const next = plan[step++];
     if (!next) return JSON.stringify({ action: 'done', summary: 'MOCK: plan complete' });
-    if (next.action === 'done') return JSON.stringify(next);
+    if (next.action === 'done' || next.action === 'find') return JSON.stringify(next);
 
-    // Only look at the element list the model would actually receive
-    const snapshot = prompt.split('CURRENT PAGE DOM SNAPSHOT:')[1]?.split(/\n\nACTION HISTORY|\n\nWhat is the NEXT/)[0] ?? '';
+    // Only use elements the model would actually have seen: the snapshot's
+    // listing, plus results of earlier `find` actions in the action history
+    // (entries like `[160] <a> "Account settings" href=...`).
+    const visible = prompt.split('CURRENT PAGE DOM SNAPSHOT:')[1]?.split(/\n\nWhat is the NEXT/)[0] ?? '';
     const findId = (target: RegExp) => {
-      for (const line of snapshot.split('\n')) {
-        const m = line.match(/^\[(\d+)\] (.*)$/);
-        if (m && target.test(m[2])) return Number(m[1]);
+      for (const m of visible.matchAll(/\[(\d+)\] (<[^|\n]*)/g)) {
+        if (target.test(m[2])) return Number(m[1]);
       }
       return undefined;
     };

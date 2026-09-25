@@ -1,10 +1,10 @@
 // lib/agent/actionExecutor.ts
 // Executes structured actions on the DOM returned by the LLM agent
 
-import { getElementById } from '@/lib/agent/domSnapshot';
+import { getElementById, findElements, formatElement } from '@/lib/agent/domSnapshot';
 
 export interface AgentAction {
-  action: 'click' | 'type' | 'clear_and_type' | 'select' | 'navigate' | 'scroll' | 'read' | 'wait' | 'done' | 'press_key';
+  action: 'click' | 'type' | 'clear_and_type' | 'select' | 'navigate' | 'scroll' | 'read' | 'wait' | 'done' | 'press_key' | 'find';
   elementId?: number;
   text?: string;
   url?: string;
@@ -337,6 +337,16 @@ export async function executeAction(action: AgentAction): Promise<string> {
       }
 
       return `✅ Pressed "${key}"`;
+    }
+
+    case 'find': {
+      // Search every element of the latest snapshot, including ones the listing
+      // left out on long pages; their IDs work with click/type/select.
+      const query = (action.text || '').trim();
+      if (!query) return '❌ find needs text to search for.';
+      const matches = findElements(query);
+      if (matches.length === 0) return `🔎 No elements matching "${query}". Try other words, or scroll to load more of the page.`;
+      return `🔎 Found ${matches.length} element(s) matching "${query}": ${matches.map(formatElement).join(' | ')}`;
     }
 
     case 'wait': {

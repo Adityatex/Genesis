@@ -85,13 +85,15 @@ interface Found {
   el: Element;
   /** Label of the iframe the element lives in, if any. */
   frame?: string;
+  /** Top of the element's iframe in the top-level viewport (0 outside iframes). */
+  frameTop: number;
 }
 
 /**
  * Every interactive element in document order, including those inside
  * (open or extension-reachable closed) shadow roots and same-origin iframes.
  */
-function collectInteractive(root: Document | ShadowRoot, frame: string | undefined, out: Found[]): void {
+function collectInteractive(root: Document | ShadowRoot, frame: string | undefined, out: Found[], frameTop = 0): void {
   // nodeType, not instanceof: an iframe's Document comes from another realm
   const doc = root.nodeType === Node.DOCUMENT_NODE ? (root as Document) : (root.ownerDocument as Document);
   const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
@@ -103,13 +105,15 @@ function collectInteractive(root: Document | ShadowRoot, frame: string | undefin
 
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const el = node as Element;
-    if (el.matches(INTERACTIVE_SELECTOR)) out.push({ el, frame });
+    if (el.matches(INTERACTIVE_SELECTOR)) out.push({ el, frame, frameTop });
 
     const shadow = shadowRootOf(el);
-    if (shadow) collectInteractive(shadow, frame, out);
+    if (shadow) collectInteractive(shadow, frame, out, frameTop);
 
     const frameDoc = frameDocumentOf(el);
-    if (frameDoc && isVisible(el)) collectInteractive(frameDoc, frameLabel(el), out);
+    if (frameDoc && isVisible(el)) {
+      collectInteractive(frameDoc, frameLabel(el), out, frameTop + el.getBoundingClientRect().top);
+    }
   }
 }
 
@@ -248,6 +252,44 @@ export function formatElement(el: SnapshotElement): string {
 // ---------------------------------------------------------------- snapshot
 
 /**
+ * Size of the snapshot text sent to the model (~1.5k tokens). Long pages don't
+ * fit, so elements closest to the viewport are listed first, and `find` can
+ * search the rest: every element keeps an ID whether it's listed or not.
+ */
+export const SNAPSHOT_BUDGET = 6000;
+const MIN_TEXT_BUDGET = 600;
+const MAX_TEXT_CHARS = 2000;
+
+/** Elements from the latest snapshot, listed or not; searched by `find`. */
+let lastElements: SnapshotElement[] = [];
+
+/** Vertical distance (px) from the viewport; 0 if on screen. */
+function viewportDistance(el: Element, frameTop: number): number {
+  const rect = el.getBoundingClientRect();
+  const top = rect.top + frameTop;
+  const bottom = rect.bottom + frameTop;
+  if (bottom < 0) return -bottom;
+  if (top > window.innerHeight) return top - window.innerHeight;
+  return 0;
+}
+
+/**
+ * Search every element of the latest snapshot, including those left out of the
+ * listing, by case-insensitive substring of its description (label, placeholder,
+ * href, value, options). Like Ctrl+F for interactive elements.
+ */
+export function findElements(query: string, limit = 10): SnapshotElement[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+  return lastElements
+    .filter(el => {
+      const haystack = formatElement(el).toLowerCase();
+      return words.every(w => haystack.includes(w));
+    })
+    .slice(0, limit);
+}
+
+/**
  * Create a compact snapshot of the page for the LLM.
  * Registers each interactive element under a numeric ID (and tags it with
  * data-genesis-id for debugging). Returns a text representation + the elements.
@@ -261,13 +303,16 @@ export function createDOMSnapshot(): { text: string; elements: SnapshotElement[]
   collectInteractive(document, undefined, found);
 
   const elements: SnapshotElement[] = [];
-  for (const { el, frame } of found) {
+  const distance = new Map<number, number>();
+  for (const { el, frame, frameTop } of found) {
     if (!isVisible(el)) continue;
     const id = elements.length;
     registry.set(id, el);
     el.setAttribute('data-genesis-id', String(id));
     elements.push(describe(el, id, frame));
+    distance.set(id, viewportDistance(el, frameTop));
   }
+  lastElements = elements;
 
   // Collect landmark text for page context
   const landmarks: string[] = [];
@@ -291,11 +336,30 @@ export function createDOMSnapshot(): { text: string; elements: SnapshotElement[]
 
   lines.push('');
   lines.push(`--- INTERACTIVE ELEMENTS (${elements.length}) ---`);
-  for (const el of elements) lines.push(formatElement(el));
 
-  // Add visible body text snippet for context
+  // List as many elements as fit, nearest the viewport first, then show them
+  // in page order. Whatever is left out stays reachable through `find`.
+  const header = lines.join('\n').length;
+  let room = SNAPSHOT_BUDGET - header - MIN_TEXT_BUDGET;
+  const formatted = elements.map(formatElement);
+  const listed = new Set<number>();
+  const byDistance = elements.map(e => e.id).sort((a, b) => distance.get(a)! - distance.get(b)! || a - b);
+  for (const id of byDistance) {
+    const cost = formatted[id].length + 1;
+    if (cost > room) break;
+    room -= cost;
+    listed.add(id);
+  }
+  for (const el of elements) if (listed.has(el.id)) lines.push(formatted[el.id]);
+  const omitted = elements.length - listed.size;
+  if (omitted > 0) {
+    lines.push(`… ${omitted} more elements are off-screen and not listed. Use {"action": "find", "text": "<words>"} to search all elements, or scroll.`);
+  }
+
+  // Add visible body text snippet for context, in whatever room is left
   const bodyText = document.body.innerText || '';
-  const textSnippet = truncate(bodyText, 2000);
+  const textBudget = Math.min(MAX_TEXT_CHARS, SNAPSHOT_BUDGET - lines.join('\n').length - 40);
+  const textSnippet = truncate(bodyText, Math.max(textBudget, 0));
   if (textSnippet.length > 50) {
     lines.push('');
     lines.push('--- VISIBLE TEXT (excerpt) ---');

@@ -64,6 +64,12 @@ describe('parseAgentAction', () => {
     expect(err('{"action":"navigate","url":"example.com"}')).toMatch(/full URL/);
   });
 
+  it('parses find, accepting "query" as an alias for text', () => {
+    expect(ok('{"action":"find","text":"settings"}')).toEqual({ action: 'find', text: 'settings' });
+    expect(ok('{"action":"find","query":"settings"}').text).toBe('settings');
+    expect(err('{"action":"find"}')).toMatch(/find requires text/);
+  });
+
   it('defaults scroll direction to down', () => {
     expect(ok('{"action":"scroll"}').direction).toBe('down');
   });

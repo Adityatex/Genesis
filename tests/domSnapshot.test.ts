@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createDOMSnapshot } from '@/lib/agent/domSnapshot';
+import { createDOMSnapshot, findElements, SNAPSHOT_BUDGET } from '@/lib/agent/domSnapshot';
 
 // happy-dom has no layout engine, so give every element a non-zero box.
 beforeEach(() => {
@@ -90,5 +90,61 @@ describe('ARIA widgets', () => {
       '[1] <div> role="switch" "Dark mode" [checked]',
       '[2] <li> role="option" "Pro" [selected]',
     ]);
+  });
+});
+
+describe('long pages: snapshot budget + find', () => {
+  const rect = (top: number) => ({ x: 0, y: top, width: 100, height: 20, top, left: 0, right: 100, bottom: top + 20, toJSON: () => ({}) });
+
+  beforeEach(() => {
+    // Buttons labelled "far ..." sit far below the viewport; the rest are on screen
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return rect(this.textContent?.startsWith('far') ? 50_000 : 10);
+    });
+  });
+
+  function mountLongPage() {
+    const near = Array.from({ length: 150 }, (_, i) => `<button>near button number ${i}</button>`).join('');
+    const far = Array.from({ length: 150 }, (_, i) => `<button>far button number ${i}</button>`).join('');
+    document.body.innerHTML = near + far;
+    document.body.insertAdjacentHTML('afterbegin', '<button>far Account settings</button>');
+  }
+
+  it('stays within the budget and says how many elements it left out', () => {
+    mountLongPage();
+    const { text, elements } = createDOMSnapshot();
+    expect(elements).toHaveLength(301); // every element still gets an ID
+    expect(text.length).toBeLessThanOrEqual(SNAPSHOT_BUDGET);
+    expect(text).toMatch(/… \d+ more elements are off-screen and not listed\. Use \{"action": "find"/);
+  });
+
+  it('lists on-screen elements before off-screen ones', () => {
+    mountLongPage();
+    const listed = createDOMSnapshot().text.split('\n').filter(l => /^\[\d+\]/.test(l));
+    expect(listed.some(l => l.includes('"near button number 0"'))).toBe(true);
+    // The off-screen button comes first in page order but must not crowd out on-screen ones
+    expect(listed.some(l => l.includes('far Account settings'))).toBe(false);
+  });
+
+  it('find reaches unlisted elements, and their IDs are clickable', async () => {
+    mountLongPage();
+    createDOMSnapshot();
+    const [hit] = findElements('account settings');
+    expect(hit.label).toBe('far Account settings');
+
+    const onClick = vi.fn();
+    document.querySelector('button')!.addEventListener('click', onClick);
+    Element.prototype.scrollIntoView = vi.fn();
+    const { executeAction } = await import('@/lib/agent/actionExecutor');
+    expect(await executeAction({ action: 'find', text: 'account settings' })).toContain(`[${hit.id}] <button> "far Account settings"`);
+    await executeAction({ action: 'click', elementId: hit.id });
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('find matches all words, in any order', () => {
+    mountLongPage();
+    createDOMSnapshot();
+    expect(findElements('settings ACCOUNT').map(e => e.label)).toEqual(['far Account settings']);
+    expect(findElements('nonexistent thing')).toEqual([]);
   });
 });

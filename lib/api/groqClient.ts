@@ -11,6 +11,9 @@ const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 export const DEFAULT_MODEL = 'qwen/qwen3.8-27b';
 const REQUEST_TIMEOUT = 15000;
 const GROQ_MAX_RETRIES = 3;
+// The snapshot budgets its own size (SNAPSHOT_BUDGET); this only guards
+// against a runaway page. Cutting it blindly used to hide whole page regions.
+const SNAPSHOT_SAFETY_CAP = 9000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -222,6 +225,7 @@ AVAILABLE ACTIONS (respond with exactly ONE as JSON):
 - {"action": "scroll", "direction": "up"|"down"} — Scroll the page
 - {"action": "press_key", "key": "<key name>", "elementId": <optional number>} — Press a keyboard key (Enter, Tab, Escape, etc.)
 - {"action": "read", "elementId": <optional number>} — Read text content
+- {"action": "find", "text": "<words>"} — Search ALL elements on the page, including ones not listed in the snapshot; returns their IDs
 - {"action": "wait", "text": "<milliseconds>"} — Wait for content to load
 - {"action": "done", "summary": "<what was accomplished>"} — Task is complete
 
@@ -233,11 +237,12 @@ RULES:
 5. If the page doesn't have what you need, navigate to the right URL first.
 6. If you've completed the goal, use "done" with a summary.
 7. If you're stuck or the goal is impossible, use "done" with an explanation.
-8. Maximum 20 steps per task — be efficient.`,
+8. On long pages the element list is cut short. If the element you need is not listed, use "find" with a keyword before scrolling or guessing URLs.
+9. Maximum 20 steps per task — be efficient.`,
     },
     {
       role: 'user',
-      content: `GOAL: ${goal}\n\nCURRENT PAGE DOM SNAPSHOT:\n${domSnapshot.substring(0, 6000)}${historyText}\n\nWhat is the NEXT single action? Respond with JSON only.`,
+      content: `GOAL: ${goal}\n\nCURRENT PAGE DOM SNAPSHOT:\n${domSnapshot.substring(0, SNAPSHOT_SAFETY_CAP)}${historyText}\n\nWhat is the NEXT single action? Respond with JSON only.`,
     },
   ], auth, 1024, 0, 1, true); // headroom: reasoning models think before answering
 }

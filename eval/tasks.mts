@@ -19,6 +19,7 @@ export type MockStep =
   | { action: 'type' | 'clear_and_type'; target: RegExp; text: string }
   | { action: 'select'; target: RegExp; value: string }
   | { action: 'press_key'; key: string; target?: RegExp }
+  | { action: 'find'; text: string }
   | { action: 'done'; summary: string };
 
 export interface GradeInput {
@@ -170,8 +171,11 @@ export const TASKS: Task[] = [
     start: '/long-page.html',
     goal: 'Open the Account settings page',
     check: r => hit(r.events, '/api/visit', d => d.page === 'settings'),
-    mockPlan: [{ action: 'click', target: /<a> "Account settings"/ }],
-    knownIssue: 'Snapshot is cut at 6000 chars; the link is the 161st element',
+    // The link is the 161st element, past what the snapshot lists; find reaches it
+    mockPlan: [
+      { action: 'find', text: 'settings' },
+      { action: 'click', target: /<a> "Account settings"/ },
+    ],
   },
   {
     id: 'custom-dropdown',
