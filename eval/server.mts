@@ -35,6 +35,8 @@ async function readBody(req: http.IncomingMessage): Promise<Record<string, unkno
   return Object.fromEntries(new URLSearchParams(raw));
 }
 
+const esc = (v: unknown) => String(v ?? '').replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
+
 function page(title: string, body: string): string {
   return `<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1>${body}</body></html>`;
 }
@@ -53,9 +55,15 @@ export async function startFixtureServer(port = 0): Promise<FixtureServer> {
 
       if ((req.headers['content-type'] || '').includes('application/json')) {
         res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
+      } else if (url.pathname === '/api/search') {
+        // Look like a real results page so the agent can tell the search worked
+        const q = esc(data.q);
+        const items = ['Pro', 'Lite', 'Max'].map(v => `<li><a href="/search.html">${q} ${v}</a> — in stock</li>`).join('');
+        res.writeHead(200, { 'content-type': 'text/html' })
+          .end(page(`Search results for "${q}"`, `<p>3 results for "${q}"</p><ul>${items}</ul>`));
       } else {
         // A regular form submission / link: land on a confirmation page
-        const summary = Object.entries(data).map(([k, v]) => `<li>${k}: ${String(v)}</li>`).join('');
+        const summary = Object.entries(data).map(([k, v]) => `<li>${esc(k)}: ${esc(v)}</li>`).join('');
         res.writeHead(200, { 'content-type': 'text/html' })
           .end(page('Request received', `<p>Your request to ${url.pathname} was received.</p><ul>${summary}</ul>`));
       }

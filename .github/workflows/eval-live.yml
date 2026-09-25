@@ -11,6 +11,9 @@ on:
       tasks:
         description: Comma-separated task ids (blank = all)
         default: ''
+      model:
+        description: Groq model id (blank = extension default)
+        default: ''
 
 jobs:
   eval-live:
@@ -33,7 +36,8 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TRIALS: ${{ inputs.trials }}
           TASKS: ${{ inputs.tasks }}
-        run: npm run eval -- --trials "$TRIALS" ${TASKS:+--task "$TASKS"}
+          MODEL: ${{ inputs.model }}
+        run: npm run eval -- --trials "$TRIALS" ${TASKS:+--task "$TASKS"} ${MODEL:+--model "$MODEL"}
 
       - name: Job summary
         if: always()

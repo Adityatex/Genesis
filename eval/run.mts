@@ -6,6 +6,7 @@
 //   npm run eval                 live run against Groq (needs GROQ_API_KEY)
 //   npm run eval:mock            scripted planner, no API calls (used in CI)
 //   ... -- --task login,todo-enter --trials 3 --headed --verbose
+//   ... -- --model openai/gpt-oss-120b     (default: the extension's DEFAULT_MODEL)
 
 import { chromium, type BrowserContext, type Page, type Route } from 'playwright';
 import fs from 'node:fs';
@@ -16,6 +17,7 @@ import { parseArgs } from 'node:util';
 import { startFixtureServer, type FixtureServer } from './server.mts';
 import { TASKS, type Task, type MockStep } from './tasks.mts';
 import { isAgentCommand } from '../lib/agent/loop.ts';
+import { DEFAULT_MODEL } from '../lib/api/groqClient.ts';
 
 // Only exists inside the extension's service worker (see worker.evaluate below)
 declare const chrome: any;
@@ -33,6 +35,8 @@ const { values: args } = parseArgs({
     headed: { type: 'boolean', default: false },
     timeout: { type: 'string' },
     verbose: { type: 'boolean', default: false },
+    model: { type: 'string' },
+    tpm: { type: 'string', default: '7000' },
   },
 });
 
@@ -40,7 +44,30 @@ const MODE = args.mock ? 'mock' : 'live';
 const TRIALS = Math.max(1, Number(args.trials));
 const TIMEOUT_MS = Number(args.timeout ?? (args.mock ? 90 : 300)) * 1000;
 
-type Outcome = 'done' | 'max-steps' | 'error' | 'timeout';
+type Outcome = 'done' | 'max-steps' | 'error' | 'timeout' | 'rate-limited';
+
+// ---------------------------------------------------------------- rate limiting
+// Groq's free tier allows 8000 tokens/minute per model. Pace live planner calls
+// under that so the benchmark measures the agent, not the quota. Waits are
+// capped below the extension's 15s request timeout; if we still get a 429 the
+// extension's own retry/backoff handles it.
+const TPM_BUDGET = Number(args.tpm);
+const MAX_THROTTLE_MS = 12_000;
+const tokenWindow: { t: number; tokens: number }[] = [];
+
+async function throttle(estimate: number): Promise<{ t: number; tokens: number }> {
+  const deadline = Date.now() + MAX_THROTTLE_MS;
+  for (;;) {
+    const now = Date.now();
+    while (tokenWindow.length && now - tokenWindow[0].t > 60_000) tokenWindow.shift();
+    const used = tokenWindow.reduce((sum, w) => sum + w.tokens, 0);
+    if (used + estimate <= TPM_BUDGET || now >= deadline) break;
+    await new Promise(r => setTimeout(r, Math.min(deadline - now, tokenWindow[0].t + 60_000 - now + 50)));
+  }
+  const entry = { t: Date.now(), tokens: estimate };
+  tokenWindow.push(entry);
+  return entry;
+}
 
 interface RunResult {
   id: string;
@@ -49,6 +76,7 @@ interface RunResult {
   pass: boolean;
   outcome: Outcome;
   llmCalls: number;
+  rateLimitHits: number;
   promptTokens: number;
   completionTokens: number;
   durationMs: number;
@@ -120,7 +148,10 @@ async function launch(apiKey: string): Promise<BrowserContext> {
     args: [`--disable-extensions-except=${EXTENSION_DIR}`, `--load-extension=${EXTENSION_DIR}`],
   });
   const worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker', { timeout: 15_000 });
-  await worker.evaluate((key) => chrome.storage.local.set({ groqApiKey: key }), apiKey);
+  await worker.evaluate(
+    ([key, model]) => chrome.storage.local.set(model ? { groqApiKey: key, groqModel: model } : { groqApiKey: key }),
+    [apiKey, args.model ?? ''] as const,
+  );
   return context;
 }
 
@@ -140,7 +171,7 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
   const context = await launch(apiKey);
   const result: RunResult = {
     id: task.id, category: task.category, trial, pass: false, outcome: 'timeout',
-    llmCalls: 0, promptTokens: 0, completionTokens: 0, durationMs: 0,
+    llmCalls: 0, rateLimitHits: 0, promptTokens: 0, completionTokens: 0, durationMs: 0,
     finalUrl: '', summary: '', knownIssue: task.knownIssue,
   };
 
@@ -153,10 +184,17 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
       await route.fulfill(chatCompletion(planMock(body.messages.at(-1).content)));
       return;
     }
+    // ~4 chars/token for the prompt, plus headroom for the (reasoning) completion
+    const entry = await throttle(Math.ceil((route.request().postData()?.length ?? 0) / 4) + 400);
     const response = await route.fetch();
     const text = await response.text();
+    if (response.status() === 429) {
+      result.rateLimitHits++;
+      log('429 rate limited');
+    }
     try {
       const usage = JSON.parse(text).usage;
+      if (usage) entry.tokens = usage.total_tokens ?? entry.tokens;
       result.promptTokens += usage?.prompt_tokens ?? 0;
       result.completionTokens += usage?.completion_tokens ?? 0;
     } catch { /* non-JSON error body */ }
@@ -185,7 +223,9 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
 
     result.outcome = !finalText ? 'timeout'
       : finalText.includes('Task Complete') ? 'done'
-      : finalText.includes('Max Steps') ? 'max-steps' : 'error';
+      : finalText.includes('Max Steps') ? 'max-steps'
+      // Quota, not the agent: reported separately and excluded from success rates
+      : /rate limit/i.test(finalText) ? 'rate-limited' : 'error';
     result.summary = finalText.includes('Task Complete')
       ? finalText.split('Task Complete')[1].split('Steps taken')[0].trim()
       : finalText.slice(0, 500).trim();
@@ -210,7 +250,7 @@ function pct(n: number, d: number) {
 
 function report(results: RunResult[], tasks: Task[], meta: Record<string, string>): string {
   const lines: string[] = [];
-  const byTask = tasks.map(t => ({ task: t, runs: results.filter(r => r.id === t.id) }));
+  const byTask = tasks.map(t => ({ task: t, runs: results.filter(r => r.id === t.id && r.outcome !== 'rate-limited') }));
   const passes = (rs: RunResult[]) => rs.filter(r => r.pass).length;
   const avg = (rs: RunResult[], f: (r: RunResult) => number) =>
     rs.length ? (rs.reduce((s, r) => s + f(r), 0) / rs.length) : 0;
@@ -219,10 +259,13 @@ function report(results: RunResult[], tasks: Task[], meta: Record<string, string
   for (const [k, v] of Object.entries(meta)) lines.push(`- **${k}:** ${v}`);
   lines.push('');
 
-  const standard = results.filter(r => r.category !== 'hard');
-  const hard = results.filter(r => r.category === 'hard');
+  const limited = results.filter(r => r.outcome === 'rate-limited');
+  if (limited.length) lines.push(`> ${limited.length} run(s) ended on a Groq rate limit (429) and are excluded from success rates.`, '');
+  const scored = results.filter(r => r.outcome !== 'rate-limited');
+  const standard = scored.filter(r => r.category !== 'hard');
+  const hard = scored.filter(r => r.category === 'hard');
   lines.push('| Suite | Success | Avg LLM calls | Avg tokens | Avg time |', '|---|---|---|---|---|');
-  for (const [name, rs] of [['Standard', standard], ['Hard', hard], ['**All**', results]] as const) {
+  for (const [name, rs] of [['Standard', standard], ['Hard', hard], ['**All**', scored]] as const) {
     lines.push(`| ${name} | ${pct(passes(rs), rs.length)} (${passes(rs)}/${rs.length}) | ${avg(rs, r => r.llmCalls).toFixed(1)} | ${Math.round(avg(rs, r => r.promptTokens + r.completionTokens))} | ${(avg(rs, r => r.durationMs) / 1000).toFixed(1)}s |`);
   }
   lines.push('', '| Task | Category | Pass | Outcome | LLM calls | Notes |', '|---|---|---|---|---|---|');
@@ -264,7 +307,7 @@ async function main() {
       for (let trial = 1; trial <= TRIALS; trial++) {
         const r = await runTask(task, trial, server, apiKey);
         results.push(r);
-        console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${task.id}${TRIALS > 1 ? ` #${trial}` : ''}  ${r.outcome}, ${r.llmCalls} calls, ${(r.durationMs / 1000).toFixed(1)}s${r.pass ? '' : `  — ${r.summary.slice(0, 100).replace(/\n/g, ' ')}`}`);
+        console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${task.id}${TRIALS > 1 ? ` #${trial}` : ''}  ${r.outcome}, ${r.llmCalls} calls${r.rateLimitHits ? ` (${r.rateLimitHits}×429)` : ''}, ${(r.durationMs / 1000).toFixed(1)}s${r.pass ? '' : `  — ${r.summary.slice(0, 100).replace(/\n/g, ' ')}`}`);
       }
     }
   } finally {
@@ -275,7 +318,7 @@ async function main() {
   const meta = {
     mode: MODE,
     date: new Date().toISOString(),
-    model: MODE === 'mock' ? 'scripted mock planner' : 'llama-3.1-8b-instant (Groq)',
+    model: MODE === 'mock' ? 'scripted mock planner' : `${args.model ?? DEFAULT_MODEL} (Groq)`,
     tasks: String(tasks.length),
     trials: String(TRIALS),
   };
