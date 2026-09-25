@@ -128,6 +128,10 @@ Paste your key, click **Load models** to list the models your key can actually u
 
 Keys are stored per provider in `chrome.storage.local` and read only by the background service worker. They are never exposed to content scripts, never shown back in full, and never committed. Keys and page content are only sent over HTTPS, except to servers on localhost. See [PRIVACY.md](PRIVACY.md).
 
+## 🧰 Maintaining
+
+Repository setup that lives in GitHub settings (secrets, description, branch protection) and how CI is organised: [docs/MAINTAINING.md](docs/MAINTAINING.md).
+
 ## 📄 License
 
 MIT
