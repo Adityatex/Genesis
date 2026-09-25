@@ -1,0 +1,21 @@
+<!doctype html>
+<html><head><title>Todos</title></head>
+<body>
+  <h1>Todos</h1>
+  <input id="new" placeholder="What needs to be done?" aria-label="New todo">
+  <ul id="list"></ul>
+  <script>
+    // JS-driven app: handles Enter itself and never submits a form
+    document.getElementById('new').addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const text = e.target.value.trim();
+      if (!text) return;
+      const li = document.createElement('li');
+      li.textContent = text;
+      document.getElementById('list').append(li);
+      e.target.value = '';
+      await fetch('/api/todo', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) });
+    });
+  </script>
+</body></html>

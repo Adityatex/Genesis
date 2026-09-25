@@ -59,6 +59,18 @@ npm run test:watch  # re-run on change
 
 CI runs typecheck, tests and a production build on every push and pull request, and uploads the unpacked extension as a build artifact.
 
+### Benchmark
+
+`eval/` is an end-to-end harness. It loads the built extension into Chromium, gives the agent tasks on local test pages through the real sidebar, and grades them by the requests that actually reached the server.
+
+```bash
+npm run build
+npm run eval:mock   # scripted planner, no API key (runs in CI)
+npm run eval        # live against Groq, reports success rate / LLM calls / tokens / time
+```
+
+The suite has 10 standard tasks (forms, dropdowns, radios, multi-page flows, slow backends, JS apps, extraction) and 5 hard ones aimed at known limits: long pages, custom widgets, iframes, Shadow DOM and rich-text editors. See [eval/README.md](eval/README.md).
+
 ### Loading in Browser
 
 1. Run `npm run build`
@@ -84,6 +96,7 @@ CI runs typecheck, tests and a production build on every push and pull request, 
 │   ├── automation/         # Trustworthy form autofill
 │   ├── dom/                # DOM extraction & element detection
 │   └── utils/              # Messaging, error handling, markdown
+├── eval/                   # End-to-end benchmark (Playwright + fixture pages)
 └── tests/                  # Vitest unit tests
 ```
 

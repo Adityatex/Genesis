@@ -12,6 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "eval": "tsx eval/run.mts",
+    "eval:mock": "tsx eval/run.mts --mock",
     "postinstall": "wxt prepare"
   },
   "dependencies": {
@@ -26,8 +28,10 @@
     "@wxt-dev/module-react": "^1.1.2",
     "autoprefixer": "^10.5.0",
     "happy-dom": "^20.14.5",
+    "playwright": "^1.63.0",
     "postcss": "^8.5.10",
     "tailwindcss": "^4.2.2",
+    "tsx": "^4.23.15",
     "typescript": "^5.8.3",
     "vitest": "^5.0.1",
     "wxt": "^0.20.20"

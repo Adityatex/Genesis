@@ -1,0 +1,37 @@
+<!doctype html>
+<html><head><title>Choose a plan</title>
+<style>
+  [role=listbox] { list-style: none; padding: 0; border: 1px solid #999; width: 200px; }
+  [role=listbox][hidden] { display: none; }
+  [role=option] { padding: 4px 8px; cursor: pointer; }
+  [role=option][aria-selected=true] { background: #def; }
+</style></head>
+<body>
+  <h1>Choose a plan</h1>
+  <!-- A div/li combobox like most design systems render, not a native <select> -->
+  <div class="combo">
+    <div id="combo" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-label="Plan">Select a plan ▾</div>
+    <ul id="plans" role="listbox" hidden>
+      <li role="option" data-value="free">Free</li>
+      <li role="option" data-value="pro">Pro</li>
+      <li role="option" data-value="team">Team</li>
+    </ul>
+  </div>
+  <p><button id="continue">Continue</button></p>
+  <script>
+    let plan = null;
+    const combo = document.getElementById('combo'), list = document.getElementById('plans');
+    combo.addEventListener('click', () => { list.hidden = !list.hidden; combo.setAttribute('aria-expanded', String(!list.hidden)); });
+    list.addEventListener('click', (e) => {
+      const opt = e.target.closest('[role=option]'); if (!opt) return;
+      plan = opt.dataset.value;
+      list.querySelectorAll('[role=option]').forEach(o => o.setAttribute('aria-selected', String(o === opt)));
+      combo.textContent = opt.textContent + ' ▾';
+      list.hidden = true;
+    });
+    document.getElementById('continue').addEventListener('click', async () => {
+      await fetch('/api/plan', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ plan }) });
+      document.body.insertAdjacentHTML('beforeend', '<p role="status">Plan saved.</p>');
+    });
+  </script>
+</body></html>

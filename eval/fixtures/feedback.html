@@ -1,0 +1,16 @@
+<!doctype html>
+<html><head><title>Rate your delivery</title></head>
+<body>
+  <h1>Rate your delivery</h1>
+  <form action="/api/feedback" method="post">
+    <fieldset><legend>Rating</legend>
+      <label><input type="radio" name="rating" value="1"> 1</label>
+      <label><input type="radio" name="rating" value="2"> 2</label>
+      <label><input type="radio" name="rating" value="3"> 3</label>
+      <label><input type="radio" name="rating" value="4"> 4</label>
+      <label><input type="radio" name="rating" value="5"> 5</label>
+    </fieldset>
+    <p><label for="comment">Comment</label><br><textarea id="comment" name="comment" placeholder="Tell us more"></textarea></p>
+    <button type="submit">Send feedback</button>
+  </form>
+</body></html>

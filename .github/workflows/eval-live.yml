@@ -1,0 +1,46 @@
+name: Live eval
+
+# Runs the benchmark against the real Groq API. Manual only: it costs API
+# calls and results vary run to run. Needs a GROQ_API_KEY repository secret.
+on:
+  workflow_dispatch:
+    inputs:
+      trials:
+        description: Trials per task
+        default: '3'
+      tasks:
+        description: Comma-separated task ids (blank = all)
+        default: ''
+
+jobs:
+  eval-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+
+      - name: Live eval
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TRIALS: ${{ inputs.trials }}
+          TASKS: ${{ inputs.tasks }}
+        run: npm run eval -- --trials "$TRIALS" ${TASKS:+--task "$TASKS"}
+
+      - name: Job summary
+        if: always()
+        run: cat eval/results/latest-live.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-live-results
+          path: eval/results

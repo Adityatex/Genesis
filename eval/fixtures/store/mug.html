@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><title>Blue Mug - Kitchen Store</title></head>
+<body>
+  <nav><a href="/store/index.html">Home</a> | <a href="/store/products.html">Products</a> | <a href="/store/about.html">About us</a></nav>
+  <h1>Blue Mug</h1>
+  <p>A 350ml stoneware mug. $14.</p>
+  <button id="add">Add to cart</button>
+  <p id="status" role="status"></p>
+  <script>
+    document.getElementById('add').addEventListener('click', async () => {
+      await fetch('/api/cart', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ item: 'blue-mug' }) });
+      document.getElementById('status').textContent = 'Blue Mug added to your cart.';
+    });
+  </script>
+</body></html>

@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><title>Team chat</title>
+<style>#editor { border: 1px solid #999; min-height: 60px; width: 400px; padding: 4px; }</style></head>
+<body>
+  <h1>#general</h1>
+  <!-- Rich-text editor (like Slack, Gmail, X): contenteditable, not an <input> -->
+  <div id="editor" contenteditable="true" role="textbox" aria-label="Message #general"></div>
+  <button id="send">Send</button>
+  <script>
+    document.getElementById('send').addEventListener('click', async () => {
+      const text = document.getElementById('editor').innerText.trim();
+      await fetch('/api/message', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) });
+    });
+  </script>
+</body></html>

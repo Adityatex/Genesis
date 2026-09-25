@@ -20,3 +20,6 @@ Thumbs.db
 # Logs
 *.log
 build_log.txt
+
+# Eval results (raw runs)
+eval/results/

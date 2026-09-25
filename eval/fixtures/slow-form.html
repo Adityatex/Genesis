@@ -1,0 +1,10 @@
+<!doctype html>
+<html><head><title>Book a table</title></head>
+<body>
+  <h1>Book a table</h1>
+  <!-- The server takes 2.5s to answer, like a real backend under load -->
+  <form action="/api/slow/booking" method="post">
+    <p><input name="guests" type="number" placeholder="Number of guests" aria-label="Number of guests"></p>
+    <p><button type="submit">Book now</button></p>
+  </form>
+</body></html>

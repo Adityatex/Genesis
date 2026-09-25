@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><title>Newsletter</title></head>
+<body>
+  <h1>Weekly Newsletter</h1>
+  <p>Get one email a week with our best articles.</p>
+  <!-- Web component: its button lives inside an open shadow root -->
+  <newsletter-signup></newsletter-signup>
+  <script>
+    customElements.define('newsletter-signup', class extends HTMLElement {
+      connectedCallback() {
+        const root = this.attachShadow({ mode: 'open' });
+        root.innerHTML = '<button>Subscribe</button><p id="s"></p>';
+        root.querySelector('button').addEventListener('click', async () => {
+          await fetch('/api/subscribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+          root.getElementById('s').textContent = 'Subscribed!';
+        });
+      }
+    });
+  </script>
+</body></html>
