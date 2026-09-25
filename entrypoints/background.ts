@@ -116,7 +116,9 @@ export default defineBackground(() => {
               const sessionData = JSON.stringify({
                 goal,
                 actionHistory: updatedHistory,
-                stepCount: (stepCount || 0) + 1,
+                // stepCount is already this step's number; the resumed loop
+                // increments before its next step (+1 here counted it twice)
+                stepCount: stepCount || 0,
               });
               await chrome.storage.local.set({ genesis_agent_session: sessionData });
               console.log('[Genesis] Session pre-saved before action:', parsedAction.action);

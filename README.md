@@ -24,7 +24,7 @@ Open-source Brave/Chrome extension (Manifest V3) that injects a floating AI-powe
 - **UI:** React + TypeScript
 - **Styling:** Tailwind CSS v4 with a dark glassmorphic theme
 - **Testing:** Vitest + happy-dom, GitHub Actions CI (typecheck → test → build)
-- **AI:** Groq API (default `openai/gpt-oss-20b`, BYOK)
+- **AI:** Groq API (default `qwen/qwen3.8-27b`, any Groq model via settings, BYOK)
 - **Architecture:** Manifest V3, Shadow DOM isolation, minimal permissions (`activeTab`, `scripting`, `storage`)
 
 ## 🚀 Getting Started
@@ -70,6 +70,15 @@ npm run eval        # live against Groq, reports success rate / LLM calls / toke
 ```
 
 The suite has 10 standard tasks (forms, dropdowns, radios, multi-page flows, slow backends, JS apps, extraction) and 5 hard ones aimed at known limits: long pages, custom widgets, iframes, Shadow DOM and rich-text editors. See [eval/README.md](eval/README.md).
+
+**Baseline** (2026-09-25, Groq free tier, [full results](eval/BASELINE.md)):
+
+| Model | Standard tasks | Hard tasks | Avg tokens / task |
+|---|---|---|---|
+| `qwen/qwen3.8-27b` (default) | 30/30 | 0/5 | 2,412 |
+| `openai/gpt-oss-120b` | 30/30 | 0/5 | 3,141 |
+
+The hard tasks fail because of how the agent sees and acts on the page, not because of the model. They're the targets for the next round of work.
 
 ### Loading in Browser
 

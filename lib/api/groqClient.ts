@@ -4,9 +4,11 @@
 import { withTimeout, formatError } from '@/lib/utils/errorHandler';
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-// llama-3.1-8b-instant was retired by Groq (404 model_not_found).
+// Chosen by the eval baseline: qwen3.8-27b and gpt-oss-120b both passed 30/30
+// standard runs; qwen used ~23% fewer tokens and was ~24% faster.
+// (llama-3.1-8b-instant, the original default, was retired by Groq.)
 // Users/evals can override via chrome.storage.local 'groqModel'.
-export const DEFAULT_MODEL = 'openai/gpt-oss-20b';
+export const DEFAULT_MODEL = 'qwen/qwen3.8-27b';
 const REQUEST_TIMEOUT = 15000;
 const GROQ_MAX_RETRIES = 3;
 
