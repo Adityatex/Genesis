@@ -24,7 +24,7 @@ Open-source Brave/Chrome extension (Manifest V3) that injects a floating AI-powe
 - **UI:** React + TypeScript
 - **Styling:** Tailwind CSS v4 with a dark glassmorphic theme
 - **Testing:** Vitest + happy-dom, GitHub Actions CI (typecheck → test → build)
-- **AI:** Groq API (`llama-3.1-8b-instant`, BYOK)
+- **AI:** Groq API (default `openai/gpt-oss-20b`, BYOK)
 - **Architecture:** Manifest V3, Shadow DOM isolation, minimal permissions (`activeTab`, `scripting`, `storage`)
 
 ## 🚀 Getting Started

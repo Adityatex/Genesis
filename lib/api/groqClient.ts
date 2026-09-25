@@ -4,7 +4,9 @@
 import { withTimeout, formatError } from '@/lib/utils/errorHandler';
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL = 'llama-3.1-8b-instant';
+// llama-3.1-8b-instant was retired by Groq (404 model_not_found).
+// Users/evals can override via chrome.storage.local 'groqModel'.
+export const DEFAULT_MODEL = 'openai/gpt-oss-20b';
 const REQUEST_TIMEOUT = 15000;
 const GROQ_MAX_RETRIES = 3;
 
@@ -30,12 +32,49 @@ interface GroqResponse {
   };
 }
 
+export interface GroqAuth {
+  apiKey: string;
+  model: string;
+}
+
+/**
+ * Groq rejects some model outputs with a 400 but includes what the model
+ * generated as `failed_generation`. Returns that output so the caller can use
+ * or validate it, or null for any other error.
+ * - tool_use_failed: gpt-oss wrapped its answer in a tool call although no
+ *   tools were offered, e.g. {"name": "assistant", "arguments": {"action": ...}}
+ *   → returns the arguments as JSON.
+ * - json_validate_failed: JSON mode output wasn't valid JSON (often empty)
+ *   → returns the raw text; the agent's parser reports it and the loop retries.
+ */
+export function recoverFailedGeneration(errorBody: string): string | null {
+  let err: any;
+  try {
+    err = JSON.parse(errorBody)?.error;
+  } catch {
+    return null;
+  }
+  if (typeof err?.failed_generation !== 'string') return null;
+
+  if (err.code === 'json_validate_failed') return err.failed_generation;
+  if (err.code === 'tool_use_failed') {
+    try {
+      const call = JSON.parse(err.failed_generation);
+      const args = typeof call?.arguments === 'string' ? JSON.parse(call.arguments) : call?.arguments;
+      if (args && typeof args === 'object') return JSON.stringify(args);
+    } catch { /* fall through to raw text */ }
+    return err.failed_generation;
+  }
+  return null;
+}
+
 async function callGroq(
   messages: GroqMessage[],
-  apiKey: string,
+  { apiKey, model }: GroqAuth,
   maxTokens = 2048,
   temperature = 0.3,
   topP = 1,
+  jsonMode = false,
 ): Promise<string> {
   for (let attempt = 0; attempt <= GROQ_MAX_RETRIES; attempt++) {
     try {
@@ -47,11 +86,12 @@ async function callGroq(
             'Authorization': `Bearer ${apiKey}`,
           },
           body: JSON.stringify({
-            model: MODEL,
+            model,
             messages,
             max_tokens: maxTokens,
             temperature,
             top_p: topP,
+            ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
           }),
         }),
         REQUEST_TIMEOUT,
@@ -60,6 +100,11 @@ async function callGroq(
 
       if (!response.ok) {
         const errorBody = await response.text().catch(() => 'Unknown error');
+        if (response.status === 400) {
+          const recovered = recoverFailedGeneration(errorBody);
+          if (recovered !== null) return recovered;
+        }
+
         if (response.status === 401) {
           throw new Error('Invalid API key. Please update your Groq API key in the popup.');
         }
@@ -102,7 +147,7 @@ async function callGroq(
 /**
  * Summarize page content
  */
-export async function summarizePage(text: string, apiKey: string): Promise<string> {
+export async function summarizePage(text: string, auth: GroqAuth): Promise<string> {
   return callGroq([
     {
       role: 'system',
@@ -112,13 +157,13 @@ export async function summarizePage(text: string, apiKey: string): Promise<strin
       role: 'user',
       content: `Please summarize the following webpage content:\n\n${text}`,
     },
-  ], apiKey);
+  ], auth);
 }
 
 /**
  * Explain selected text
  */
-export async function explainText(text: string, apiKey: string): Promise<string> {
+export async function explainText(text: string, auth: GroqAuth): Promise<string> {
   return callGroq([
     {
       role: 'system',
@@ -128,13 +173,13 @@ export async function explainText(text: string, apiKey: string): Promise<string>
       role: 'user',
       content: `Please explain the following text:\n\n"${text}"`,
     },
-  ], apiKey);
+  ], auth);
 }
 
 /**
  * Free-form chat about the page content
  */
-export async function chatWithPage(message: string, pageContext: string, apiKey: string): Promise<string> {
+export async function chatWithPage(message: string, pageContext: string, auth: GroqAuth): Promise<string> {
   return callGroq([
     {
       role: 'system',
@@ -144,7 +189,7 @@ export async function chatWithPage(message: string, pageContext: string, apiKey:
       role: 'user',
       content: message,
     },
-  ], apiKey);
+  ], auth);
 }
 
 /**
@@ -155,7 +200,7 @@ export async function planAgentStep(
   goal: string,
   domSnapshot: string,
   actionHistory: string[],
-  apiKey: string,
+  auth: GroqAuth,
 ): Promise<string> {
   const historyText = actionHistory.length > 0
     ? `\n\nACTION HISTORY (steps already taken):\n${actionHistory.map((a, i) => `${i + 1}. ${a}`).join('\n')}`
@@ -192,6 +237,6 @@ RULES:
       role: 'user',
       content: `GOAL: ${goal}\n\nCURRENT PAGE DOM SNAPSHOT:\n${domSnapshot.substring(0, 6000)}${historyText}\n\nWhat is the NEXT single action? Respond with JSON only.`,
     },
-  ], apiKey, 256, 0, 1);
+  ], auth, 1024, 0, 1, true); // headroom: reasoning models think before answering
 }
 

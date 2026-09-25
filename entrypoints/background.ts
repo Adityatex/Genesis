@@ -1,7 +1,7 @@
 // entrypoints/background.ts
 // Background service worker — message router, Groq API proxy, storage management
 
-import { summarizePage, explainText, chatWithPage, planAgentStep } from '@/lib/api/groqClient';
+import { summarizePage, explainText, chatWithPage, planAgentStep, DEFAULT_MODEL, type GroqAuth } from '@/lib/api/groqClient';
 import { formatError } from '@/lib/utils/errorHandler';
 import { parseAgentAction } from '@/lib/agent/parseAction';
 
@@ -28,6 +28,11 @@ export default defineBackground(() => {
     return stored.groqApiKey || '';
   }
 
+  async function getAuth(): Promise<GroqAuth> {
+    const stored: any = await browser.storage.local.get(['groqApiKey', 'groqModel']);
+    return { apiKey: stored.groqApiKey || '', model: stored.groqModel || DEFAULT_MODEL };
+  }
+
   // Central message handler
   browser.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
     const { action, payload } = message;
@@ -51,46 +56,46 @@ export default defineBackground(() => {
           }
 
           case 'SUMMARIZE': {
-            const apiKey = await getApiKey();
-            if (!apiKey) {
+            const auth = await getAuth();
+            if (!auth.apiKey) {
               sendResponse({ success: false, error: 'No API key configured. Please set your Groq API key.' });
               break;
             }
-            const summary = await summarizePage(payload.text, apiKey);
+            const summary = await summarizePage(payload.text, auth);
             sendResponse({ success: true, data: { result: summary } });
             break;
           }
 
           case 'EXPLAIN': {
-            const apiKey = await getApiKey();
-            if (!apiKey) {
+            const auth = await getAuth();
+            if (!auth.apiKey) {
               sendResponse({ success: false, error: 'No API key configured.' });
               break;
             }
-            const explanation = await explainText(payload.text, apiKey);
+            const explanation = await explainText(payload.text, auth);
             sendResponse({ success: true, data: { result: explanation } });
             break;
           }
 
           case 'CHAT': {
-            const apiKey = await getApiKey();
-            if (!apiKey) {
+            const auth = await getAuth();
+            if (!auth.apiKey) {
               sendResponse({ success: false, error: 'No API key configured.' });
               break;
             }
-            const reply = await chatWithPage(payload.message, payload.pageContext || '', apiKey);
+            const reply = await chatWithPage(payload.message, payload.pageContext || '', auth);
             sendResponse({ success: true, data: { result: reply } });
             break;
           }
 
           case 'AGENT_STEP': {
-            const apiKey = await getApiKey();
-            if (!apiKey) {
+            const auth = await getAuth();
+            if (!auth.apiKey) {
               sendResponse({ success: false, error: 'No API key configured.' });
               break;
             }
             const { goal, domSnapshot, actionHistory, stepCount } = payload;
-            const rawResponse = await planAgentStep(goal, domSnapshot, actionHistory || [], apiKey);
+            const rawResponse = await planAgentStep(goal, domSnapshot, actionHistory || [], auth);
             console.log('[Genesis] LLM raw response:', rawResponse);
             const parsed = parseAgentAction(rawResponse);
             if (!parsed.ok) {
