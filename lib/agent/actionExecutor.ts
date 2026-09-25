@@ -103,6 +103,105 @@ function insertIntoEditable(el: HTMLElement, text: string, clear: boolean): void
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
 
 /**
+ * Scroll into view, press/release, then exactly ONE click. Menus and custom
+ * widgets often open on mousedown; a second click would re-toggle checkboxes.
+ */
+async function clickElement(el: HTMLElement): Promise<void> {
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  await sleep(300);
+  const win = winOf(el);
+  const pointerInit = { bubbles: true, cancelable: true, composed: true, view: win };
+  el.dispatchEvent(new win.PointerEvent('pointerdown', pointerInit));
+  el.dispatchEvent(new win.MouseEvent('mousedown', pointerInit));
+  el.focus();
+  el.dispatchEvent(new win.PointerEvent('pointerup', pointerInit));
+  el.dispatchEvent(new win.MouseEvent('mouseup', pointerInit));
+  el.click();
+}
+
+const OPTION_SELECTOR = '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="treeitem"]';
+
+function isShown(el: Element): boolean {
+  const rect = el.getBoundingClientRect();
+  if (rect.width === 0 && rect.height === 0) return false;
+  const style = winOf(el).getComputedStyle(el);
+  return style.display !== 'none' && style.visibility !== 'hidden';
+}
+
+/** Visible options of the popup a custom dropdown opened. */
+function findPopupOptions(trigger: HTMLElement): HTMLElement[] {
+  // Prefer the list the trigger says it controls; else any visible options in
+  // the same document or shadow root (popups are often portaled to <body>)
+  const root = trigger.getRootNode() as Document | ShadowRoot;
+  const doc = trigger.ownerDocument;
+  const ids = [trigger.getAttribute('aria-controls'), trigger.getAttribute('aria-owns')]
+    .join(' ').split(/\s+/).filter(Boolean);
+  const scopes: ParentNode[] = ids
+    .map(id => root.getElementById?.(id) ?? doc.getElementById(id))
+    .filter((x): x is HTMLElement => !!x);
+  if (scopes.length === 0) {
+    scopes.push(root);
+    if (root !== doc) scopes.push(doc);
+  }
+  const found = new Set<HTMLElement>();
+  for (const scope of scopes) {
+    scope.querySelectorAll<HTMLElement>(OPTION_SELECTOR).forEach(o => { if (isShown(o)) found.add(o); });
+  }
+  return [...found];
+}
+
+/** Match the model's choice by value, then exact label, then partial label. */
+function matchOption<T>(items: T[], text: (t: T) => string, value: (t: T) => string, wanted: string): T | undefined {
+  const w = wanted.trim().toLowerCase();
+  return items.find(o => value(o).toLowerCase() === w)
+    || items.find(o => norm(text(o)).toLowerCase() === w)
+    || items.find(o => w !== '' && norm(text(o)).toLowerCase().includes(w));
+}
+
+const textOf = (el: HTMLElement) => norm(el.innerText ?? el.textContent ?? '');
+
+/**
+ * select on a non-native dropdown (combobox, listbox button, menu button):
+ * open it, click the matching option, then confirm the choice stuck.
+ */
+async function selectCustom(trigger: HTMLElement, elementId: number, wanted: string): Promise<string> {
+  // The model may have targeted an option directly
+  if (trigger.matches(OPTION_SELECTOR)) {
+    await clickElement(trigger);
+    return `✅ Chose "${textOf(trigger)}" [${elementId}]`;
+  }
+
+  let options = findPopupOptions(trigger);
+  if (options.length === 0) {
+    await clickElement(trigger);
+    await sleep(300);
+    options = findPopupOptions(trigger);
+  }
+  if (options.length === 0) {
+    return `❌ Element [${elementId}] is not a dropdown: clicking it showed no options. Click the element that opens the list, then choose an option.`;
+  }
+
+  const option = matchOption(options, textOf, o => o.getAttribute('data-value') ?? '', wanted);
+  if (!option) {
+    const available = options.slice(0, 15).map(o => `"${textOf(o)}"`).join(', ');
+    return `❌ No option matching "${wanted}" in dropdown [${elementId}]. Options: ${available}`;
+  }
+  const label = textOf(option);
+  await clickElement(option);
+  await sleep(200);
+
+  // Confirm: the option is marked selected, or the trigger now shows it
+  const shows = (s: string) => s.toLowerCase().includes(label.toLowerCase());
+  const confirmed = option.getAttribute('aria-selected') === 'true'
+    || option.getAttribute('aria-checked') === 'true'
+    || shows(textOf(trigger))
+    || shows((trigger as HTMLInputElement).value ?? '');
+  return confirmed
+    ? `✅ Selected "${label}" in dropdown [${elementId}]`
+    : `⚠️ Clicked option "${label}" in dropdown [${elementId}] but could not confirm it was selected`;
+}
+
+/**
  * Type into a field and report what actually happened. Reading the result back
  * matters: reporting "✅ Typed" when nothing changed made the agent claim tasks
  * were done when they weren't.
@@ -148,19 +247,7 @@ export async function executeAction(action: AgentAction): Promise<string> {
       const el = getElementById(action.elementId);
       if (!el) return `❌ Element [${action.elementId}] not found on page.`;
       
-      // Scroll into view first
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      await sleep(300);
-      
-      // Press/release first (menus and custom widgets often listen for these),
-      // then exactly ONE click — a second click would re-toggle checkboxes/menus.
-      const pointerInit = { bubbles: true, cancelable: true, composed: true, view: window };
-      el.dispatchEvent(new PointerEvent('pointerdown', pointerInit));
-      el.dispatchEvent(new MouseEvent('mousedown', pointerInit));
-      el.focus();
-      el.dispatchEvent(new PointerEvent('pointerup', pointerInit));
-      el.dispatchEvent(new MouseEvent('mouseup', pointerInit));
-      el.click();
+      await clickElement(el);
 
       const label = el.innerText?.trim().substring(0, 40) || el.getAttribute('aria-label') || `element ${action.elementId}`;
       return `✅ Clicked "${label}"`;
@@ -174,16 +261,14 @@ export async function executeAction(action: AgentAction): Promise<string> {
 
     case 'select': {
       if (action.elementId === undefined) return '❌ No element ID provided for select.';
-      const el = getElementById(action.elementId) as HTMLSelectElement | null;
-      if (!el || el.tagName !== 'SELECT') return `❌ Element [${action.elementId}] is not a select dropdown.`;
-      
+      const target = getElementById(action.elementId);
+      if (!target) return `❌ Element [${action.elementId}] not found.`;
+      if (target.tagName !== 'SELECT') return selectCustom(target, action.elementId, action.value || '');
+      const el = target as HTMLSelectElement;
+
       // The model may pass either the option's value or its visible label
-      const wanted = (action.value || '').trim().toLowerCase();
       const options = Array.from(el.options);
-      const option =
-        options.find(o => o.value.toLowerCase() === wanted) ||
-        options.find(o => o.text.trim().toLowerCase() === wanted) ||
-        options.find(o => wanted !== '' && o.text.trim().toLowerCase().includes(wanted));
+      const option = matchOption(options, o => o.text, o => o.value, action.value || '');
       if (!option) {
         const available = options.slice(0, 15).map(o => `"${o.text.trim()}"`).join(', ');
         return `❌ No option matching "${action.value}" in dropdown [${action.elementId}]. Options: ${available}`;

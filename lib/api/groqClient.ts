@@ -217,7 +217,7 @@ AVAILABLE ACTIONS (respond with exactly ONE as JSON):
 - {"action": "click", "elementId": <number>} — Click an interactive element by its ID
 - {"action": "type", "elementId": <number>, "text": "<text>"} — Append text to an input
 - {"action": "clear_and_type", "elementId": <number>, "text": "<text>"} — Clear input then type text
-- {"action": "select", "elementId": <number>, "value": "<option label>"} — Select a dropdown option (use one of its listed options=[...])
+- {"action": "select", "elementId": <number>, "value": "<option label>"} — Choose an option in a dropdown: a native <select> (use one of its options=[...]) or a custom one (combobox, [popup=listbox], ...), which it opens for you
 - {"action": "navigate", "url": "<full url>"} — Navigate to a URL
 - {"action": "scroll", "direction": "up"|"down"} — Scroll the page
 - {"action": "press_key", "key": "<key name>", "elementId": <optional number>} — Press a keyboard key (Enter, Tab, Escape, etc.)

@@ -157,3 +157,50 @@ describe('type / clear_and_type', () => {
     expect(result).toMatch(/^❌ Element \[0\] <button> is not a text field/);
   });
 });
+
+describe('select on custom (ARIA) dropdowns', () => {
+  beforeEach(() => {
+    // happy-dom has no layout; give elements a size so visibility checks pass
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      { x: 0, y: 0, width: 100, height: 20, top: 0, left: 0, right: 100, bottom: 20, toJSON: () => ({}) },
+    );
+  });
+
+  function mountCombobox() {
+    document.body.innerHTML = `
+      <div id="combo" role="combobox" aria-controls="plans" aria-expanded="false" data-genesis-id="0">Select a plan</div>
+      <ul id="plans" role="listbox" style="display:none">
+        <li role="option" data-value="free">Free</li>
+        <li role="option" data-value="pro">Pro</li>
+      </ul>`;
+    const combo = document.getElementById('combo')!;
+    const list = document.getElementById('plans')!;
+    combo.addEventListener('click', () => { list.style.display = list.style.display === 'none' ? '' : 'none'; });
+    list.addEventListener('click', e => {
+      const opt = (e.target as Element).closest('[role=option]')!;
+      opt.setAttribute('aria-selected', 'true');
+      combo.textContent = opt.textContent!;
+      list.style.display = 'none';
+    });
+    return combo;
+  }
+
+  it('opens the dropdown, clicks the matching option and confirms it', async () => {
+    const combo = mountCombobox();
+    const result = await executeAction({ action: 'select', elementId: 0, value: 'pro' });
+    expect(combo.textContent).toBe('Pro');
+    expect(result).toBe('✅ Selected "Pro" in dropdown [0]');
+  });
+
+  it('lists the real options when nothing matches', async () => {
+    mountCombobox();
+    const result = await executeAction({ action: 'select', elementId: 0, value: 'Enterprise' });
+    expect(result).toMatch(/No option matching "Enterprise".*"Free", "Pro"/);
+  });
+
+  it('says so when the element opens no list', async () => {
+    document.body.innerHTML = '<button data-genesis-id="0">Continue</button>';
+    const result = await executeAction({ action: 'select', elementId: 0, value: 'Pro' });
+    expect(result).toMatch(/^❌ Element \[0\] is not a dropdown/);
+  });
+});

@@ -180,11 +180,9 @@ export const TASKS: Task[] = [
     goal: 'Select the Pro plan and click Continue',
     check: r => hit(r.events, '/api/plan', d => d.plan === 'pro'),
     mockPlan: [
-      { action: 'click', target: /"Plan"/ },
-      { action: 'click', target: /"Pro"/ },
+      { action: 'select', target: /"Plan"/, value: 'Pro' },
       { action: 'click', target: /"Continue"/ },
     ],
-    knownIssue: 'Non-native widgets (aria-haspopup div, role=option) are not in the snapshot',
   },
   {
     id: 'iframe-payment',

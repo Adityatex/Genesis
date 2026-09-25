@@ -12,6 +12,25 @@ const INTERACTIVE_SELECTOR = [
   '[role="tab"]',
   '[role="menuitem"]',
   '[contenteditable="true"]',
+  // ARIA widgets: how design systems (MUI, Radix, React Select, ...) build
+  // dropdowns, toggles and menus out of divs
+  '[role="checkbox"]',
+  '[role="radio"]',
+  '[role="switch"]',
+  '[role="combobox"]',
+  '[role="option"]',
+  '[role="menuitemcheckbox"]',
+  '[role="menuitemradio"]',
+  '[role="treeitem"]',
+  '[role="slider"]',
+  '[role="spinbutton"]',
+  '[role="searchbox"]',
+  '[role="textbox"]',
+  '[aria-haspopup]:not([aria-haspopup="false"])',
+  // Other clickable things without a semantic role
+  'summary',
+  '[onclick]',
+  '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
 // Subtrees that never contain anything the agent can use
@@ -148,6 +167,8 @@ export interface SnapshotElement {
   placeholder?: string;
   checked?: boolean;
   disabled?: boolean;
+  /** ARIA state, e.g. expanded / collapsed / selected / popup=listbox */
+  states?: string[];
   options?: string[];
   /** Label of the iframe the element is in, if any. */
   frame?: string;
@@ -164,6 +185,23 @@ function getSelectOptions(el: Element): string[] | undefined {
     .filter(Boolean);
   if (labels.length <= MAX_SELECT_OPTIONS) return labels;
   return [...labels.slice(0, MAX_SELECT_OPTIONS), `…+${labels.length - MAX_SELECT_OPTIONS} more`];
+}
+
+/** ARIA state worth showing: lets the model tell an open dropdown from a closed one. */
+function getAriaStates(el: Element): string[] | undefined {
+  const states: string[] = [];
+  const expanded = el.getAttribute('aria-expanded');
+  if (expanded === 'true') states.push('expanded');
+  if (expanded === 'false') states.push('collapsed');
+  if (el.getAttribute('aria-selected') === 'true') states.push('selected');
+  const checked = el.getAttribute('aria-checked');
+  if (checked === 'true') states.push('checked');
+  if (checked === 'mixed') states.push('partially checked');
+  if (el.getAttribute('aria-pressed') === 'true') states.push('pressed');
+  if (el.getAttribute('aria-disabled') === 'true') states.push('disabled');
+  const popup = el.getAttribute('aria-haspopup');
+  if (popup && popup !== 'false') states.push(`popup=${popup === 'true' ? 'menu' : popup}`);
+  return states.length ? states : undefined;
 }
 
 function describe(el: Element, id: number, frame: string | undefined): SnapshotElement {
@@ -184,6 +222,7 @@ function describe(el: Element, id: number, frame: string | undefined): SnapshotE
     placeholder: el.getAttribute('placeholder') || undefined,
     checked: input.checked || undefined,
     disabled: input.disabled || undefined,
+    states: getAriaStates(el),
     options: getSelectOptions(el),
     frame,
     selector: `[data-genesis-id="${id}"]`,
@@ -192,6 +231,7 @@ function describe(el: Element, id: number, frame: string | undefined): SnapshotE
 
 export function formatElement(el: SnapshotElement): string {
   let entry = `[${el.id}] <${el.tag}>`;
+  if (el.role !== el.tag) entry += ` role="${el.role}"`;
   if (el.type) entry += ` type="${el.type}"`;
   if (el.label) entry += ` "${el.label}"`;
   if (el.placeholder) entry += ` placeholder="${el.placeholder}"`;
@@ -199,6 +239,7 @@ export function formatElement(el: SnapshotElement): string {
   if (el.value) entry += ` value="${el.value}"`;
   if (el.checked) entry += ` [checked]`;
   if (el.disabled) entry += ` [disabled]`;
+  if (el.states) entry += ` [${el.states.join(', ')}]`;
   if (el.options) entry += ` options=[${el.options.map(o => JSON.stringify(o)).join(', ')}]`;
   if (el.frame) entry += ` (in frame "${el.frame}")`;
   return entry;

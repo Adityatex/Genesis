@@ -77,3 +77,18 @@ describe('shadow DOM', () => {
     expect(createDOMSnapshot().elements.map(e => e.label)).toEqual(['Page button']);
   });
 });
+
+describe('ARIA widgets', () => {
+  it('lists custom widgets with their role and state', () => {
+    document.body.innerHTML = `
+      <div tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-label="Plan">Select a plan</div>
+      <div role="switch" aria-checked="true" aria-label="Dark mode"></div>
+      <ul role="listbox"><li role="option" aria-selected="true">Pro</li></ul>`;
+    const lines = createDOMSnapshot().text.split('\n').filter(l => l.startsWith('['));
+    expect(lines).toEqual([
+      '[0] <div> "Plan" [collapsed, popup=listbox]',
+      '[1] <div> role="switch" "Dark mode" [checked]',
+      '[2] <li> role="option" "Pro" [selected]',
+    ]);
+  });
+});
