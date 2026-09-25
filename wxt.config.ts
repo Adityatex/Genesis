@@ -16,7 +16,7 @@ export default defineConfig({
     name: 'Genesis - AI Browser Automation',
     version: '1.0.0',
     description: 'AI-powered browser automation assistant for text extraction, trustworthy form filling, and intelligent page summarization.',
-    permissions: ['activeTab', 'scripting', 'storage'],
+    permissions: ['activeTab', 'scripting', 'storage', 'debugger'],
     // <all_urls> covers every LLM provider, including a local Ollama
     host_permissions: ['<all_urls>'],
     icons: {

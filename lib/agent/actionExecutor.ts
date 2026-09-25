@@ -1,7 +1,8 @@
 // lib/agent/actionExecutor.ts
 // Executes structured actions on the DOM returned by the LLM agent
 
-import { getElementById, findElements, formatElement, pageText } from '@/lib/agent/domSnapshot';
+import { getElementById, findElements, formatElement, pageText, shadowRootOf } from '@/lib/agent/domSnapshot';
+import { keyParams, normalizeKey } from '@/lib/agent/keys';
 
 export interface AgentAction {
   action: 'click' | 'type' | 'clear_and_type' | 'select' | 'navigate' | 'scroll' | 'read' | 'wait' | 'done' | 'press_key' | 'find';
@@ -20,33 +21,116 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Legacy keyCode values — many sites still check `e.keyCode === 13`
-const KEY_CODES: Record<string, number> = {
-  Enter: 13, Tab: 9, Escape: 27, Backspace: 8, ' ': 32,
-  ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40,
-};
-
-function makeKeyEvent(type: 'keydown' | 'keypress' | 'keyup', key: string): KeyboardEvent {
-  const event = new KeyboardEvent(type, {
-    key,
-    code: key.length === 1 ? `Key${key.toUpperCase()}` : key,
-    bubbles: true,
-    cancelable: true,
-    composed: true,
-  });
-  const keyCode = KEY_CODES[key] ?? (key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0);
-  // keyCode/which can't be set through the constructor
+/** Scripted key event (fallback when trusted input isn't available). */
+function makeKeyEvent(type: 'keydown' | 'keypress' | 'keyup', rawKey: string): KeyboardEvent {
+  const { key, code, keyCode } = keyParams(rawKey);
+  const event = new KeyboardEvent(type, { key, code, bubbles: true, cancelable: true, composed: true });
+  // Legacy keyCode/which (many sites still check `e.keyCode === 13`) can't be
+  // set through the constructor
   Object.defineProperty(event, 'keyCode', { get: () => keyCode });
   Object.defineProperty(event, 'which', { get: () => keyCode });
   return event;
 }
-
 
 // Elements can live in iframes, which have their own window and constructors,
 // so `el instanceof HTMLInputElement` is false there. Check tag names instead
 // and use the element's own window.
 function winOf(el: Element): Window & typeof globalThis {
   return (el.ownerDocument.defaultView ?? window) as Window & typeof globalThis;
+}
+
+// ---------------------------------------------------------------- trusted input
+// Real mouse/keyboard input via the background's Chrome DevTools Protocol
+// session (lib/agent/trustedInput.ts). Pages see isTrusted === true. When it's
+// unavailable (turned off, another debugger attached, unit tests), callers fall
+// back to scripted DOM events.
+
+type TrustedRequest =
+  | { kind: 'click'; x: number; y: number }
+  | { kind: 'type'; text: string }
+  | { kind: 'key'; key: string };
+
+async function requestTrusted(payload: TrustedRequest): Promise<boolean> {
+  try {
+    const res = await browser.runtime.sendMessage({ action: 'TRUSTED_INPUT', payload });
+    return res?.success === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Center of `el` in the top-level viewport, or null if it's not on screen. */
+function viewportCenter(el: Element): { x: number; y: number } | null {
+  const rect = el.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return null;
+  let x = rect.left + rect.width / 2;
+  let y = rect.top + rect.height / 2;
+  // Add the offsets of any (same-origin) iframes the element is nested in
+  for (let frame = winOf(el).frameElement; frame; frame = winOf(frame).frameElement) {
+    const fr = frame.getBoundingClientRect();
+    x += fr.left + frame.clientLeft;
+    y += fr.top + frame.clientTop;
+  }
+  if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return null;
+  return { x, y };
+}
+
+/** Topmost element at a viewport point, looking into shadow roots and iframes. */
+function deepElementFromPoint(x: number, y: number): Element | null {
+  let hit = document.elementFromPoint(x, y);
+  let ox = 0;
+  let oy = 0;
+  for (let depth = 0; hit && depth < 20; depth++) {
+    const shadow = shadowRootOf(hit);
+    const inner = shadow?.elementFromPoint(x - ox, y - oy);
+    if (inner && inner !== hit) {
+      hit = inner;
+      continue;
+    }
+    const frameDoc = hit.tagName === 'IFRAME' ? (hit as HTMLIFrameElement).contentDocument : null;
+    if (frameDoc) {
+      const fr = hit.getBoundingClientRect();
+      ox += fr.left + hit.clientLeft;
+      oy += fr.top + hit.clientTop;
+      const inFrame = frameDoc.elementFromPoint(x - ox, y - oy);
+      if (inFrame) {
+        hit = inFrame;
+        continue;
+      }
+    }
+    break;
+  }
+  return hit;
+}
+
+/** Parent across shadow-root and iframe boundaries. */
+function composedParent(node: Element): Element | null {
+  if (node.parentElement) return node.parentElement;
+  const root = node.getRootNode();
+  if (root.nodeType === Node.DOCUMENT_FRAGMENT_NODE) return (root as ShadowRoot).host;
+  return winOf(node).frameElement;
+}
+
+/** Whether a click at the hit element reaches `target` (it's the target, inside it, or wraps it). */
+function reaches(hit: Element, target: Element): boolean {
+  for (let n: Element | null = hit; n; n = composedParent(n)) {
+    if (n === target) return true;
+    // Styled checkboxes/radios hide the input behind its <label for=...>;
+    // clicking the label is how a user toggles it
+    if (n.tagName === 'LABEL' && (n as HTMLLabelElement).control === target) return true;
+  }
+  return hit.contains(target);
+}
+
+function shortLabel(el: Element): string {
+  const text = norm((el as HTMLElement).innerText ?? el.textContent ?? '').slice(0, 30);
+  return `<${el.tagName.toLowerCase()}>${text ? ` "${text}"` : ''}`;
+}
+
+interface ClickReport {
+  trusted: boolean;
+  /** Set when something else sat on top of the element (e.g. a cookie banner). */
+  coveredBy?: string;
 }
 
 const NON_TEXT_INPUT_TYPES = new Set([
@@ -74,6 +158,30 @@ function setFieldValue(el: HTMLInputElement | HTMLTextAreaElement, value: string
 }
 
 /**
+ * Put the caret where typing should go: at the end to append, or select all
+ * existing content so typing replaces it.
+ */
+function placeCaret(el: HTMLElement, clear: boolean): void {
+  el.focus();
+  if (isTextField(el)) {
+    try {
+      if (clear) el.select();
+      else el.setSelectionRange(el.value.length, el.value.length);
+    } catch { /* e.g. type=email doesn't support selection ranges */ }
+    return;
+  }
+  if (el.isContentEditable) {
+    const doc = el.ownerDocument;
+    const range = doc.createRange();
+    range.selectNodeContents(el);
+    if (!clear) range.collapse(false); // caret at the end → append
+    const selection = doc.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }
+}
+
+/**
  * Type into a contenteditable editor (Slack, Gmail, X, Notion, ...). These
  * ignore `.value`; they react to text insertion at the caret, which
  * execCommand('insertText') performs, firing the beforeinput/input events
@@ -81,13 +189,7 @@ function setFieldValue(el: HTMLInputElement | HTMLTextAreaElement, value: string
  */
 function insertIntoEditable(el: HTMLElement, text: string, clear: boolean): void {
   const doc = el.ownerDocument;
-  el.focus();
-  const range = doc.createRange();
-  range.selectNodeContents(el);
-  if (!clear) range.collapse(false); // caret at the end → append
-  const selection = doc.getSelection();
-  selection?.removeAllRanges();
-  selection?.addRange(range);
+  placeCaret(el, clear);
 
   let inserted = false;
   try {
@@ -103,12 +205,31 @@ function insertIntoEditable(el: HTMLElement, text: string, clear: boolean): void
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
 
 /**
- * Scroll into view, press/release, then exactly ONE click. Menus and custom
- * widgets often open on mousedown; a second click would re-toggle checkboxes.
+ * Click like a user: scroll into view, then a trusted mouse click at the
+ * element's center. Falls back to a scripted click when trusted input is
+ * unavailable, or when something covers the element (a trusted click would
+ * land on the overlay instead).
  */
-async function clickElement(el: HTMLElement): Promise<void> {
-  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  await sleep(300);
+async function clickElement(el: HTMLElement): Promise<ClickReport> {
+  // Instant, not smooth: the click coordinates must be read after scrolling ends
+  el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+  await sleep(150);
+
+  const point = viewportCenter(el);
+  if (point) {
+    const hit = deepElementFromPoint(point.x, point.y);
+    if (hit && !reaches(hit, el)) {
+      scriptedClick(el);
+      return { trusted: false, coveredBy: shortLabel(hit) };
+    }
+    if (await requestTrusted({ kind: 'click', ...point })) return { trusted: true };
+  }
+  scriptedClick(el);
+  return { trusted: false };
+}
+
+/** Press/release, then exactly ONE click; a second would re-toggle checkboxes. */
+function scriptedClick(el: HTMLElement): void {
   const win = winOf(el);
   const pointerInit = { bubbles: true, cancelable: true, composed: true, view: win };
   el.dispatchEvent(new win.PointerEvent('pointerdown', pointerInit));
@@ -209,13 +330,41 @@ async function selectCustom(trigger: HTMLElement, elementId: number, wanted: str
 async function typeText(elementId: number, text: string, clear: boolean): Promise<string> {
   const el = getElementById(elementId);
   if (!el) return `❌ Element [${elementId}] not found.`;
-
-  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  await sleep(200);
-  el.focus();
   const shown = `"${text.substring(0, 40)}"`;
+  const verb = clear ? 'Cleared and typed' : 'Typed';
+  const field = isTextField(el);
+  const editable = el.isContentEditable;
+  // Custom text widgets (code editors, terminals) that take keystrokes directly
+  const keyTarget = !field && !editable && el.matches('[role="textbox"], [role="searchbox"], [role="combobox"], [tabindex]:not([tabindex="-1"])');
 
-  if (isTextField(el)) {
+  if (field || editable || keyTarget) {
+    // Real keystrokes: click to focus like a user, place the caret, then type
+    const before = field ? (el as HTMLInputElement).value : '';
+    const click = await clickElement(el);
+    if (!click.coveredBy) {
+      placeCaret(el, clear);
+      if (await requestTrusted({ kind: 'type', text })) {
+        await sleep(50);
+        if (field) {
+          const value = (el as HTMLInputElement).value;
+          const expected = clear ? text : before + text;
+          if (value === expected) return `✅ ${verb} ${shown} into element [${elementId}]`;
+          if (value.includes(text)) return `⚠️ Typed ${shown} into element [${elementId}]; the field now reads "${value.substring(0, 60)}"`;
+          // Keystrokes didn't land (e.g. a read-only mask); try setting the value below
+        } else {
+          const content = norm(el.innerText ?? el.textContent ?? '');
+          if (content.includes(norm(text))) return `✅ ${verb} ${shown} into ${editable ? 'editor' : 'element'} [${elementId}]`;
+          if (keyTarget) return `❌ Typing ${shown} into element [${elementId}] had no effect; it shows "${content.substring(0, 60)}"`;
+        }
+      }
+    }
+  }
+
+  el.scrollIntoView({ behavior: 'instant', block: 'center' });
+  await sleep(100);
+  el.focus();
+
+  if (field) {
     const expected = clear ? text : el.value + text;
     setFieldValue(el, expected);
     if (el.value === expected) return `✅ ${clear ? 'Cleared and typed' : 'Typed'} ${shown} into element [${elementId}]`;
@@ -225,7 +374,7 @@ async function typeText(elementId: number, text: string, clear: boolean): Promis
       : `❌ Typing ${shown} into element [${elementId}] did not stick; the field reads "${el.value.substring(0, 60)}"`;
   }
 
-  if (el.isContentEditable) {
+  if (editable) {
     insertIntoEditable(el, text, clear);
     const content = norm(el.innerText ?? el.textContent ?? '');
     return content.includes(norm(text))
@@ -247,9 +396,12 @@ export async function executeAction(action: AgentAction): Promise<string> {
       const el = getElementById(action.elementId);
       if (!el) return `❌ Element [${action.elementId}] not found on page.`;
       
-      await clickElement(el);
+      const report = await clickElement(el);
 
       const label = el.innerText?.trim().substring(0, 40) || el.getAttribute('aria-label') || `element ${action.elementId}`;
+      if (report.coveredBy) {
+        return `⚠️ Clicked "${label}" with a scripted click because ${report.coveredBy} is on top of it. If nothing happened, close or dismiss that first.`;
+      }
       return `✅ Clicked "${label}"`;
     }
 
@@ -315,12 +467,17 @@ export async function executeAction(action: AgentAction): Promise<string> {
     }
 
     case 'press_key': {
-      const key = action.key || 'Enter';
+      const key = normalizeKey(action.key || 'Enter');
       const target = action.elementId !== undefined
         ? getElementById(action.elementId) || document.activeElement || document.body
         : document.activeElement || document.body;
-      
-      // If a page handler calls preventDefault() on keydown it has handled the key
+
+      // A trusted key press goes to the focused element and gets the browser's
+      // own default behavior (Enter submits the form, Tab moves focus, ...)
+      if (target !== document.activeElement) (target as HTMLElement).focus?.();
+      if (await requestTrusted({ kind: 'key', key })) return `✅ Pressed "${key}"`;
+
+      // Scripted fallback. If a page handler calls preventDefault() on keydown it has handled the key
       // itself (e.g. a JS-driven search box), so we must not also submit the form.
       const notHandled = target.dispatchEvent(makeKeyEvent('keydown', key));
       if (notHandled) target.dispatchEvent(makeKeyEvent('keypress', key));

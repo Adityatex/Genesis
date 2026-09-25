@@ -1,0 +1,25 @@
+<!doctype html>
+<html><head><title>Snippet editor</title>
+<style>#editor { border: 1px solid #999; min-height: 40px; width: 400px; padding: 4px; font-family: monospace; white-space: pre; }</style></head>
+<body>
+  <h1>Snippet editor</h1>
+  <!-- Like code editors, terminals and Google Docs: not an <input>; it builds its
+       text from real keystrokes and ignores script-generated ones -->
+  <div id="editor" role="textbox" aria-label="Snippet" tabindex="0"></div>
+  <button id="save">Save snippet</button>
+  <script>
+    const editor = document.getElementById('editor');
+    let text = '';
+    editor.addEventListener('keydown', (e) => {
+      if (!e.isTrusted) return;
+      e.preventDefault();
+      if (e.key === 'Backspace') text = text.slice(0, -1);
+      else if (e.key.length === 1) text += e.key;
+      editor.textContent = text;
+    });
+    document.getElementById('save').addEventListener('click', async () => {
+      await fetch('/api/snippet', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) });
+      document.body.insertAdjacentHTML('beforeend', '<p role="status">Saved.</p>');
+    });
+  </script>
+</body></html>

@@ -23,6 +23,7 @@ import {
   PROVIDERS, PROVIDER_IDS, SETTINGS_KEY, resolveConfig, validateBaseUrl,
   type ProviderId, type StoredLLMSettings,
 } from '../lib/api/providers.ts';
+import { PREFS_KEY } from '../lib/agent/prefs.ts';
 
 // Only exists inside the extension's service worker (see worker.evaluate below)
 declare const chrome: any;
@@ -43,6 +44,8 @@ const { values: args } = parseArgs({
     model: { type: 'string' },
     provider: { type: 'string', default: 'groq' },
     'base-url': { type: 'string' },
+    // Turn off trusted (DevTools Protocol) input, to compare against scripted events
+    'scripted-input': { type: 'boolean', default: false },
     tpm: { type: 'string' },
   },
 });
@@ -184,8 +187,8 @@ async function launch(apiKey: string): Promise<{ context: BrowserContext; userDa
     customBaseUrl: PROVIDER === 'custom' ? args['base-url'] : undefined,
   };
   await worker.evaluate(
-    ([key, value]) => chrome.storage.local.set({ [key]: value }),
-    [SETTINGS_KEY, settings] as const,
+    ([key, value, prefsKey, prefs]) => chrome.storage.local.set({ [key]: value, [prefsKey]: prefs }),
+    [SETTINGS_KEY, settings, PREFS_KEY, { trustedInput: !args['scripted-input'] }] as const,
   );
   return { context, userDataDir };
 }

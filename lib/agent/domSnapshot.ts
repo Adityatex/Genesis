@@ -57,7 +57,7 @@ export function getElementById(id: number): HTMLElement | null {
 // ---------------------------------------------------------------- traversal
 
 /** Open shadow root, or a closed one via the extension-only chrome.dom API. */
-function shadowRootOf(el: Element): ShadowRoot | null {
+export function shadowRootOf(el: Element): ShadowRoot | null {
   const openOrClosed = (globalThis as any).chrome?.dom?.openOrClosedShadowRoot;
   if (typeof openOrClosed === 'function') {
     try {

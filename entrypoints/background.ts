@@ -7,6 +7,8 @@ import {
   validateBaseUrl, maskKey, type LLMConfig, type ProviderId, type StoredLLMSettings,
 } from '@/lib/api/providers';
 import { formatError } from '@/lib/utils/errorHandler';
+import { trustedClick, trustedKey, trustedType, releaseTab, watchDetach } from '@/lib/agent/trustedInput';
+import { PREFS_KEY, DEFAULT_PREFS, type AgentPrefs } from '@/lib/agent/prefs';
 import { parseAgentAction } from '@/lib/agent/parseAction';
 
 declare var chrome: any;
@@ -17,6 +19,13 @@ function wait(ms: number): Promise<void> {
 
 export default defineBackground(() => {
   console.log('[Genesis] Background service worker started');
+  watchDetach();
+
+  /** Agent preferences. Trusted input is on unless the user turns it off. */
+  async function loadPrefs(): Promise<AgentPrefs> {
+    const stored: any = await browser.storage.local.get(PREFS_KEY);
+    return { ...DEFAULT_PREFS, ...(stored[PREFS_KEY] ?? {}) };
+  }
 
   // In-memory agent session — persists across page navigations within the same browser session
   let activeAgentSession: any = null;
@@ -209,7 +218,37 @@ export default defineBackground(() => {
           case 'CLEAR_AGENT_SESSION': {
             await chrome.storage.local.remove('genesis_agent_session');
             console.log('[Genesis] Agent session cleared');
+            // The run is over (done, error, max steps or stopped): drop the debugger
+            if (_sender.tab?.id !== undefined) await releaseTab(_sender.tab.id);
             sendResponse({ success: true });
+            break;
+          }
+
+          case 'TRUSTED_INPUT': {
+            // Real mouse/keyboard input via the DevTools Protocol. On any failure
+            // the content script falls back to scripted DOM events.
+            const tabId = _sender.tab?.id;
+            if (tabId === undefined) throw new Error('No tab');
+            const prefs = await loadPrefs();
+            if (!prefs.trustedInput) throw new Error('Trusted input is turned off');
+            const { kind, x, y, text, key } = payload ?? {};
+            if (kind === 'click') await trustedClick(tabId, Number(x), Number(y));
+            else if (kind === 'type') await trustedType(tabId, String(text ?? ''));
+            else if (kind === 'key') await trustedKey(tabId, String(key ?? 'Enter'));
+            else throw new Error(`Unknown trusted input: ${kind}`);
+            sendResponse({ success: true });
+            break;
+          }
+
+          case 'GET_PREFS': {
+            sendResponse({ success: true, data: await loadPrefs() });
+            break;
+          }
+
+          case 'SAVE_PREFS': {
+            const prefs = { ...(await loadPrefs()), ...(payload ?? {}) };
+            await browser.storage.local.set({ [PREFS_KEY]: prefs });
+            sendResponse({ success: true, data: prefs });
             break;
           }
 

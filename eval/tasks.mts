@@ -228,6 +228,25 @@ export const TASKS: Task[] = [
     mockPlan: [{ action: 'click', target: /"Reject all"/ }],
   },
   {
+    id: 'trusted-click',
+    category: 'hard',
+    start: '/trusted-click.html',
+    goal: 'Click Claim offer',
+    check: r => hit(r.events, '/api/claim'),
+    mockPlan: [{ action: 'click', target: /"Claim offer"/ }],
+  },
+  {
+    id: 'trusted-typing',
+    category: 'hard',
+    start: '/trusted-typing.html',
+    goal: 'Type hello world into the snippet editor and click Save snippet',
+    check: r => hit(r.events, '/api/snippet', d => norm(d.text) === 'hello world'),
+    mockPlan: [
+      { action: 'type', target: /"Snippet"/, text: 'hello world' },
+      { action: 'click', target: /"Save snippet"/ },
+    ],
+  },
+  {
     id: 'contenteditable-message',
     category: 'hard',
     start: '/editor.html',

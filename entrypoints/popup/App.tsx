@@ -17,6 +17,7 @@ export default function App() {
   const [loadingModels, setLoadingModels] = useState(false);
   const [status, setStatus] = useState<Status>('idle');
   const [message, setMessage] = useState('');
+  const [trustedInput, setTrustedInput] = useState(true);
   const [profile, setProfile] = useState<AutofillProfile>({ fullname: '', email: '', phone: '', address: '', city: '', state: '', zip: '', country: '' });
   const [profileStatus, setProfileStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [profileMessage, setProfileMessage] = useState('');
@@ -31,8 +32,17 @@ export default function App() {
       setCustomBaseUrl(url);
       setModel(models[p] || PROVIDERS[p as ProviderId].defaultModel || '');
     });
+    browser.runtime.sendMessage({ action: 'GET_PREFS' }).then((res: any) => {
+      if (res?.success) setTrustedInput(res.data.trustedInput);
+    });
     loadStoredProfile().then(setProfile).catch(() => {});
   }, []);
+
+  const handleTrustedInputChange = async (on: boolean) => {
+    setTrustedInput(on);
+    const res: any = await browser.runtime.sendMessage({ action: 'SAVE_PREFS', payload: { trustedInput: on } });
+    if (!res?.success) setTrustedInput(!on);
+  };
 
   const preset = PROVIDERS[provider];
 
@@ -215,6 +225,23 @@ export default function App() {
         {message && (
           <div className={`message ${status}`}>{message}</div>
         )}
+      </div>
+
+      {/* Agent Section */}
+      <div className="section">
+        <label className="section-label">Agent</label>
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={trustedInput}
+            onChange={(e) => handleTrustedInputChange(e.target.checked)}
+          />
+          <span>Real mouse &amp; keyboard input</span>
+        </label>
+        <p className="hint">
+          Recommended: many sites ignore script-generated clicks and typing. While the agent works, Chrome shows a
+          "started debugging this browser" banner; that's this feature, and it goes away when the agent finishes.
+        </p>
       </div>
 
       {/* Autofill Profile Section */}

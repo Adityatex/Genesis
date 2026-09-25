@@ -1,0 +1,16 @@
+<!doctype html>
+<html><head><title>Limited offer</title></head>
+<body>
+  <h1>Limited offer</h1>
+  <p>Get 3 months free. One claim per visitor.</p>
+  <button id="claim">Claim offer</button>
+  <p id="status" role="status"></p>
+  <script>
+    // Bot protection: script-generated clicks (isTrusted === false) are ignored
+    document.getElementById('claim').addEventListener('click', async (e) => {
+      if (!e.isTrusted) return;
+      await fetch('/api/claim', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+      document.getElementById('status').textContent = 'Offer claimed!';
+    });
+  </script>
+</body></html>
