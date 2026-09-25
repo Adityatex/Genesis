@@ -1,11 +1,46 @@
-# Baseline results
+# Benchmark results
 
-The "before" numbers that later changes to the agent are measured against. Measured on 2026-09-25 at commit `f1a7ebc` (plus a `--model` override), with Groq's free tier and the harness pacing calls under 7,000 tokens/min. There were zero rate-limit hits across all 70 runs.
+All runs are live: real model, real extension, real Chromium. A run passes only if the right requests reached the test server **and** the agent finished cleanly.
+
+## After the fixes (2026-09-25)
+
+The hard tasks, before and after the snapshot and executor fixes (`ca4023c`–`9cecd24`):
+
+| Hard task | What it tests | Before: Qwen | After: Qwen† | After: DeepSeek |
+|---|---|---|---|---|
+| `long-page-link` | link beyond the old 6,000-char snapshot cut | 0/1 | 3/3 | **3/3** |
+| `custom-dropdown` | ARIA combobox / `role=option` widget | 0/1 | 3/3 | **3/3** |
+| `iframe-payment` | form inside a same-origin iframe | 0/1 | 3/3 | **3/3** |
+| `shadow-dom-button` | button in an open shadow root | 0/1 | not run† | **3/3** |
+| `contenteditable-message` | rich-text editor (Slack/Gmail style) | 0/1 | not run† | **3/3** |
+| `shadow-dom-closed` (new) | button in a *closed* shadow root | n/a | not run† | **3/3** |
+| `iframe-cross-origin` (new) | Stripe-style cross-origin payment frame | n/a | not run† | 0/3 (known issue) |
+
+**The original five: 0/5 → 15/15.** Counting the new tasks, the agent now passes 6 of 7, i.e. 18/18 runs on the tasks it can reach. The cross-origin frame is a documented limitation: reaching it needs a content script in every frame.
+
+Standard tasks with the fixes: **deepseek-flash 40/40** (30 runs at `78e1881`, 10 at `9cecd24`), averaging 3.5 LLM calls, about 3.1k tokens and 12.2s per task. Hard-task runs averaged 3.4 calls and 10.9s.
+
+**About the model change:** the "before" column used Qwen on Groq's free tier. The "after" run switched to `deepseek-flash` because Qwen hit Groq's 200k-tokens/day limit partway through (†: Qwen's after-fix runs that got a response all passed, 9/9). The comparison is still fair on the hard tasks, because the baseline failures weren't about the model. Mock runs showed the target elements were simply missing from what any model received, and both baseline models failed identically.
+
+DeepSeek also caught a bug that Qwen missed. On the first DeepSeek run (`78e1881`), `iframe-payment` and `shadow-dom-button` went 0/3. DeepSeek did the task correctly, then couldn't see the confirmation, which rendered inside the iframe or shadow root and so was missing from the page text. It kept checking until it ran out of steps. Qwen had passed by declaring done without checking. `9cecd24` adds that text to the page text, and both went 3/3.
+
+Reproduce:
+
+```bash
+npm run build
+npm run eval -- --provider deepseek --model deepseek-flash --task <hard task ids> --trials 3
+```
+
+---
+
+## Baseline (before the fixes)
+
+The "before" numbers. Measured on 2026-09-25 at commit `f1a7ebc` (plus a `--model` override), with Groq's free tier and the harness pacing calls under 7,000 tokens/min. There were zero rate-limit hits across all 70 runs.
 
 - **Standard tasks:** 10 tasks × 3 trials per model.
 - **Hard tasks:** 5 tasks × 1 trial per model. Each one targets a known limitation, so the agent is expected to fail them. Failing runs can use all 20 steps, so extra trials would mostly burn quota.
 
-## Summary
+### Summary
 
 | Model | Standard | Hard | Avg LLM calls* | Avg tokens* | Avg time* |
 |---|---|---|---|---|---|
@@ -16,7 +51,7 @@ The "before" numbers that later changes to the agent are measured against. Measu
 
 Both models passed every standard run, so accuracy doesn't separate them. `qwen3.8-27b` is the default because it used about 23% fewer tokens and was about 24% faster. `openai/gpt-oss-20b` passed 9/10 in a 1-trial screening and was dropped.
 
-## Per task
+### Per task
 
 | Task | Category | `qwen3.8-27b` | `gpt-oss-120b` | How the hard tasks failed |
 |---|---|---|---|---|
@@ -36,7 +71,7 @@ Both models passed every standard run, so accuracy doesn't separate them. `qwen3
 | `shadow-dom-button` | hard | 0/1 | 0/1 | The Shadow DOM button isn't in the snapshot. The agent reported that no interactive elements were found. |
 | `contenteditable-message` | hard | 0/1 | 0/1 | **False success:** the executor reported "✅ Typed" but nothing was typed. The agent said it had sent the message, and the server received an empty one. |
 
-## Reproduce
+### Reproduce
 
 ```bash
 npm run build

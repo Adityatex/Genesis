@@ -69,16 +69,18 @@ npm run eval:mock   # scripted planner, no API key (runs in CI)
 npm run eval        # live against a real provider (Groq by default, --provider to change), reports success rate / LLM calls / tokens / time
 ```
 
-The suite has 10 standard tasks (forms, dropdowns, radios, multi-page flows, slow backends, JS apps, extraction) and 5 hard ones aimed at known limits: long pages, custom widgets, iframes, Shadow DOM and rich-text editors. See [eval/README.md](eval/README.md).
+The suite has 10 standard tasks (forms, dropdowns, radios, multi-page flows, slow backends, JS apps, extraction) and 7 hard ones that are hard for agents to see or act on: long pages, custom widgets, iframes, open and closed Shadow DOM, and rich-text editors. See [eval/README.md](eval/README.md).
 
-**Baseline** (2026-09-25, Groq free tier, [full results](eval/BASELINE.md)):
+**Results** (2026-09-25, live runs, [full results](eval/BASELINE.md)):
 
-| Model | Standard tasks | Hard tasks | Avg tokens / task |
-|---|---|---|---|
-| `qwen/qwen3.8-27b` (default) | 30/30 | 0/5 | 2,412 |
-| `openai/gpt-oss-120b` | 30/30 | 0/5 | 3,141 |
+| Hard tasks | Before the fixes | After the fixes |
+|---|---|---|
+| Original five (long page, custom dropdown, iframe form, Shadow DOM button, rich-text editor) | **0/5** | **15/15** |
+| Closed shadow root (new) | n/a | 3/3 |
+| Cross-origin iframe (new, known issue) | n/a | 0/3 |
+| Standard tasks (regression check) | 30/30 | 40/40 |
 
-The hard tasks fail because of how the agent sees and acts on the page, not because of the model. They're the targets for the next round of work.
+"Before" is Qwen on Groq; "after" is `deepseek-flash`, since Qwen ran out of free daily quota mid-run. Its after-fix runs that got a response were also 9/9. The hard-task failures were never about the model: before the fixes, the elements weren't even in what the model received. The fixes changed how the agent sees and acts on the page: it now reaches into Shadow DOM, iframes and ARIA widgets, types into rich-text editors, fits long pages into a size budget with a `find` action, and checks that each action actually worked.
 
 ### Loading in Browser
 
