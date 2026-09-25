@@ -40,6 +40,9 @@ export function useAgentLoop() {
     alreadyChecked.current = true;
 
     await sleep(1500);
+    // A task started on this page within the delay has already written the
+    // session we'd find — resuming it would run a second loop in parallel.
+    if (isAgentRunningRef.current) return;
     console.log('[Genesis] Checking for saved agent session...');
     try {
       const response = await browser.runtime.sendMessage({ action: 'GET_AGENT_SESSION', payload: {} });
@@ -50,18 +53,24 @@ export function useAgentLoop() {
           console.log('[Genesis] No saved agent session found.');
           return;
         }
+        if (isAgentRunningRef.current) return;
         console.log('[Genesis] Resuming agent session for goal:', goal);
         deps.onOpened();
         deps.onWorking(true);
 
         const historyLog = (actionHistory || []).map((a: string, i: number) => `${i + 1}. ${a}`).join('\n');
+        // Mark running now so Stop/Clear during the delay below is honored
+        isAgentRunningRef.current = true;
         const id = deps.onResumeFound(goal, historyLog);
 
         await sleep(2000);
+        if (!isAgentRunningRef.current) {
+          deps.onWorking(false); // stopped/cleared during the delay
+          return;
+        }
 
         const actionHistoryCopy = [...(actionHistory || [])];
         const loopStepCount = stepCount || 0;
-        isAgentRunningRef.current = true;
 
         try {
           await executeAgentLoop(goal, actionHistoryCopy, loopStepCount, {

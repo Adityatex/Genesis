@@ -100,7 +100,7 @@ export default defineBackground(() => {
             }
             const parsedAction = parsed.action;
 
-            console.log('[Genesis] Parsed action:', parsedAction.action, parsedAction.url || parsedAction.elementId || '');
+            console.log('[Genesis] Parsed action:', parsedAction.action, parsedAction.url ?? parsedAction.elementId ?? '');
 
             // Always save session BEFORE returning the action to content script.
             // If the action causes unintended navigation (clicking a link, form submit),

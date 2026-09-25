@@ -48,6 +48,11 @@ export async function executeAgentLoop(
   let stepCount = startStep;
   let invalidStreak = 0;
 
+  // Set once this page starts unloading; this content script is about to die.
+  let unloading = false;
+  const onBeforeUnload = () => { unloading = true; };
+  window.addEventListener('beforeunload', onBeforeUnload);
+
   try {
     while (stepCount < MAX_AGENT_STEPS && !cb.shouldStop()) {
       stepCount++;
@@ -111,13 +116,25 @@ export async function executeAgentLoop(
       const result = await executeAction(agentAction);
       actionHistory.push(`${actionDesc} → ${result}`);
 
-      // 6. Show progress
+      // 6. The action may have started a navigation (link click, form submit).
+      // Beforeunload can fire a moment after the action returns, so wait first.
+      await sleep(800);
+      if (unloading) {
+        // Replace the background's "(executing...)" entry with the real result,
+        // then stop: planning from this dying page would race the new page's resume.
+        browser.runtime.sendMessage({
+          action: 'SAVE_AGENT_SESSION',
+          payload: { goal, actionHistory, stepCount },
+        }).catch(() => {});
+        cb.onProgress(`🔄 **Page is changing** after ${actionDesc}\n\nWill resume on the new page...`, true);
+        return { status: 'navigating' };
+      }
+
+      // 7. Show progress
       cb.onProgress(
         `**Agent Progress** (step ${stepCount}/${MAX_AGENT_STEPS})\n\n${formatHistory(actionHistory)}\n\n*Thinking about next step...*`,
         true,
       );
-
-      await sleep(800);
     }
 
     if (cb.shouldStop()) {
@@ -139,5 +156,7 @@ export async function executeAgentLoop(
       false,
     );
     return { status: 'done' };
+  } finally {
+    window.removeEventListener('beforeunload', onBeforeUnload);
   }
 }
