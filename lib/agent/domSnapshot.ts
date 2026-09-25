@@ -137,7 +137,10 @@ export function createDOMSnapshot(): { text: string; elements: SnapshotElement[]
       const label = getLabel(el);
       const type = el.getAttribute('type') || undefined;
       const href = tag === 'a' ? (el as HTMLAnchorElement).href : undefined;
-      const value = (el as HTMLInputElement).value || undefined;
+      // Editors have no .value; show their text so the model can see what's typed
+      const value = ((el as HTMLElement).isContentEditable
+        ? (el as HTMLElement).innerText
+        : (el as HTMLInputElement).value) || undefined;
       const placeholder = el.getAttribute('placeholder') || undefined;
       const checked = (el as HTMLInputElement).checked || undefined;
       const disabled = (el as HTMLInputElement).disabled || undefined;

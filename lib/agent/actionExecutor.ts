@@ -43,27 +43,99 @@ function getElementByGenesisId(id: number): HTMLElement | null {
   return document.querySelector(`[data-genesis-id="${id}"]`) as HTMLElement | null;
 }
 
-function simulateInput(el: HTMLElement, value: string): void {
-  // Use native input setter to trigger React/Angular/Vue change detection
-  const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-    window.HTMLInputElement.prototype, 'value'
-  )?.set;
-  const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(
-    window.HTMLTextAreaElement.prototype, 'value'
-  )?.set;
+// Elements can live in iframes, which have their own window and constructors,
+// so `el instanceof HTMLInputElement` is false there. Check tag names instead
+// and use the element's own window.
+function winOf(el: Element): Window & typeof globalThis {
+  return (el.ownerDocument.defaultView ?? window) as Window & typeof globalThis;
+}
 
-  if (el instanceof HTMLInputElement && nativeInputValueSetter) {
-    nativeInputValueSetter.call(el, value);
-  } else if (el instanceof HTMLTextAreaElement && nativeTextAreaValueSetter) {
-    nativeTextAreaValueSetter.call(el, value);
-  } else {
-    (el as any).value = value;
-  }
+const NON_TEXT_INPUT_TYPES = new Set([
+  'button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'color', 'range', 'hidden',
+]);
 
-  // Fire events that frameworks listen to
+function isTextField(el: Element): el is HTMLInputElement | HTMLTextAreaElement {
+  if (el.tagName === 'TEXTAREA') return true;
+  return el.tagName === 'INPUT' && !NON_TEXT_INPUT_TYPES.has((el as HTMLInputElement).type);
+}
+
+/** Set an input/textarea value in a way React/Angular/Vue notice. */
+function setFieldValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+  // Frameworks track the value through the prototype setter, so call that one
+  // rather than the instance property, which they may have overridden.
+  const win = winOf(el);
+  const proto = el.tagName === 'TEXTAREA' ? win.HTMLTextAreaElement.prototype : win.HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+  if (setter) setter.call(el, value);
+  else el.value = value;
+
   el.dispatchEvent(new Event('input', { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
   el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+}
+
+/**
+ * Type into a contenteditable editor (Slack, Gmail, X, Notion, ...). These
+ * ignore `.value`; they react to text insertion at the caret, which
+ * execCommand('insertText') performs, firing the beforeinput/input events
+ * editor frameworks (ProseMirror, Slate, Lexical, Draft) listen for.
+ */
+function insertIntoEditable(el: HTMLElement, text: string, clear: boolean): void {
+  const doc = el.ownerDocument;
+  el.focus();
+  const range = doc.createRange();
+  range.selectNodeContents(el);
+  if (!clear) range.collapse(false); // caret at the end → append
+  const selection = doc.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+
+  let inserted = false;
+  try {
+    inserted = doc.execCommand('insertText', false, text);
+  } catch { /* unsupported → fallback below */ }
+  if (!inserted) {
+    if (clear) el.textContent = '';
+    el.append(doc.createTextNode(text));
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+  }
+}
+
+const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+/**
+ * Type into a field and report what actually happened. Reading the result back
+ * matters: reporting "✅ Typed" when nothing changed made the agent claim tasks
+ * were done when they weren't.
+ */
+async function typeText(elementId: number, text: string, clear: boolean): Promise<string> {
+  const el = getElementByGenesisId(elementId);
+  if (!el) return `❌ Element [${elementId}] not found.`;
+
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  await sleep(200);
+  el.focus();
+  const shown = `"${text.substring(0, 40)}"`;
+
+  if (isTextField(el)) {
+    const expected = clear ? text : el.value + text;
+    setFieldValue(el, expected);
+    if (el.value === expected) return `✅ ${clear ? 'Cleared and typed' : 'Typed'} ${shown} into element [${elementId}]`;
+    // Masked or length-limited inputs may reformat the value
+    return el.value.includes(text)
+      ? `⚠️ Typed ${shown} into element [${elementId}]; the field now reads "${el.value.substring(0, 60)}"`
+      : `❌ Typing ${shown} into element [${elementId}] did not stick; the field reads "${el.value.substring(0, 60)}"`;
+  }
+
+  if (el.isContentEditable) {
+    insertIntoEditable(el, text, clear);
+    const content = norm(el.innerText ?? el.textContent ?? '');
+    return content.includes(norm(text))
+      ? `✅ ${clear ? 'Cleared and typed' : 'Typed'} ${shown} into editor [${elementId}]`
+      : `❌ Typing ${shown} into editor [${elementId}] had no effect; it contains "${content.substring(0, 60)}"`;
+  }
+
+  return `❌ Element [${elementId}] <${el.tagName.toLowerCase()}> is not a text field. Pick an input, textarea or editor, or click this element first if it opens one.`;
 }
 
 /**
@@ -95,35 +167,10 @@ export async function executeAction(action: AgentAction): Promise<string> {
       return `✅ Clicked "${label}"`;
     }
 
-    case 'type': {
-      if (action.elementId === undefined) return '❌ No element ID provided for type.';
-      const el = getElementByGenesisId(action.elementId);
-      if (!el) return `❌ Element [${action.elementId}] not found.`;
-      
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      await sleep(200);
-      el.focus();
-      
-      // Append text
-      const current = (el as HTMLInputElement).value || '';
-      simulateInput(el, current + (action.text || ''));
-      
-      return `✅ Typed "${action.text?.substring(0, 40)}" into element [${action.elementId}]`;
-    }
-
+    case 'type':
     case 'clear_and_type': {
-      if (action.elementId === undefined) return '❌ No element ID provided for type.';
-      const el = getElementByGenesisId(action.elementId);
-      if (!el) return `❌ Element [${action.elementId}] not found.`;
-      
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      await sleep(200);
-      el.focus();
-      
-      // Clear then type
-      simulateInput(el, action.text || '');
-      
-      return `✅ Cleared and typed "${action.text?.substring(0, 40)}" into element [${action.elementId}]`;
+      if (action.elementId === undefined) return `❌ No element ID provided for ${action.action}.`;
+      return typeText(action.elementId, action.text || '', action.action === 'clear_and_type');
     }
 
     case 'select': {
@@ -199,8 +246,9 @@ export async function executeAction(action: AgentAction): Promise<string> {
       // implicit submission: Enter in a form <input> submits that form.
       // requestSubmit() fires a real submit event AND performs the submission;
       // dispatching a bare 'submit' Event does neither reliably.
-      if (key === 'Enter' && notHandled && target instanceof HTMLInputElement && target.form) {
-        target.form.requestSubmit();
+      const form = target.tagName === 'INPUT' ? (target as HTMLInputElement).form : null;
+      if (key === 'Enter' && notHandled && form) {
+        form.requestSubmit();
         return `✅ Pressed "Enter" and submitted the form`;
       }
 

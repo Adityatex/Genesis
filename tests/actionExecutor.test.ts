@@ -115,3 +115,45 @@ describe('select', () => {
     expect(document.querySelector('select')!.value).toBe('IN');
   });
 });
+
+describe('type / clear_and_type', () => {
+  it('appends to an input and confirms the value', async () => {
+    document.body.innerHTML = '<input data-genesis-id="0" value="foo">';
+    const result = await executeAction({ action: 'type', elementId: 0, text: 'bar' });
+    expect(document.querySelector('input')!.value).toBe('foobar');
+    expect(result).toMatch(/^✅ Typed "bar"/);
+  });
+
+  it('reports failure when the page rejects the input instead of claiming success', async () => {
+    document.body.innerHTML = '<input data-genesis-id="0">';
+    const input = document.querySelector('input')!;
+    input.addEventListener('input', () => { input.value = ''; }); // e.g. a validator that clears it
+    const result = await executeAction({ action: 'type', elementId: 0, text: 'hello' });
+    expect(result).toMatch(/^❌ Typing "hello" .* did not stick/);
+  });
+
+  it('types into a contenteditable editor', async () => {
+    document.body.innerHTML = '<div contenteditable="true" data-genesis-id="0"></div>';
+    const onInput = vi.fn();
+    const editor = document.querySelector('div')!;
+    editor.addEventListener('input', onInput);
+
+    const result = await executeAction({ action: 'type', elementId: 0, text: 'Hello team' });
+
+    expect(editor.textContent).toContain('Hello team');
+    expect(onInput).toHaveBeenCalled();
+    expect(result).toMatch(/^✅ Typed "Hello team" into editor/);
+  });
+
+  it('clear_and_type replaces an editor\'s content', async () => {
+    document.body.innerHTML = '<div contenteditable="true" data-genesis-id="0">old draft</div>';
+    await executeAction({ action: 'clear_and_type', elementId: 0, text: 'new text' });
+    expect(document.querySelector('div')!.textContent).toBe('new text');
+  });
+
+  it('refuses to "type" into something that is not a text field', async () => {
+    document.body.innerHTML = '<button data-genesis-id="0">Send</button>';
+    const result = await executeAction({ action: 'type', elementId: 0, text: 'hi' });
+    expect(result).toMatch(/^❌ Element \[0\] <button> is not a text field/);
+  });
+});

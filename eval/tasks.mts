@@ -217,6 +217,5 @@ export const TASKS: Task[] = [
       { action: 'type', target: /"Message #general"/, text: 'Hello team' },
       { action: 'click', target: /<button> "Send"/ },
     ],
-    knownIssue: 'type sets .value, which has no effect on contenteditable editors',
   },
 ];
