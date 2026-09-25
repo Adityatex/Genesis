@@ -1,6 +1,6 @@
 // entrypoints/sidebar.content/hooks/useAgentLoop.ts
 import { useRef } from 'react';
-import { executeAgentLoop, formatHistory, sleep } from '@/lib/agent/loop';
+import { executeAgentLoop, formatHistory, settleNavigation, sleep } from '@/lib/agent/loop';
 
 interface ResumeDeps {
   onResumeFound: (goal: string, historyLog: string) => string; // creates resume msg, returns id
@@ -48,7 +48,8 @@ export function useAgentLoop() {
       const response = await browser.runtime.sendMessage({ action: 'GET_AGENT_SESSION', payload: {} });
       console.log('[Genesis] Session response:', response);
       if (response?.success && response.data) {
-        const { goal, actionHistory, stepCount } = response.data;
+        const { goal, stepCount } = response.data;
+        const actionHistory = settleNavigation(response.data.actionHistory || [], document.title, location.href);
         if (!goal) {
           console.log('[Genesis] No saved agent session found.');
           return;

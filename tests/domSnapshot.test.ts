@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createDOMSnapshot, findElements, SNAPSHOT_BUDGET } from '@/lib/agent/domSnapshot';
+import { createDOMSnapshot, findElements, pageText, SNAPSHOT_BUDGET } from '@/lib/agent/domSnapshot';
 
 // happy-dom has no layout engine, so give every element a non-zero box.
 beforeEach(() => {
@@ -146,5 +146,25 @@ describe('long pages: snapshot budget + find', () => {
     createDOMSnapshot();
     expect(findElements('settings ACCOUNT').map(e => e.label)).toEqual(['far Account settings']);
     expect(findElements('nonexistent thing')).toEqual([]);
+  });
+});
+
+describe('page text from shadow roots', () => {
+  it('includes text rendered inside a shadow root, which body.innerText leaves out', () => {
+    document.body.innerHTML = '<h1>Newsletter</h1><div id="host"></div>';
+    document.getElementById('host')!.attachShadow({ mode: 'open' }).innerHTML =
+      '<style>p { color: red }</style><button>Subscribe</button><p>Subscribed!</p>';
+
+    const text = pageText(2000);
+    expect(text).toContain('Newsletter');
+    expect(text).toContain('[in component]');
+    expect(text).toContain('Subscribed!');
+    expect(text).not.toContain('color: red'); // style text isn't page text
+  });
+
+  it("keeps Genesis's own sidebar text out", () => {
+    document.body.innerHTML = '<p>Page</p><genesis-sidebar></genesis-sidebar>';
+    document.querySelector('genesis-sidebar')!.attachShadow({ mode: 'open' }).innerHTML = '<p>Agent Progress</p>';
+    expect(pageText(2000)).not.toContain('Agent Progress');
   });
 });

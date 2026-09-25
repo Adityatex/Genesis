@@ -117,6 +117,69 @@ function collectInteractive(root: Document | ShadowRoot, frame: string | undefin
   }
 }
 
+// ---------------------------------------------------------------- page text
+
+interface TextSource {
+  root: ShadowRoot | Document;
+  frame?: string;
+}
+
+/** Shadow roots and same-origin iframe documents, whose text body.innerText leaves out. */
+function collectTextSources(root: Document | ShadowRoot, frame: string | undefined, out: TextSource[]): void {
+  const doc = root.nodeType === Node.DOCUMENT_NODE ? (root as Document) : (root.ownerDocument as Document);
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+    acceptNode: (node) =>
+      SKIP_TAGS.has((node as Element).tagName) || (node as Element).tagName === OWN_UI_TAG
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT,
+  });
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const el = node as Element;
+    const shadow = shadowRootOf(el);
+    if (shadow) {
+      out.push({ root: shadow, frame });
+      collectTextSources(shadow, frame, out);
+    }
+    const frameDoc = frameDocumentOf(el);
+    if (frameDoc && isVisible(el)) {
+      const label = frameLabel(el);
+      out.push({ root: frameDoc, frame: label });
+      collectTextSources(frameDoc, label, out);
+    }
+  }
+}
+
+function visibleTextOf(source: TextSource): string {
+  if (source.root.nodeType === Node.DOCUMENT_NODE) return (source.root as Document).body?.innerText ?? '';
+  // A ShadowRoot has no innerText; join its rendered top-level children
+  return Array.from(source.root.children)
+    .filter(c => !SKIP_TAGS.has(c.tagName))
+    .map(c => (c as HTMLElement).innerText ?? '')
+    .join(' ');
+}
+
+/**
+ * The page's visible text, including text inside shadow roots and same-origin
+ * iframes, which document.body.innerText leaves out. Without it the agent
+ * can't see confirmations like "Subscribed!" or "Payment received" rendered
+ * by web components or embedded forms, and keeps retrying work it has done.
+ */
+export function pageText(maxChars: number): string {
+  const sources: TextSource[] = [];
+  collectTextSources(document, undefined, sources);
+  const extras = sources
+    .map(s => ({ s, text: truncate(visibleTextOf(s), 1000) }))
+    .filter(({ text }) => text.length > 0)
+    .map(({ s, text }) => (s.frame ? `[in frame "${s.frame}"] ${text}` : `[in component] ${text}`))
+    .join('\n');
+
+  // Give embedded content up to half the room so a long page can't crowd it out
+  const extrasShare = Math.min(extras.length + 1, Math.floor(maxChars / 2));
+  const main = truncate(document.body?.innerText ?? '', Math.max(maxChars - extrasShare, 0));
+  const combined = extras ? `${main}\n${truncate(extras, extrasShare)}` : main;
+  return combined.trim();
+}
+
 // ---------------------------------------------------------------- element details
 
 function isVisible(el: Element): boolean {
@@ -357,9 +420,8 @@ export function createDOMSnapshot(): { text: string; elements: SnapshotElement[]
   }
 
   // Add visible body text snippet for context, in whatever room is left
-  const bodyText = document.body.innerText || '';
   const textBudget = Math.min(MAX_TEXT_CHARS, SNAPSHOT_BUDGET - lines.join('\n').length - 40);
-  const textSnippet = truncate(bodyText, Math.max(textBudget, 0));
+  const textSnippet = pageText(Math.max(textBudget, 0));
   if (textSnippet.length > 50) {
     lines.push('');
     lines.push('--- VISIBLE TEXT (excerpt) ---');

@@ -55,6 +55,11 @@ export async function startFixtureServer(port = 0): Promise<FixtureServer> {
 
       if ((req.headers['content-type'] || '').includes('application/json')) {
         res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
+      } else if (url.pathname === '/api/visit') {
+        // A real site shows the page you opened, not a generic confirmation
+        const title = data.page === 'settings' ? 'Account settings' : `${esc(data.page)} page`;
+        res.writeHead(200, { 'content-type': 'text/html' })
+          .end(page(title, '<p>Manage your profile, password and notifications.</p>'));
       } else if (url.pathname === '/api/search') {
         // Look like a real results page so the agent can tell the search worked
         const q = esc(data.q);

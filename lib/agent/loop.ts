@@ -20,6 +20,21 @@ export function isAgentCommand(msg: string): boolean {
   return actionWords.test(msg) || urlPattern.test(msg);
 }
 
+const PENDING = '→ (executing...)';
+
+/**
+ * Called on the page a session resumes on. The page that started the
+ * navigation unloaded before it could record the result, so the last entry
+ * still reads "(executing...)". Replace that with where the agent ended up;
+ * without it the model can't tell a click worked and starts guessing URLs.
+ */
+export function settleNavigation(actionHistory: string[], title: string, url: string): string[] {
+  const last = actionHistory.at(-1);
+  if (!last?.endsWith(PENDING)) return actionHistory;
+  const where = `now on "${title || 'untitled page'}" (${url})`;
+  return [...actionHistory.slice(0, -1), `${last.slice(0, -PENDING.length)}→ ✅ page changed; ${where}`];
+}
+
 export function formatHistory(actionHistory: string[]): string {
   return actionHistory.map((a, i) => `${i + 1}. ${a}`).join('\n');
 }

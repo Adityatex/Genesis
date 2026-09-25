@@ -1,7 +1,7 @@
 // lib/agent/actionExecutor.ts
 // Executes structured actions on the DOM returned by the LLM agent
 
-import { getElementById, findElements, formatElement } from '@/lib/agent/domSnapshot';
+import { getElementById, findElements, formatElement, pageText } from '@/lib/agent/domSnapshot';
 
 export interface AgentAction {
   action: 'click' | 'type' | 'clear_and_type' | 'select' | 'navigate' | 'scroll' | 'read' | 'wait' | 'done' | 'press_key' | 'find';
@@ -305,9 +305,9 @@ export async function executeAction(action: AgentAction): Promise<string> {
 
     case 'read': {
       if (action.elementId === undefined) {
-        // Read whole page
-        const text = document.body.innerText?.substring(0, 2000) || '';
-        return `📖 Page text: ${text.substring(0, 500)}...`;
+        // Whole page, including text inside shadow roots and same-origin iframes
+        const text = pageText(800);
+        return `📖 Page text: ${text}${text.length >= 800 ? '…' : ''}`;
       }
       const el = getElementById(action.elementId);
       if (!el) return `❌ Element [${action.elementId}] not found.`;
