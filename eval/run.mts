@@ -8,7 +8,7 @@
 //   ... -- --task login,todo-enter --trials 3 --headed --verbose
 //   ... -- --model openai/gpt-oss-120b     (default: the extension's DEFAULT_MODEL)
 
-import { chromium, type BrowserContext, type Page, type Route } from 'playwright';
+import { chromium, type APIResponse, type BrowserContext, type Page, type Route } from 'playwright';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -87,6 +87,16 @@ interface RunResult {
 
 // ---------------------------------------------------------------- helpers
 
+/**
+ * Playwright errors include full request headers, so the Groq key can end up
+ * in anything we print. Every error message goes through this first.
+ */
+function redact(text: string): string {
+  return text
+    .replace(/gsk_[A-Za-z0-9]+/g, 'gsk_***')
+    .replace(/(authorization:s*Bearers+)S+/gi, '$1***');
+}
+
 function loadApiKey(): string {
   if (process.env.GROQ_API_KEY) return process.env.GROQ_API_KEY;
   const envFile = path.join(ROOT, '.env');
@@ -139,7 +149,8 @@ function mockPlanner(plan: MockStep[]) {
   };
 }
 
-async function launch(apiKey: string): Promise<BrowserContext> {
+/** The profile dir holds the API key in extension storage; delete it after use. */
+async function launch(apiKey: string): Promise<{ context: BrowserContext; userDataDir: string }> {
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'genesis-eval-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chromium',
@@ -152,7 +163,7 @@ async function launch(apiKey: string): Promise<BrowserContext> {
     ([key, model]) => chrome.storage.local.set(model ? { groqApiKey: key, groqModel: model } : { groqApiKey: key }),
     [apiKey, args.model ?? ''] as const,
   );
-  return context;
+  return { context, userDataDir };
 }
 
 /** Final agent message text, or '' while the agent is still running. */
@@ -168,7 +179,7 @@ async function readOutcome(page: Page): Promise<string> {
 // ---------------------------------------------------------------- runner
 
 async function runTask(task: Task, trial: number, server: FixtureServer, apiKey: string): Promise<RunResult> {
-  const context = await launch(apiKey);
+  const { context, userDataDir } = await launch(apiKey);
   const result: RunResult = {
     id: task.id, category: task.category, trial, pass: false, outcome: 'timeout',
     llmCalls: 0, rateLimitHits: 0, promptTokens: 0, completionTokens: 0, durationMs: 0,
@@ -186,8 +197,17 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
     }
     // ~4 chars/token for the prompt, plus headroom for the (reasoning) completion
     const entry = await throttle(Math.ceil((route.request().postData()?.length ?? 0) / 4) + 400);
-    const response = await route.fetch();
-    const text = await response.text();
+    let response: APIResponse;
+    let text: string;
+    try {
+      response = await route.fetch();
+      text = await response.text();
+    } catch (err) {
+      // e.g. the page navigated or the context closed mid-request
+      log(`groq fetch failed: ${redact((err as Error).message.split('\n')[0])}`);
+      await route.abort().catch(() => {});
+      return;
+    }
     if (response.status() === 429) {
       result.rateLimitHits++;
       log('429 rate limited');
@@ -198,7 +218,7 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
       result.promptTokens += usage?.prompt_tokens ?? 0;
       result.completionTokens += usage?.completion_tokens ?? 0;
     } catch { /* non-JSON error body */ }
-    await route.fulfill({ response, body: text });
+    await route.fulfill({ response, body: text }).catch(() => {});
   });
 
   server.reset();
@@ -232,14 +252,16 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
     result.finalUrl = page.url();
   } catch (err) {
     result.outcome = 'error';
-    result.summary = `Harness error: ${(err as Error).message.split('\n')[0]}`;
+    result.summary = `Harness error: ${redact((err as Error).message.split('\n')[0])}`;
   } finally {
     result.durationMs = Date.now() - started;
     // Pass = the right side effects happened AND the agent finished cleanly.
     // Doing the work and then hanging or erroring still fails the user.
     result.pass = result.outcome === 'done'
       && task.check({ events: [...server.events], summary: result.summary, finalUrl: result.finalUrl });
+    await context.unrouteAll({ behavior: 'ignoreErrors' });
     await context.close();
+    fs.rmSync(userDataDir, { recursive: true, force: true });
   }
   return result;
 }
@@ -346,7 +368,12 @@ async function main() {
   }
 }
 
+process.on('unhandledRejection', err => {
+  console.error(redact(String((err as Error)?.stack ?? err)));
+  process.exit(1);
+});
+
 main().catch(err => {
-  console.error(err);
+  console.error(redact(String(err?.stack ?? err)));
   process.exit(1);
 });
