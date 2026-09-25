@@ -17,6 +17,10 @@ npm run eval -- --headed --verbose        # watch it, stream [Genesis] logs + ti
 
 Results are written to `eval/results/` (gitignored): one JSON file per run, plus `latest-<mode>.md`.
 
+## Quotas (Groq free tier)
+
+Each model gets about **8k tokens/minute**, **1,000 requests/day** and **200k tokens/day** (a rolling window). The harness paces calls under the per-minute limit. A full live suite (17 tasks × 3 trials) can use most of a model's daily tokens, so run subsets with `--task` when you can. If a daily limit is hit, the run stops early and prints Groq's message saying when tokens free up. Runs that end on a 429 are marked `rate-limited` and left out of success rates.
+
 ## Modes
 
 **Live** proxies the extension's real Groq calls and records LLM calls, tokens and time per task. This is the benchmark number.

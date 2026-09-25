@@ -52,6 +52,8 @@ type Outcome = 'done' | 'max-steps' | 'error' | 'timeout' | 'rate-limited';
 // capped below the extension's 15s request timeout; if we still get a 429 the
 // extension's own retry/backoff handles it.
 const TPM_BUDGET = Number(args.tpm);
+/** Set to Groq's message once a per-day quota (tokens or requests) is exhausted. */
+let dailyLimitHit: string | undefined;
 const MAX_THROTTLE_MS = 12_000;
 const tokenWindow: { t: number; tokens: number }[] = [];
 
@@ -77,6 +79,8 @@ interface RunResult {
   outcome: Outcome;
   llmCalls: number;
   rateLimitHits: number;
+  /** Groq's message for the last 429, e.g. which limit was reached. */
+  rateLimitDetail?: string;
   promptTokens: number;
   completionTokens: number;
   durationMs: number;
@@ -94,6 +98,7 @@ interface RunResult {
 function redact(text: string): string {
   return text
     .replace(/gsk_[A-Za-z0-9]+/g, 'gsk_***')
+    .replace(/org_[A-Za-z0-9]+/g, 'org_***')
     .replace(/(authorization:s*Bearers+)S+/gi, '$1***');
 }
 
@@ -211,7 +216,13 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
     }
     if (response.status() === 429) {
       result.rateLimitHits++;
-      log('429 rate limited');
+      let detail = '';
+      try { detail = redact(String(JSON.parse(text)?.error?.message ?? '')); } catch { /* not JSON */ }
+      result.rateLimitDetail = detail.slice(0, 300);
+      log(`429 rate limited: ${detail.slice(0, 160)}`);
+      // Per-day limits don't recover for hours; waiting out every retry just
+      // burns time on runs that can't pass
+      if (/per day|\bTPD\b|\bRPD\b/i.test(detail)) dailyLimitHit ??= detail;
     }
     try {
       const usage = JSON.parse(text).usage;
@@ -323,11 +334,23 @@ async function main() {
     process.exit(1);
   }
 
+  if (MODE === 'live') {
+    // Rough budget from the baseline: ~2.5k tokens per standard run, up to
+    // ~10k for a hard run that fails and uses all its steps
+    const estimate = tasks.reduce((sum, t) => sum + (t.category === 'hard' ? 10_000 : 2_500), 0) * TRIALS;
+    console.log(`Estimated usage: up to ~${Math.round(estimate / 1000)}k tokens. Groq's free tier allows 200k tokens per model per day (rolling).\n`);
+  }
+
   const server = await startFixtureServer();
   const results: RunResult[] = [];
+  let stoppedEarly = false;
   try {
     for (const task of tasks) {
       for (let trial = 1; trial <= TRIALS; trial++) {
+        if (dailyLimitHit) {
+          stoppedEarly = true;
+          break;
+        }
         const r = await runTask(task, trial, server, apiKey);
         results.push(r);
         console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${task.id}${TRIALS > 1 ? ` #${trial}` : ''}  ${r.outcome}, ${r.llmCalls} calls${r.rateLimitHits ? ` (${r.rateLimitHits}×429)` : ''}, ${(r.durationMs / 1000).toFixed(1)}s${r.pass ? '' : `  — ${r.summary.slice(0, 100).replace(/\n/g, ' ')}`}`);
@@ -335,6 +358,9 @@ async function main() {
     }
   } finally {
     await server.close();
+  }
+  if (stoppedEarly) {
+    console.log(`\nStopped early: the daily API quota is used up, so the remaining runs could not pass.\n  ${dailyLimitHit}\n`);
   }
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
