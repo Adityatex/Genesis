@@ -107,3 +107,13 @@ describe('callLLM / listModels with a stubbed provider', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('https://api.test/v1/models');
   });
 });
+
+describe('empty responses', () => {
+  const config = { provider: 'openai' as const, label: 'OpenAI', baseUrl: 'https://api.test/v1', apiKey: 'k', model: 'm' };
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('says when a reasoning model used up its token budget without answering', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: '' }, finish_reason: 'length' }] }), { status: 200 })));
+    await expect(callLLM([], config)).resolves.toMatch(/used its entire token budget/);
+  });
+});

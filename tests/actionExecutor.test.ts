@@ -204,3 +204,10 @@ describe('select on custom (ARIA) dropdowns', () => {
     expect(result).toMatch(/^❌ Element \[0\] is not a dropdown/);
   });
 });
+
+describe('note', () => {
+  it('records the note in its result, which is what carries it across pages', async () => {
+    expect(await executeAction({ action: 'note', text: 'Kite 14: 16 GB, $1,049' })).toBe('📝 Noted: Kite 14: 16 GB, $1,049');
+    expect(await executeAction({ action: 'note', text: '  ' })).toMatch(/^❌ note needs text/);
+  });
+});

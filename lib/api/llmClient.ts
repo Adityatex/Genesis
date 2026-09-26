@@ -28,6 +28,7 @@ interface ChatResponse {
     message: {
       content: string | null;
     };
+    finish_reason?: string;
   }[];
   usage?: {
     prompt_tokens: number;
@@ -193,7 +194,13 @@ export async function callLLM(messages: ChatMessage[], config: LLMConfig, opts: 
       }
 
       const data: ChatResponse = await response.json();
-      return data.choices?.[0]?.message?.content?.trim() || 'No response received.';
+      const choice = data.choices?.[0];
+      const content = choice?.message?.content?.trim();
+      if (content) return content;
+      // Reasoning models can spend the whole token budget thinking and answer nothing
+      return choice?.finish_reason === 'length'
+        ? '(empty response: the model used its entire token budget before answering)'
+        : 'No response received.';
     } catch (error) {
       const message = formatError(error);
       const isRetryable = /timed out|network|failed to fetch|rate limit exceeded/i.test(message);
@@ -313,6 +320,7 @@ AVAILABLE ACTIONS (respond with exactly ONE as JSON):
 - {"action": "press_key", "key": "<key name>", "elementId": <optional number>} — Press a keyboard key (Enter, Tab, Escape, etc.)
 - {"action": "read", "elementId": <optional number>} — Read text content
 - {"action": "find", "text": "<words>"} — Search ALL elements on the page, including ones not listed in the snapshot; returns their IDs
+- {"action": "note", "text": "<facts>"} — Write down facts you will need later (prices, specs, amounts, names). Notes stay in your ACTION HISTORY after you leave the page
 - {"action": "wait", "text": "<milliseconds>"} — Wait for content to load
 - {"action": "done", "summary": "<what was accomplished>"} — Task is complete
 
@@ -325,12 +333,13 @@ RULES:
 6. If you've completed the goal, use "done" with a summary.
 7. If you're stuck or the goal is impossible, use "done" with an explanation.
 8. On long pages the element list is cut short. If the element you need is not listed, use "find" with a keyword before scrolling or guessing URLs.
-9. Maximum 20 steps per task — be efficient.`,
+9. You only see the current page. Once you leave it, its content is gone; your ACTION HISTORY is your only memory. Before leaving a page, "note" anything you need from it. Never revisit a page just to re-read it: use your notes.
+10. Maximum 20 steps per task — be efficient.`,
     },
     {
       role: 'user',
       content: `GOAL: ${goal}\n\nCURRENT PAGE DOM SNAPSHOT:\n${domSnapshot.substring(0, SNAPSHOT_SAFETY_CAP)}${historyText}\n\nWhat is the NEXT single action? Respond with JSON only.`,
     },
-  ], config, { maxTokens: 1024, temperature: 0, topP: 1, jsonMode: true }); // headroom: reasoning models think before answering
+  ], config, { maxTokens: 4096, temperature: 0, topP: 1, jsonMode: true }); // headroom: reasoning models think before answering
 }
 

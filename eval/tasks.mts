@@ -341,7 +341,7 @@ export const TASKS: Task[] = [
     id: 'username-taken',
     category: 'expert',
     start: '/register.html',
-    goal: 'Sign up for an account as Ada Lovelace (ada@example.com) with the username ada',
+    goal: "Sign up for an account as Ada Lovelace (ada@example.com). She'd like the username ada, or something close to it if that's taken.",
     // "ada" is taken and weak passwords are refused: the agent has to read the
     // errors and adjust (a different, similar username; a stronger password)
     check: r => hit(r.events, '/api/register', d =>

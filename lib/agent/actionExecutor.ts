@@ -5,7 +5,7 @@ import { getElementById, getRemoteRef, findElements, formatElement, pageText, sh
 import { keyParams, normalizeKey } from '@/lib/agent/keys';
 
 export interface AgentAction {
-  action: 'click' | 'type' | 'clear_and_type' | 'select' | 'navigate' | 'scroll' | 'read' | 'wait' | 'done' | 'press_key' | 'find';
+  action: 'click' | 'type' | 'clear_and_type' | 'select' | 'navigate' | 'scroll' | 'read' | 'wait' | 'done' | 'press_key' | 'find' | 'note';
   elementId?: number;
   text?: string;
   url?: string;
@@ -553,6 +553,14 @@ export async function executeAction(action: AgentAction): Promise<string> {
       }
 
       return `✅ Pressed "${key}"`;
+    }
+
+    case 'note': {
+      // Memory across pages: the result lands in the action history, which is
+      // sent with every step and survives navigation. Page content does not.
+      const text = (action.text || '').trim();
+      if (!text) return '❌ note needs text to remember.';
+      return `📝 Noted: ${text.slice(0, 500)}`;
     }
 
     case 'find': {

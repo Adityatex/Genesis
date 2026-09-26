@@ -10,7 +10,7 @@ export type ParseResult =
 
 const ACTIONS: ReadonlySet<AgentAction['action']> = new Set([
   'click', 'type', 'clear_and_type', 'select', 'navigate',
-  'scroll', 'read', 'wait', 'done', 'press_key', 'find',
+  'scroll', 'read', 'wait', 'done', 'press_key', 'find', 'note',
 ]);
 
 /**
@@ -111,6 +111,9 @@ export function parseAgentAction(raw: string): ParseResult {
       action.url = parsed.href;
       break;
     }
+    case 'note':
+      if (!action.text?.trim()) return { ok: false, error: 'note requires text to remember' };
+      break;
     case 'find':
       if (!action.text?.trim()) return { ok: false, error: 'find requires text to search for' };
       break;

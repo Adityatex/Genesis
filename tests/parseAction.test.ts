@@ -78,3 +78,10 @@ describe('parseAgentAction', () => {
     expect(ok('{"action":"done","summary":"Found 3 results"}')).toEqual({ action: 'done', summary: 'Found 3 results' });
   });
 });
+
+describe('note action', () => {
+  it('parses notes and requires text', () => {
+    expect(parseAgentAction('{"action":"note","text":"Aero 13: 8 GB, $899"}')).toEqual({ ok: true, action: { action: 'note', text: 'Aero 13: 8 GB, $899' } });
+    expect(parseAgentAction('{"action":"note"}')).toEqual({ ok: false, error: 'note requires text to remember' });
+  });
+});
