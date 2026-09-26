@@ -2,6 +2,16 @@
 
 All runs are live: real model, real extension, real Chromium. A run passes only if the right requests reached the test server **and** the agent finished cleanly.
 
+## Cross-origin iframes (2026-09-26)
+
+Since `c837ca4` a small content script runs in every frame, so the agent can see and act inside iframes from another origin, like Stripe-style payment forms, which the top page can't read. Their elements join the snapshot labeled `(in frame "...")`, and actions on them are forwarded to the frame.
+
+| Hard task | Before | After (deepseek-flash) |
+|---|---|---|
+| `iframe-cross-origin` | 0/3 (known issue) | **3/3** |
+
+Regression check: **18/18** on every other task (10 standard + 8 hard, 1 trial each). **With this, all 9 hard tasks pass.**
+
 ## Trusted input (2026-09-26)
 
 Clicks and typing used to be script-generated DOM events (`isTrusted === false`), which many sites ignore. Since `d968e9a` the agent sends real mouse and keyboard input through the Chrome DevTools Protocol, and falls back to scripted events when that's unavailable. Two new hard tasks model sites that only accept real input:
@@ -27,7 +37,7 @@ The hard tasks, before and after the snapshot and executor fixes (`ca4023c`–`9
 | `shadow-dom-button` | button in an open shadow root | 0/1 | not run† | **3/3** |
 | `contenteditable-message` | rich-text editor (Slack/Gmail style) | 0/1 | not run† | **3/3** |
 | `shadow-dom-closed` (new) | button in a *closed* shadow root | n/a | not run† | **3/3** |
-| `iframe-cross-origin` (new) | Stripe-style cross-origin payment frame | n/a | not run† | 0/3 (known issue) |
+| `iframe-cross-origin` (new) | Stripe-style cross-origin payment frame | n/a | not run† | 0/3 (known issue at the time; 3/3 since `c837ca4`, see above) |
 
 **The original five: 0/5 → 15/15.** Counting the new tasks, the agent now passes 6 of 7, i.e. 18/18 runs on the tasks it can reach. The cross-origin frame is a documented limitation: reaching it needs a content script in every frame.
 

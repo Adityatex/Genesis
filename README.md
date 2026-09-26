@@ -71,17 +71,17 @@ npm run eval        # live against a real provider (Groq by default, --provider 
 
 The suite has 10 standard tasks (forms, dropdowns, radios, multi-page flows, slow backends, JS apps, extraction) and 9 hard ones that are hard for agents to see or act on: long pages, custom widgets, iframes, open and closed Shadow DOM, rich-text editors, and sites that only accept real (trusted) input. See [eval/README.md](eval/README.md).
 
-**Results** (2026-09-25, live runs, [full results](eval/BASELINE.md)):
+**Results** (2026-09-25/26, live runs, [full results](eval/BASELINE.md)):
 
 | Hard tasks | Before the fixes | After the fixes |
 |---|---|---|
 | Original five (long page, custom dropdown, iframe form, Shadow DOM button, rich-text editor) | **0/5** | **15/15** |
 | Closed shadow root (new) | n/a | 3/3 |
 | Sites that ignore scripted input: bot-protected button, keystroke-only editor (new) | 0/2 with scripted input | 6/6 with trusted input |
-| Cross-origin iframe (new, known issue) | n/a | 0/3 |
-| Standard tasks (regression check) | 30/30 | 50/50 |
+| Cross-origin iframe, Stripe-style (new) | 0/3 | 3/3 |
+| Standard tasks (regression check) | 30/30 | 60/60 |
 
-"Before" is Qwen on Groq; "after" is `deepseek-flash`, since Qwen ran out of free daily quota mid-run. Its after-fix runs that got a response were also 9/9. The hard-task failures were never about the model: before the fixes, the elements weren't even in what the model received. The fixes changed how the agent sees and acts on the page: it now reaches into Shadow DOM, iframes and ARIA widgets, types into rich-text editors, fits long pages into a size budget with a `find` action, checks that each action actually worked, and clicks and types through Chrome's DevTools Protocol, so pages see real input. That last part shows Chrome's "debugging this browser" banner while the agent works, and can be turned off in the popup.
+"Before" is Qwen on Groq; "after" is `deepseek-flash`, since Qwen ran out of free daily quota mid-run. Its after-fix runs that got a response were also 9/9. The hard-task failures were never about the model: before the fixes, the elements weren't even in what the model received. All 9 hard tasks now pass. The fixes changed how the agent sees and acts on the page: it now reaches into Shadow DOM, iframes (including cross-origin ones, through a helper script in each frame) and ARIA widgets, types into rich-text editors, fits long pages into a size budget with a `find` action, checks that each action actually worked, and clicks and types through Chrome's DevTools Protocol, so pages see real input. That last part shows Chrome's "debugging this browser" banner while the agent works, and can be turned off in the popup.
 
 ### Loading in Browser
 
