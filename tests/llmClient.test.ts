@@ -122,8 +122,13 @@ describe('request too large', () => {
   it('halves the response cap, down to a floor', () => {
     const groq = 'Request too large for model `qwen/qwen3.8-27b` on tokens per minute (TPM): Limit 8000, Requested 9012, please reduce your message size';
     expect(adaptParams(groq, {}, 4096)).toEqual({ maxTokens: 2048 });
-    expect(adaptParams(groq, { maxTokens: 2048 }, 4096)).toEqual({ maxTokens: 1024 });
-    expect(adaptParams(groq, { maxTokens: 1024 }, 4096)).toBeNull(); // can't go lower: a real rate limit
+    expect(adaptParams(groq, { maxTokens: 512 }, 4096)).toEqual({ maxTokens: 256 });
+    expect(adaptParams(groq, { maxTokens: 256 }, 4096)).toBeNull(); // can't go lower: a real rate limit
+  });
+
+  it('goes under a named output-tokens-per-minute limit (Groq OTPM)', () => {
+    const otpm = "Request too large for model `qwen/qwen3.8-27b` on output tokens per minute (OTPM): Limit 1000, Requested 1101. The request's expected output tokens exceed the enforced limit; reduce max_tokens";
+    expect(adaptParams(otpm, {}, 2048)).toEqual({ maxTokens: 800 });
   });
 
   it('retries a Groq 429 "Request too large" with a smaller cap, and plain 429s are not adapted', async () => {

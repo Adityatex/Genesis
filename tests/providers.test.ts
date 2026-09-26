@@ -35,7 +35,7 @@ describe('resolveConfig', () => {
   it('uses the preset URL, the saved key and the benchmarked default model', () => {
     expect(resolveConfig(settings)).toEqual({
       provider: 'groq', label: 'Groq', baseUrl: PROVIDERS.groq.baseUrl, apiKey: 'gsk_1', model: PROVIDERS.groq.defaultModel,
-      maxOutputTokens: 2048, // Groq's free tier counts the response cap against 8k tokens/minute
+      maxOutputTokens: 800, // Groq's free tier rejects max_tokens over its 1k output-tokens/minute limit
     });
   });
 

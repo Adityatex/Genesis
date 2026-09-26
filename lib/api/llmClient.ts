@@ -63,7 +63,7 @@ export interface ParamFixes {
 }
 
 /** The response cap is never reduced below this. */
-const MIN_MAX_TOKENS = 1024;
+const MIN_MAX_TOKENS = 256;
 
 // Learned per baseUrl + model, so only the first request pays for a rejected field
 const learnedFixes = new Map<string, ParamFixes>();
@@ -83,10 +83,13 @@ export function buildRequestBody(model: string, messages: ChatMessage[], opts: C
  */
 export function adaptParams(errorBody: string, fixes: ParamFixes, requestedMaxTokens = 2048): ParamFixes | null {
   const e = errorBody.toLowerCase();
-  // "Request too large" (e.g. prompt + response cap over a tokens-per-minute limit): halve the cap
+  // "Request too large": the response cap is over a limit. If the error names an
+  // output-tokens-per-minute limit (Groq's OTPM), go safely under it; else halve.
   const cap = fixes.maxTokens ?? requestedMaxTokens;
-  if (/request too large|reduce your message size|exceeds the (token|context) limit/.test(e) && cap > MIN_MAX_TOKENS) {
-    return { ...fixes, maxTokens: Math.max(MIN_MAX_TOKENS, Math.floor(cap / 2)) };
+  if (/request too large|reduce your message size|reduce max_tokens|exceeds the (token|context) limit/.test(e) && cap > MIN_MAX_TOKENS) {
+    const outputLimit = /output tokens per minute|otpm/.test(e) ? Number(/limit (\d+)/.exec(e)?.[1]) : NaN;
+    const next = Number.isFinite(outputLimit) ? Math.floor(outputLimit * 0.8) : Math.floor(cap / 2);
+    return { ...fixes, maxTokens: Math.max(MIN_MAX_TOKENS, Math.min(next, cap - 1)) };
   }
   if (!fixes.noJsonMode && /response_format|json_object|json mode/.test(e)) return { ...fixes, noJsonMode: true };
   if (!fixes.useMaxCompletionTokens && /max_tokens/.test(e) && /max_completion_tokens|not supported|unsupported/.test(e)) {
@@ -349,7 +352,7 @@ RULES:
 6. If you've completed the goal, use "done" with a summary.
 7. If you're stuck or the goal is impossible, use "done" with an explanation.
 8. On long pages the element list is cut short. If the element you need is not listed, use "find" with a keyword before scrolling or guessing URLs.
-9. You only see the current page. Once you leave it, its content is gone; your ACTION HISTORY is your only memory. Before leaving a page, "note" anything you need from it. Never revisit a page just to re-read it: use your notes.
+9. You only see the current page. Once you leave it, its content is gone; your ACTION HISTORY is your only memory. Before leaving a page, "note" anything you need from it. The snapshot may also end with PAGES YOU VISITED EARLIER, excerpts of pages you already read. Never revisit a page just to re-read it: use your notes and those excerpts.
 10. Maximum 20 steps per task — be efficient.`,
     },
     {

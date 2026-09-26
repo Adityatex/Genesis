@@ -51,6 +51,31 @@ interface Run extends RunView {
   stopRequested: boolean;
   /** Page loads seen in this tab since the run started (see notifyTabLoading). */
   loads: number;
+  /** Text excerpts of pages already seen, by URL (automatic memory). */
+  visited: Map<string, string>;
+}
+
+/** Automatic memory: how many earlier pages, and how much of each, the model sees. */
+const MEMORY_PAGES = 8;
+const MEMORY_CHARS_PER_PAGE = 400;
+
+/**
+ * The visible-text part of a snapshot, shortened. Models often leave a page
+ * without noting what they need from it (comparing products, adding up
+ * figures across pages), so the runner keeps these excerpts for them.
+ */
+export function pageExcerpt(snapshotText: string): string {
+  const text = snapshotText.split('--- VISIBLE TEXT (excerpt) ---')[1] ?? '';
+  const clean = text.replace(/\s+/g, ' ').trim();
+  return clean.length > MEMORY_CHARS_PER_PAGE ? `${clean.slice(0, MEMORY_CHARS_PER_PAGE)}…` : clean;
+}
+
+/** "Pages you visited earlier" section for the prompt, leaving out the current page. */
+export function memorySection(visited: Map<string, string>, currentUrl: string | undefined): string {
+  const entries = [...visited].filter(([url]) => url !== currentUrl).slice(-MEMORY_PAGES);
+  if (entries.length === 0) return '';
+  const lines = entries.map(([url, excerpt]) => `- ${url}: ${excerpt}`);
+  return `\n\n--- PAGES YOU VISITED EARLIER (what they said; they are not on screen now) ---\n${lines.join('\n')}`;
 }
 
 /** After an action, time for a click-triggered navigation to start. */
@@ -129,12 +154,18 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
     run.step++;
     publish(deps, run, run.history.length ? progressMessage(run, `*Step ${run.step}: scanning the page...*`) : `🔍 **Step ${run.step}**: scanning the page...`, true);
 
-    await waitForPage(deps, tabId);
+    const page = await waitForPage(deps, tabId);
     const snapshot = await deps.send(tabId, { action: 'AGENT_SNAPSHOT' }, SNAPSHOT_TIMEOUT_MS);
     if (run.stopRequested) break;
+    const snapshotText = String(snapshot?.text ?? '');
 
     publish(deps, run, run.history.length ? progressMessage(run, `*Step ${run.step}: planning...*`) : `🧠 **Step ${run.step}**: planning...`, true);
-    const raw = await deps.plan(run.goal, String(snapshot?.text ?? ''), run.history);
+    const raw = await deps.plan(run.goal, snapshotText + memorySection(run.visited, page.url), run.history);
+    if (page.url) {
+      // Re-insert so the most recently seen pages come last
+      run.visited.delete(page.url);
+      run.visited.set(page.url, pageExcerpt(snapshotText));
+    }
     if (run.stopRequested) break;
 
     const parsed = parseAgentAction(raw);
@@ -204,7 +235,7 @@ export async function startRun(deps: RunnerDeps, tabId: number, goal: string): P
   const previous = runs.get(tabId);
   if (previous?.status === 'running') previous.stopRequested = true;
 
-  const run: Run = { tabId, goal, status: 'running', message: '', loading: true, step: 0, updatedAt: Date.now(), history: [], stopRequested: false, loads: 0 };
+  const run: Run = { tabId, goal, status: 'running', message: '', loading: true, step: 0, updatedAt: Date.now(), history: [], stopRequested: false, loads: 0, visited: new Map() };
   runs.set(tabId, run);
   try {
     await loop(deps, run);

@@ -86,3 +86,31 @@ describe('agent runner (background loop)', () => {
     expect(deps.plan).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('automatic memory of visited pages', () => {
+  it('shows earlier pages\' text to the model, but not the current page', async () => {
+    const pages: Record<string, string> = {
+      'https://shop.test/a': 'PAGE: A\n--- VISIBLE TEXT (excerpt) ---\nAero 13 Price $899 Memory (RAM) 8 GB',
+      'https://shop.test/b': 'PAGE: B\n--- VISIBLE TEXT (excerpt) ---\nKite 14 Price $1,049 Memory (RAM) 16 GB',
+    };
+    const { deps, tab } = fakeDeps([
+      '{"action":"navigate","url":"https://shop.test/b"}',
+      '{"action":"done","summary":"Kite 14"}',
+    ]);
+    tab.url = 'https://shop.test/a';
+    const snapshots: string[] = [];
+    (deps.send as any).mockImplementation(async (_id: number, m: any) =>
+      m.action === 'AGENT_SNAPSHOT' ? { text: pages[tab.url!] } : { ok: true });
+    (deps.plan as any).mockImplementation(async (_g: string, snap: string) => {
+      snapshots.push(snap);
+      return snapshots.length === 1 ? '{"action":"navigate","url":"https://shop.test/b"}' : '{"action":"done","summary":"Kite 14"}';
+    });
+
+    await startRun(deps, 7, 'Buy the cheapest laptop with 16 GB');
+
+    expect(snapshots[0]).not.toContain('PAGES YOU VISITED EARLIER'); // nothing earlier yet
+    expect(snapshots[1]).toContain('--- PAGES YOU VISITED EARLIER');
+    expect(snapshots[1]).toContain('- https://shop.test/a: Aero 13 Price $899 Memory (RAM) 8 GB');
+    expect(snapshots[1].split('PAGES YOU VISITED EARLIER')[1]).not.toContain('Kite 14'); // current page isn't repeated
+  });
+});

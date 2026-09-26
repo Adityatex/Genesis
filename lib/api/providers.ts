@@ -18,9 +18,9 @@ export interface ProviderPreset {
    */
   defaultModel?: string;
   /**
-   * Response cap for agent planning. Groq's free tier counts the cap against
-   * its 8k tokens/minute budget on every request, so a large one throttles the
-   * agent to ~1 step a minute.
+   * Response cap for agent planning, when a provider needs a smaller one than
+   * the default. Groq's free tier rejects any request whose max_tokens exceeds
+   * its output-tokens-per-minute limit (1,000 for some models).
    */
   maxOutputTokens?: number;
   note?: string;
@@ -34,8 +34,8 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     needsKey: true,
     keyUrl: 'https://console.groq.com/keys',
     defaultModel: 'qwen/qwen3.8-27b',
-    maxOutputTokens: 2048,
-    note: 'Free tier: about 8k tokens/minute and 200k tokens/day per model.',
+    maxOutputTokens: 800,
+    note: 'Free tier: about 8k tokens/minute, 1k output tokens/minute and 200k tokens/day per model.',
   },
   deepseek: {
     id: 'deepseek',
