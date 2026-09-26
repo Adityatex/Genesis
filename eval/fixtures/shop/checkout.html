@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><title>Checkout - Stride Shoes</title></head>
+<body>
+  <header><h1>Stride Shoes</h1><a href="/shop/cart.html">Back to cart</a></header>
+  <h2>Checkout</h2>
+  <form id="order" action="/api/order" method="post">
+    <input type="hidden" name="cart" id="cart">
+    <p><label for="name">Full name</label> <input id="name" name="name" autocomplete="name"></p>
+    <p><label for="address">Street address</label> <input id="address" name="address" autocomplete="street-address"></p>
+    <p><label for="city">City</label> <input id="city" name="city" autocomplete="address-level2"></p>
+    <fieldset><legend>Shipping</legend>
+      <label><input type="radio" name="shipping" value="standard" checked aria-label="Standard shipping (5-7 days, free)"> Standard (5-7 days, free)</label>
+      <label><input type="radio" name="shipping" value="express" aria-label="Express shipping (1-2 days, $15)"> Express (1-2 days, $15)</label>
+    </fieldset>
+    <p><button type="submit">Place order</button></p>
+  </form>
+  <script>
+    document.getElementById('cart').value = localStorage.getItem('cart') || '[]';
+  </script>
+</body></html>

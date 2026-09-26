@@ -1,0 +1,25 @@
+<!doctype html>
+<html><head><title>Contact support - Byte Store</title></head>
+<body>
+  <nav><a href="/account/orders.html">Back to orders</a></nav>
+  <h1 id="heading">Contact support</h1>
+  <form action="/api/ticket" method="post">
+    <input type="hidden" name="order" id="order">
+    <p><label for="reason">What's wrong?</label>
+      <select id="reason" name="reason" aria-label="What's wrong?">
+        <option value="">Choose a reason</option>
+        <option value="damaged">Item arrived damaged</option>
+        <option value="wrong-item">Wrong item</option>
+        <option value="late">Delivery is late</option>
+        <option value="refund">I want a refund</option>
+        <option value="other">Something else</option>
+      </select></p>
+    <p><label for="message">Message</label><br><textarea id="message" name="message" placeholder="Tell us what happened"></textarea></p>
+    <button type="submit">Send to support</button>
+  </form>
+  <script>
+    const order = new URLSearchParams(location.search).get('order') || '';
+    document.getElementById('order').value = order;
+    document.getElementById('heading').textContent = `Contact support about order #${order}`;
+  </script>
+</body></html>

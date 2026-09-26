@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><title>Your cart - Stride Shoes</title></head>
+<body>
+  <header><h1>Stride Shoes</h1><a href="/shop/index.html">Home</a></header>
+  <h2>Your cart</h2>
+  <ul id="items"></ul>
+  <p><button id="clear">Empty cart</button></p>
+  <p id="checkout"></p>
+  <script>
+    const cart = JSON.parse(localStorage.getItem('cart') || '[]');
+    document.getElementById('items').innerHTML = cart.length
+      ? cart.map(c => `<li>${c.name}, size US ${c.size}, quantity ${c.qty}</li>`).join('')
+      : '<li>Your cart is empty.</li>';
+    if (cart.length) document.getElementById('checkout').innerHTML = '<a href="/shop/checkout.html">Proceed to checkout</a>';
+    document.getElementById('clear').addEventListener('click', () => { localStorage.removeItem('cart'); location.reload(); });
+  </script>
+</body></html>

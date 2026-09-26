@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><title>Vertex 15 - Byte Store</title></head>
+<body>
+  <p><a href="/laptops/index.html">All laptops</a></p>
+  <h1>Vertex 15</h1>
+  <table>
+    <tr><th>Price</th><td>$1,249</td></tr>
+    <tr><th>Memory (RAM)</th><td>32 GB</td></tr>
+    <tr><th>Storage</th><td>1 TB SSD</td></tr>
+    <tr><th>Screen</th><td>15.6"</td></tr>
+  </table>
+  <button id="add">Add to cart</button>
+  <p id="status" role="status"></p>
+  <script>
+    document.getElementById('add').addEventListener('click', async () => {
+      await fetch('/api/cart', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ item: 'vertex-15' }) });
+      document.getElementById('status').textContent = 'Vertex 15 added to your cart.';
+    });
+  </script>
+</body></html>

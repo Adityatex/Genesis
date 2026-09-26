@@ -327,10 +327,11 @@ function report(results: RunResult[], tasks: Task[], meta: Record<string, string
   const limited = results.filter(r => r.outcome === 'rate-limited');
   if (limited.length) lines.push(`> ${limited.length} run(s) ended on a Groq rate limit (429) and are excluded from success rates.`, '');
   const scored = results.filter(r => r.outcome !== 'rate-limited');
-  const standard = scored.filter(r => r.category !== 'hard');
+  const standard = scored.filter(r => r.category !== 'hard' && r.category !== 'expert');
   const hard = scored.filter(r => r.category === 'hard');
+  const expert = scored.filter(r => r.category === 'expert');
   lines.push('| Suite | Success | Avg LLM calls | Avg tokens | Avg time |', '|---|---|---|---|---|');
-  for (const [name, rs] of [['Standard', standard], ['Hard', hard], ['**All**', scored]] as const) {
+  for (const [name, rs] of [['Standard', standard], ['Hard', hard], ['Expert', expert], ['**All**', scored]] as const) {
     lines.push(`| ${name} | ${pct(passes(rs), rs.length)} (${passes(rs)}/${rs.length}) | ${avg(rs, r => r.llmCalls).toFixed(1)} | ${Math.round(avg(rs, r => r.promptTokens + r.completionTokens))} | ${(avg(rs, r => r.durationMs) / 1000).toFixed(1)}s |`);
   }
   lines.push('', '| Task | Category | Pass | Outcome | LLM calls | Notes |', '|---|---|---|---|---|---|');
@@ -377,7 +378,7 @@ async function main() {
   if (MODE === 'live') {
     // Rough budget from the baseline: ~2.5k tokens per standard run, up to
     // ~10k for a hard run that fails and uses all its steps
-    const estimate = tasks.reduce((sum, t) => sum + (t.category === 'hard' ? 10_000 : 2_500), 0) * TRIALS;
+    const estimate = tasks.reduce((sum, t) => sum + (t.category === 'hard' ? 10_000 : t.category === 'expert' ? 15_000 : 2_500), 0) * TRIALS;
     const quota = PROVIDER === 'groq' ? " Groq's free tier allows 200k tokens per model per day (rolling)." : '';
     console.log(`${LLM.label} · ${LLM.model}. Estimated usage: up to ~${Math.round(estimate / 1000)}k tokens.${quota}\n`);
   }

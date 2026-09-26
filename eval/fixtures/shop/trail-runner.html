@@ -1,0 +1,30 @@
+<!doctype html>
+<html><head><title>Trail Runner - Stride Shoes</title></head>
+<body>
+  <header><h1>Stride Shoes</h1><a href="/shop/index.html">Home</a> <a href="/shop/cart.html">Cart</a></header>
+  <h2>Trail Runner</h2>
+  <p>Grippy, waterproof trail shoe. $120 a pair.</p>
+  <p><label for="size">Size</label>
+    <select id="size" aria-label="Size">
+      <option value="">Choose a size</option>
+      <option value="8">US 8</option>
+      <option value="9">US 9</option>
+      <option value="10">US 10</option>
+      <option value="11">US 11</option>
+    </select></p>
+  <p><label for="qty">Quantity</label> <input id="qty" type="number" min="1" max="5" value="1" aria-label="Quantity"></p>
+  <button id="add">Add to cart</button>
+  <p id="error" role="alert"></p>
+  <script>
+    document.getElementById('add').addEventListener('click', () => {
+      const size = document.getElementById('size').value;
+      const qty = parseInt(document.getElementById('qty').value, 10);
+      if (!size) { document.getElementById('error').textContent = 'Please choose a size.'; return; }
+      if (!(qty >= 1 && qty <= 5)) { document.getElementById('error').textContent = 'Quantity must be between 1 and 5.'; return; }
+      const cart = JSON.parse(localStorage.getItem('cart') || '[]');
+      cart.push({ item: 'trail-runner', name: 'Trail Runner', size, qty });
+      localStorage.setItem('cart', JSON.stringify(cart));
+      location.href = '/shop/cart.html';
+    });
+  </script>
+</body></html>

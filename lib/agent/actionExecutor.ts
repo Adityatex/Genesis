@@ -182,10 +182,15 @@ function setFieldValue(el: HTMLInputElement | HTMLTextAreaElement, value: string
 function placeCaret(el: HTMLElement, clear: boolean): void {
   el.focus();
   if (isTextField(el)) {
+    if (clear) {
+      // Empty it outright: number/email inputs don't allow selecting their
+      // text, so select-then-type would append ("1" + "2" = "12")
+      if (el.value) setFieldValue(el, '');
+      return;
+    }
     try {
-      if (clear) el.select();
-      else el.setSelectionRange(el.value.length, el.value.length);
-    } catch { /* e.g. type=email doesn't support selection ranges */ }
+      el.setSelectionRange(el.value.length, el.value.length);
+    } catch { /* number/email inputs don't support selection ranges */ }
     return;
   }
   if (el.isContentEditable) {

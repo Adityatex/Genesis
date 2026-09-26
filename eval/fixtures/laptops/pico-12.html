@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><title>Pico 12 - Byte Store</title></head>
+<body>
+  <p><a href="/laptops/index.html">All laptops</a></p>
+  <h1>Pico 12</h1>
+  <table>
+    <tr><th>Price</th><td>$749</td></tr>
+    <tr><th>Memory (RAM)</th><td>8 GB</td></tr>
+    <tr><th>Storage</th><td>128 GB SSD</td></tr>
+    <tr><th>Screen</th><td>12.4"</td></tr>
+  </table>
+  <button id="add">Add to cart</button>
+  <p id="status" role="status"></p>
+  <script>
+    document.getElementById('add').addEventListener('click', async () => {
+      await fetch('/api/cart', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ item: 'pico-12' }) });
+      document.getElementById('status').textContent = 'Pico 12 added to your cart.';
+    });
+  </script>
+</body></html>

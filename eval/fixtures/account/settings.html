@@ -1,0 +1,29 @@
+<!doctype html>
+<html><head><title>Settings - Byte Store</title>
+<style>
+  [role=switch] { display: inline-block; width: 40px; height: 22px; border-radius: 11px; background: #bbb; cursor: pointer; vertical-align: middle; }
+  [role=switch][aria-checked=true] { background: #2a7; }
+  .row { margin: 10px 0; }
+</style></head>
+<body>
+  <nav><a href="/account/orders.html">Orders</a> | <a href="/account/settings.html">Settings</a></nav>
+  <h1>Settings</h1>
+  <h2>Email notifications</h2>
+  <div class="row"><span role="switch" tabindex="0" aria-checked="true" data-key="security" aria-label="Security alerts (new sign-ins, password changes)"></span> Security alerts (new sign-ins, password changes)</div>
+  <div class="row"><span role="switch" tabindex="0" aria-checked="true" data-key="orders" aria-label="Order and delivery updates"></span> Order and delivery updates</div>
+  <div class="row"><span role="switch" tabindex="0" aria-checked="true" data-key="offers" aria-label="Deals and special offers"></span> Deals and special offers</div>
+  <div class="row"><span role="switch" tabindex="0" aria-checked="true" data-key="newsletter" aria-label="Weekly product newsletter"></span> Weekly product newsletter</div>
+  <button id="save">Save preferences</button>
+  <p id="status" role="status"></p>
+  <script>
+    document.querySelectorAll('[role=switch]').forEach(s => s.addEventListener('click', () => {
+      s.setAttribute('aria-checked', String(s.getAttribute('aria-checked') !== 'true'));
+    }));
+    document.getElementById('save').addEventListener('click', async () => {
+      const prefs = {};
+      document.querySelectorAll('[role=switch]').forEach(s => { prefs[s.dataset.key] = s.getAttribute('aria-checked') === 'true'; });
+      await fetch('/api/prefs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(prefs) });
+      document.getElementById('status').textContent = 'Preferences saved.';
+    });
+  </script>
+</body></html>

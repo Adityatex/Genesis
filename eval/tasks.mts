@@ -30,7 +30,12 @@ export interface GradeInput {
 
 export interface Task {
   id: string;
-  category: 'forms' | 'navigation' | 'js-app' | 'extraction' | 'hard';
+  /**
+   * standard (forms / navigation / js-app / extraction): basic competence.
+   * hard: pages that are hard to see or act on.
+   * expert: planning and judgment: long flows, vague goals, recovering from errors.
+   */
+  category: 'forms' | 'navigation' | 'js-app' | 'extraction' | 'hard' | 'expert';
   start: string;
   goal: string;
   check: (r: GradeInput) => boolean;
@@ -254,6 +259,142 @@ export const TASKS: Task[] = [
     mockPlan: [
       { action: 'type', target: /"Message #general"/, text: 'Hello team' },
       { action: 'click', target: /<button> "Send"/ },
+    ],
+  },
+
+  // ---- Expert: planning and judgment. Mock plans only prove the pages and
+  // plumbing work; these tasks exist to separate models in live runs.
+  {
+    id: 'checkout-flow',
+    category: 'expert',
+    start: '/shop/index.html',
+    goal: 'Buy two pairs of Trail Runner shoes in size US 10 with express shipping, delivered to Ada Lovelace, 12 Analytical Street, London',
+    check: r => hit(r.events, '/api/order', d => {
+      let cart: { item?: string; size?: string; qty?: number }[] = [];
+      try { cart = JSON.parse(String(d.cart)); } catch { return false; }
+      const units = cart.filter(c => c.item === 'trail-runner' && c.size === '10').reduce((n, c) => n + Number(c.qty), 0);
+      return units === 2 && cart.every(c => c.item === 'trail-runner' && c.size === '10')
+        && norm(d.name) === 'ada lovelace' && norm(d.address).includes('12 analytical')
+        && norm(d.city) === 'london' && d.shipping === 'express';
+    }),
+    mockPlan: [
+      { action: 'type', target: /"Search shoes"/, text: 'trail runner' },
+      { action: 'press_key', key: 'Enter', target: /"Search shoes"/ },
+      { action: 'click', target: /<a> "Trail Runner"/ },
+      { action: 'select', target: /<select> "Size"/, value: 'US 10' },
+      { action: 'clear_and_type', target: /"Quantity"/, text: '2' },
+      { action: 'click', target: /"Add to cart"/ },
+      { action: 'click', target: /"Proceed to checkout"/ },
+      { action: 'type', target: /"name"/, text: 'Ada Lovelace' },
+      { action: 'type', target: /"address"/, text: '12 Analytical Street' },
+      { action: 'type', target: /"city"/, text: 'London' },
+      { action: 'click', target: /"Express shipping/ },
+      { action: 'click', target: /"Place order"/ },
+    ],
+  },
+  {
+    id: 'compare-and-buy',
+    category: 'expert',
+    start: '/laptops/index.html',
+    goal: 'Buy the cheapest laptop that has at least 16 GB of RAM',
+    // RAM is only on each product page; the right answer is Kite 14 ($1,049).
+    // Adding any other laptop to the cart fails the task.
+    check: r => {
+      const adds = r.events.filter(e => e.path === '/api/cart');
+      return adds.length > 0 && adds.every(e => e.data.item === 'kite-14');
+    },
+    mockPlan: [
+      { action: 'click', target: /<a> "Kite 14"/ },
+      { action: 'click', target: /"Add to cart"/ },
+    ],
+  },
+  {
+    id: 'vague-support',
+    category: 'expert',
+    start: '/account/orders.html',
+    goal: 'One of my orders is really late. Find it and contact support about it.',
+    check: r => hit(r.events, '/api/ticket', d => d.order === '1043' && d.reason === 'late'),
+    mockPlan: [
+      { action: 'click', target: /"Get help with order #1043"/ },
+      { action: 'select', target: /<select> "What's wrong\?"/, value: 'Delivery is late' },
+      { action: 'type', target: /<textarea>/, text: 'My order #1043 is 9 days late. Where is it?' },
+      { action: 'click', target: /"Send to support"/ },
+    ],
+  },
+  {
+    id: 'vague-notifications',
+    category: 'expert',
+    start: '/account/settings.html',
+    goal: "I'm getting too many promotional emails from this site. Find the setting and stop them, but keep anything about my account's security and my orders.",
+    check: r => {
+      const saves = r.events.filter(e => e.path === '/api/prefs');
+      const last = saves.at(-1)?.data;
+      return !!last && last.offers === false && last.newsletter === false && last.security === true && last.orders === true;
+    },
+    mockPlan: [
+      { action: 'click', target: /"Deals and special offers"/ },
+      { action: 'click', target: /"Weekly product newsletter"/ },
+      { action: 'click', target: /"Save preferences"/ },
+    ],
+  },
+  {
+    id: 'username-taken',
+    category: 'expert',
+    start: '/register.html',
+    goal: 'Sign up for an account as Ada Lovelace (ada@example.com) with the username ada',
+    // "ada" is taken and weak passwords are refused: the agent has to read the
+    // errors and adjust (a different, similar username; a stronger password)
+    check: r => hit(r.events, '/api/register', d =>
+      d.accepted === true && norm(d.email) === 'ada@example.com' && norm(d.username).startsWith('ada')),
+    mockPlan: [
+      { action: 'type', target: /"Full name"|"fullname"/, text: 'Ada Lovelace' },
+      { action: 'type', target: /type="email"/, text: 'ada@example.com' },
+      { action: 'type', target: /"username"/, text: 'ada' },
+      { action: 'type', target: /type="password"/, text: 'Analytical1815' },
+      { action: 'click', target: /"Create account"/ },
+      // The form comes back with "already taken"; name and email are kept
+      { action: 'type', target: /"username"/, text: 'ada1815' },
+      { action: 'type', target: /type="password"/, text: 'Analytical1815' },
+      { action: 'click', target: /"Create account"/ },
+    ],
+  },
+  {
+    id: 'flaky-submit',
+    category: 'expert',
+    start: '/contact.html',
+    goal: 'Fill in the contact form with the subject Refund request and the message Please refund order 1042, and make sure it actually gets sent',
+    // The first submission fails with an error; the agent must notice and retry
+    check: r => hit(r.events, '/api/flaky/contact', d =>
+      d.accepted === true && norm(d.subject) === 'refund request' && norm(d.message).includes('refund order 1042')),
+    mockPlan: [
+      { action: 'type', target: /"subject"/, text: 'Refund request' },
+      { action: 'type', target: /<textarea>/, text: 'Please refund order 1042' },
+      { action: 'click', target: /"Send message"/ },
+      { action: 'click', target: /"Send message"/ }, // retry after the error
+    ],
+  },
+  {
+    id: 'modal-overlay',
+    category: 'expert',
+    start: '/report.html',
+    goal: 'Download the quarterly report',
+    // A newsletter popup blocks the page; dismiss it without subscribing
+    check: r => hit(r.events, '/api/download') && !hit(r.events, '/api/newsletter'),
+    mockPlan: [
+      { action: 'click', target: /"No thanks"/ },
+      { action: 'click', target: /"Download report \(PDF\)"/ },
+    ],
+  },
+  {
+    id: 'invoice-total',
+    category: 'expert',
+    start: '/billing/invoices-1.html',
+    goal: 'Find the total amount of all my unpaid invoices',
+    // Unpaid invoices span two pages: 120.00 + 89.50 + 310.25 + 45.00
+    check: r => /564\.75/.test(r.summary),
+    mockPlan: [
+      { action: 'click', target: /<a> "Next page"/ },
+      { action: 'done', summary: 'Your unpaid invoices total $564.75.' },
     ],
   },
 ];

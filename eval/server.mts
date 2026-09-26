@@ -41,19 +41,76 @@ function page(title: string, body: string): string {
   return `<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1>${body}</body></html>`;
 }
 
+// ---- username-taken task: sign-up that rejects taken usernames and weak passwords
+export const TAKEN_USERNAMES = ['ada', 'ada.lovelace', 'adalovelace', 'ada_lovelace', 'lovelace'];
+
+export function registerError(data: Record<string, unknown>): string | null {
+  const username = String(data.username ?? '').trim().toLowerCase();
+  const password = String(data.password ?? '');
+  if (!username) return 'Choose a username.';
+  if (TAKEN_USERNAMES.includes(username)) {
+    return `The username "${esc(username)}" is already taken. Please choose a different username.`;
+  }
+  if (password.length < 10 || !/\d/.test(password)) {
+    return 'Your password must be at least 10 characters long and include a number.';
+  }
+  return null;
+}
+
+function registerForm(error = '', name = '', email = ''): string {
+  const banner = error ? `<p role="alert" style="color:#b00">${error}</p>` : '';
+  return page('Create your account', `${banner}
+    <form action="/api/register" method="post">
+      <p><label for="fullname">Full name</label> <input id="fullname" name="fullname" value="${esc(name)}"></p>
+      <p><label for="email">Email</label> <input id="email" name="email" type="email" value="${esc(email)}"></p>
+      <p><label for="username">Username</label> <input id="username" name="username"></p>
+      <p><label for="password">Password</label> <input id="password" name="password" type="password" placeholder="At least 10 characters, including a number"></p>
+      <p><button type="submit">Create account</button></p>
+    </form>`);
+}
+
+// ---- flaky-submit task: the first contact-form submission fails
+function contactForm(error: string, subject: string, message: string): string {
+  return page('Contact us', `<p role="alert" style="color:#b00">${error}</p>
+    <form action="/api/flaky/contact" method="post">
+      <p><label for="subject">Subject</label> <input id="subject" name="subject" value="${esc(subject)}"></p>
+      <p><label for="message">Message</label><br><textarea id="message" name="message">${esc(message)}</textarea></p>
+      <button type="submit">Send message</button>
+    </form>`);
+}
+
 export async function startFixtureServer(port = 0): Promise<FixtureServer> {
   const events: RecordedEvent[] = [];
+  let flakyCalls = 0;
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || '/', 'http://localhost');
 
+    if (url.pathname === '/register.html') {
+      res.writeHead(200, { 'content-type': 'text/html' }).end(registerForm());
+      return;
+    }
+
     if (url.pathname.startsWith('/api/')) {
-      const data = { ...Object.fromEntries(url.searchParams), ...(await readBody(req)) };
+      const data: Record<string, unknown> = { ...Object.fromEntries(url.searchParams), ...(await readBody(req)) };
       events.push({ method: req.method || 'GET', path: url.pathname, data });
       // /api/slow/* simulates a slow backend: the old page stays alive while it waits
       if (url.pathname.startsWith('/api/slow/')) await new Promise(r => setTimeout(r, 2500));
 
-      if ((req.headers['content-type'] || '').includes('application/json')) {
+      if (url.pathname === '/api/register') {
+        const error = registerError(data);
+        data.accepted = !error;
+        res.writeHead(200, { 'content-type': 'text/html' }).end(error
+          ? registerForm(error, String(data.fullname ?? ''), String(data.email ?? ''))
+          : page(`Welcome to Byte Store, ${esc(data.username)}!`, '<p>Your account has been created.</p>'));
+      } else if (url.pathname === '/api/flaky/contact') {
+        // Fail the first submission, like a backend hiccup; the user has to retry
+        flakyCalls++;
+        data.accepted = flakyCalls > 1;
+        res.writeHead(200, { 'content-type': 'text/html' }).end(flakyCalls > 1
+          ? page('Message sent', "<p>Thanks! We'll reply within one business day.</p>")
+          : contactForm('Sorry, something went wrong and your message was not sent. Please try again.', String(data.subject ?? ''), String(data.message ?? '')));
+      } else if ((req.headers['content-type'] || '').includes('application/json')) {
         res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
       } else if (url.pathname === '/api/visit') {
         // A real site shows the page you opened, not a generic confirmation
@@ -101,7 +158,10 @@ export async function startFixtureServer(port = 0): Promise<FixtureServer> {
   return {
     baseUrl: `http://127.0.0.1:${actualPort}`,
     events,
-    reset: () => { events.length = 0; },
+    reset: () => {
+      events.length = 0;
+      flakyCalls = 0;
+    },
     close: () => new Promise(resolve => server.close(() => resolve())),
   };
 }

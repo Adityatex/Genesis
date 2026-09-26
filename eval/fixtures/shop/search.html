@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><title>Search results - Stride Shoes</title></head>
+<body>
+  <header><h1>Stride Shoes</h1><a href="/shop/index.html">Home</a> <a href="/shop/cart.html">Cart</a></header>
+  <h2 id="heading">Search results</h2>
+  <ul id="results"></ul>
+  <script>
+    const products = [
+      { name: 'Trail Runner', href: '/shop/trail-runner.html', price: '$120' },
+      { name: 'Road Racer', href: '/shop/road-racer.html', price: '$135' },
+      { name: 'Canvas Sneaker', href: '/shop/canvas-sneaker.html', price: '$60' },
+    ];
+    const q = (new URLSearchParams(location.search).get('q') || '').toLowerCase().trim();
+    const words = q.split(/\s+/).filter(Boolean);
+    const hits = products.filter(p => words.every(w => p.name.toLowerCase().includes(w)));
+    document.getElementById('heading').textContent = `${hits.length} result(s) for "${q}"`;
+    document.getElementById('results').innerHTML = hits
+      .map(p => `<li><a href="${p.href}">${p.name}</a> ${p.price}</li>`).join('') || '<li>No shoes match your search.</li>';
+  </script>
+</body></html>

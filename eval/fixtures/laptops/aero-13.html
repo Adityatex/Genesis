@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><title>Aero 13 - Byte Store</title></head>
+<body>
+  <p><a href="/laptops/index.html">All laptops</a></p>
+  <h1>Aero 13</h1>
+  <table>
+    <tr><th>Price</th><td>$899</td></tr>
+    <tr><th>Memory (RAM)</th><td>8 GB</td></tr>
+    <tr><th>Storage</th><td>256 GB SSD</td></tr>
+    <tr><th>Screen</th><td>13.3"</td></tr>
+  </table>
+  <button id="add">Add to cart</button>
+  <p id="status" role="status"></p>
+  <script>
+    document.getElementById('add').addEventListener('click', async () => {
+      await fetch('/api/cart', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ item: 'aero-13' }) });
+      document.getElementById('status').textContent = 'Aero 13 added to your cart.';
+    });
+  </script>
+</body></html>

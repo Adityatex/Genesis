@@ -1,0 +1,43 @@
+<!doctype html>
+<html><head><title>Quarterly report - Byte Store Investors</title>
+<style>
+  #overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; align-items: center; justify-content: center; }
+  #overlay.open { display: flex; }
+  #modal { background: #fff; padding: 20px; width: 360px; }
+</style></head>
+<body>
+  <h1>Q3 results</h1>
+  <p>Revenue grew 12% year over year. The full report covers segments, margins and outlook.</p>
+  <button id="download">Download report (PDF)</button>
+  <p id="status" role="status"></p>
+
+  <div id="overlay">
+    <div id="modal" role="dialog" aria-modal="true" aria-label="Join our investor newsletter">
+      <button id="close" aria-label="Close">×</button>
+      <h2>Join our investor newsletter</h2>
+      <p><input id="email" type="email" placeholder="Your email" aria-label="Your email"></p>
+      <button id="subscribe">Subscribe</button>
+      <button id="nothanks">No thanks</button>
+    </div>
+  </div>
+
+  <script>
+    const overlay = document.getElementById('overlay');
+    let modalOpen = false;
+    // Like many sites: the popup appears shortly after the page loads
+    setTimeout(() => { overlay.classList.add('open'); modalOpen = true; }, 400);
+    const close = () => { overlay.classList.remove('open'); modalOpen = false; };
+    document.getElementById('close').addEventListener('click', close);
+    document.getElementById('nothanks').addEventListener('click', close);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+    document.getElementById('subscribe').addEventListener('click', async () => {
+      await fetch('/api/newsletter', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: document.getElementById('email').value }) });
+      close();
+    });
+    document.getElementById('download').addEventListener('click', async () => {
+      if (modalOpen) return; // the page is blocked while the popup is open
+      await fetch('/api/download', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ file: 'q3-report.pdf' }) });
+      document.getElementById('status').textContent = 'Download started: q3-report.pdf';
+    });
+  </script>
+</body></html>
