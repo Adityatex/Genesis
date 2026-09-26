@@ -231,9 +231,13 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
       await route.fulfill(chatCompletion(planMock(body.messages.at(-1).content)));
       return;
     }
-    // ~4 chars/token for the prompt, plus headroom for the (reasoning) completion
     if (args['dump-prompts']) dumpPrompt(result.llmCalls, route.request().postDataJSON());
-    const entry = await throttle(Math.ceil((route.request().postData()?.length ?? 0) / 4) + 400);
+    // ~4 chars/token for the prompt. Groq counts the full response cap against the
+    // per-minute budget before any reply exists, so estimate with the cap, then
+    // correct to actual usage once the response arrives.
+    const requestBody = route.request().postDataJSON() ?? {};
+    const cap = Number(requestBody.max_tokens ?? requestBody.max_completion_tokens ?? 400);
+    const entry = await throttle(Math.ceil((route.request().postData()?.length ?? 0) / 4) + cap);
     let response: APIResponse;
     let text: string;
     try {

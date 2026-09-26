@@ -55,14 +55,22 @@ export interface ParamFixes {
   useMaxCompletionTokens?: boolean;
   noTemperature?: boolean;
   noTopP?: boolean;
+  /**
+   * A lower response cap. Some providers count the cap against a per-request
+   * limit (Groq's free tier: prompt + max_tokens must fit in 8k tokens/minute).
+   */
+  maxTokens?: number;
 }
+
+/** The response cap is never reduced below this. */
+const MIN_MAX_TOKENS = 1024;
 
 // Learned per baseUrl + model, so only the first request pays for a rejected field
 const learnedFixes = new Map<string, ParamFixes>();
 
 export function buildRequestBody(model: string, messages: ChatMessage[], opts: CallOptions, fixes: ParamFixes): Record<string, unknown> {
   const body: Record<string, unknown> = { model, messages };
-  body[fixes.useMaxCompletionTokens ? 'max_completion_tokens' : 'max_tokens'] = opts.maxTokens ?? 2048;
+  body[fixes.useMaxCompletionTokens ? 'max_completion_tokens' : 'max_tokens'] = fixes.maxTokens ?? opts.maxTokens ?? 2048;
   if (!fixes.noTemperature) body.temperature = opts.temperature ?? 0.3;
   if (!fixes.noTopP) body.top_p = opts.topP ?? 1;
   if (opts.jsonMode && !fixes.noJsonMode) body.response_format = { type: 'json_object' };
@@ -73,8 +81,13 @@ export function buildRequestBody(model: string, messages: ChatMessage[], opts: C
  * Given a 400 error body, the field change that should fix it, or null if the
  * error isn't about a request field we can drop or rename.
  */
-export function adaptParams(errorBody: string, fixes: ParamFixes): ParamFixes | null {
+export function adaptParams(errorBody: string, fixes: ParamFixes, requestedMaxTokens = 2048): ParamFixes | null {
   const e = errorBody.toLowerCase();
+  // "Request too large" (e.g. prompt + response cap over a tokens-per-minute limit): halve the cap
+  const cap = fixes.maxTokens ?? requestedMaxTokens;
+  if (/request too large|reduce your message size|exceeds the (token|context) limit/.test(e) && cap > MIN_MAX_TOKENS) {
+    return { ...fixes, maxTokens: Math.max(MIN_MAX_TOKENS, Math.floor(cap / 2)) };
+  }
   if (!fixes.noJsonMode && /response_format|json_object|json mode/.test(e)) return { ...fixes, noJsonMode: true };
   if (!fixes.useMaxCompletionTokens && /max_tokens/.test(e) && /max_completion_tokens|not supported|unsupported/.test(e)) {
     return { ...fixes, useMaxCompletionTokens: true };
@@ -154,11 +167,14 @@ export async function callLLM(messages: ChatMessage[], config: LLMConfig, opts: 
 
       if (!response.ok) {
         const errorBody = await response.text().catch(() => 'Unknown error');
-        if (response.status === 400) {
+        // 400 = a field was rejected; 413, or 429 "Request too large", = the request
+        // (prompt + response cap) is over a size limit. Both are fixable by adjusting it.
+        const tooLarge = response.status === 413 || (response.status === 429 && /request too large/i.test(errorBody));
+        if (response.status === 400 || tooLarge) {
           const recovered = recoverFailedGeneration(errorBody);
           if (recovered !== null) return recovered;
 
-          const adapted = adaptParams(errorBody, fixes);
+          const adapted = adaptParams(errorBody, fixes, opts.maxTokens);
           if (adapted && fixesTried < MAX_PARAM_FIXES) {
             fixes = adapted;
             fixesTried++;

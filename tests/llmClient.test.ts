@@ -117,3 +117,22 @@ describe('empty responses', () => {
     await expect(callLLM([], config)).resolves.toMatch(/used its entire token budget/);
   });
 });
+
+describe('request too large', () => {
+  it('halves the response cap, down to a floor', () => {
+    const groq = 'Request too large for model `qwen/qwen3.8-27b` on tokens per minute (TPM): Limit 8000, Requested 9012, please reduce your message size';
+    expect(adaptParams(groq, {}, 4096)).toEqual({ maxTokens: 2048 });
+    expect(adaptParams(groq, { maxTokens: 2048 }, 4096)).toEqual({ maxTokens: 1024 });
+    expect(adaptParams(groq, { maxTokens: 1024 }, 4096)).toBeNull(); // can't go lower: a real rate limit
+  });
+
+  it('retries a Groq 429 "Request too large" with a smaller cap, and plain 429s are not adapted', async () => {
+    const config = { provider: 'groq' as const, label: 'Groq', baseUrl: 'https://api.groq-test/v1', apiKey: 'k', model: 'big-prompt-model' };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('{"error":{"message":"Request too large for model on tokens per minute (TPM): Limit 8000, Requested 9012"}}', { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: '{"action":"done"}' } }] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(callLLM([], config, { maxTokens: 4096 })).resolves.toBe('{"action":"done"}');
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).max_tokens).toBe(2048);
+  });
+});
