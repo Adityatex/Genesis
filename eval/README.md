@@ -21,6 +21,8 @@ npm run eval -- --provider custom --base-url https://host/v1 --model <id>   # ke
 
 Results are written to `eval/results/` (gitignored): one JSON file per run, plus `latest-<mode>.md`.
 
+To try the tasks by hand with the extension loaded in your own browser, `npm run fixtures` serves the test pages at http://127.0.0.1:4173, prints each task's start page and goal, and echoes every submission that reaches the server.
+
 ## Quotas (Groq free tier)
 
 Pacing is on by default only for Groq (pass `--tpm` to pace other providers). On Groq's free tier, each model gets about **8k tokens/minute**, **1,000 requests/day** and **200k tokens/day** (a rolling window). The harness paces calls under the per-minute limit. A full live suite (17 tasks × 3 trials) can use most of a model's daily tokens, so run subsets with `--task` when you can. If a daily limit is hit, the run stops early and prints Groq's message saying when tokens free up. Runs that end on a 429 are marked `rate-limited` and left out of success rates.

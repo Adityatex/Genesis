@@ -14,6 +14,7 @@
     "test:watch": "vitest",
     "eval": "tsx eval/run.mts",
     "eval:mock": "tsx eval/run.mts --mock",
+    "fixtures": "tsx eval/serve.mts",
     "postinstall": "wxt prepare"
   },
   "dependencies": {
