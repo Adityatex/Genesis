@@ -207,9 +207,8 @@ export const TASKS: Task[] = [
     check: r => hit(r.events, '/api/pay', d => norm(d.cardholder) === 'ada lovelace'),
     mockPlan: [
       { action: 'type', target: /"Cardholder name"/, text: 'Ada Lovelace' },
-      { action: 'click', target: /"Pay $42.00"/ },
+      { action: 'click', target: /"Pay \$42\.00"/ },
     ],
-    knownIssue: 'Cross-origin iframes (e.g. Stripe) are unreachable from the top frame; needs a content script in every frame',
   },
   {
     id: 'shadow-dom-button',

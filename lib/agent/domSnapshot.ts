@@ -45,13 +45,36 @@ const OWN_UI_TAG = 'GENESIS-SIDEBAR';
 // Maps snapshot IDs to live elements. A querySelector on a data attribute can't
 // see into shadow roots or iframes, so the executor looks elements up here.
 
-const registry = new Map<number, Element>();
+/**
+ * An element inside a cross-origin iframe. This page can't touch it, so actions
+ * on it are forwarded to Genesis's content script inside that frame.
+ */
+export interface RemoteRef {
+  /** Chrome's frame id, for messaging the frame's content script. */
+  frameId: number;
+  /** The element's id in that frame's own snapshot. */
+  localId: number;
+  /** The <iframe> element on this page that shows the frame. */
+  iframe: HTMLIFrameElement;
+}
+
+const registry = new Map<number, Element | RemoteRef>();
+
+const isElement = (entry: Element | RemoteRef | undefined): entry is Element =>
+  !!entry && typeof (entry as Element).nodeType === 'number';
 
 export function getElementById(id: number): HTMLElement | null {
-  const el = registry.get(id);
-  if (el?.isConnected) return el as HTMLElement;
+  const entry = registry.get(id);
+  if (isElement(entry) && entry.isConnected) return entry as HTMLElement;
+  if (entry) return null; // a remote element: see getRemoteRef
   // Fallback for elements tagged outside a snapshot (e.g. unit tests)
   return document.querySelector(`[data-genesis-id="${id}"]`) as HTMLElement | null;
+}
+
+/** The frame an element lives in, if it is inside a cross-origin iframe. */
+export function getRemoteRef(id: number): RemoteRef | null {
+  const entry = registry.get(id);
+  return entry && !isElement(entry) && entry.iframe.isConnected ? entry : null;
 }
 
 // ---------------------------------------------------------------- traversal
@@ -89,11 +112,24 @@ interface Found {
   frameTop: number;
 }
 
+/** A visible iframe this page can't read into (cross-origin). */
+export interface OpaqueFrame {
+  iframe: HTMLIFrameElement;
+  label: string;
+}
+
 /**
  * Every interactive element in document order, including those inside
  * (open or extension-reachable closed) shadow roots and same-origin iframes.
+ * Visible cross-origin iframes are listed in `opaque` for the frame bridge.
  */
-function collectInteractive(root: Document | ShadowRoot, frame: string | undefined, out: Found[], frameTop = 0): void {
+function collectInteractive(
+  root: Document | ShadowRoot,
+  frame: string | undefined,
+  out: Found[],
+  frameTop = 0,
+  opaque: OpaqueFrame[] = [],
+): void {
   // nodeType, not instanceof: an iframe's Document comes from another realm
   const doc = root.nodeType === Node.DOCUMENT_NODE ? (root as Document) : (root.ownerDocument as Document);
   const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
@@ -108,11 +144,13 @@ function collectInteractive(root: Document | ShadowRoot, frame: string | undefin
     if (el.matches(INTERACTIVE_SELECTOR)) out.push({ el, frame, frameTop });
 
     const shadow = shadowRootOf(el);
-    if (shadow) collectInteractive(shadow, frame, out, frameTop);
+    if (shadow) collectInteractive(shadow, frame, out, frameTop, opaque);
 
     const frameDoc = frameDocumentOf(el);
     if (frameDoc && isVisible(el)) {
-      collectInteractive(frameDoc, frameLabel(el), out, frameTop + el.getBoundingClientRect().top);
+      collectInteractive(frameDoc, frameLabel(el), out, frameTop + el.getBoundingClientRect().top, opaque);
+    } else if (!frameDoc && el.tagName === 'IFRAME' && isVisible(el)) {
+      opaque.push({ iframe: el as HTMLIFrameElement, label: frameLabel(el) });
     }
   }
 }
@@ -164,13 +202,14 @@ function visibleTextOf(source: TextSource): string {
  * can't see confirmations like "Subscribed!" or "Payment received" rendered
  * by web components or embedded forms, and keeps retrying work it has done.
  */
-export function pageText(maxChars: number): string {
+export function pageText(maxChars: number, remoteTexts: string[] = []): string {
   const sources: TextSource[] = [];
   collectTextSources(document, undefined, sources);
   const extras = sources
     .map(s => ({ s, text: truncate(visibleTextOf(s), 1000) }))
     .filter(({ text }) => text.length > 0)
     .map(({ s, text }) => (s.frame ? `[in frame "${s.frame}"] ${text}` : `[in component] ${text}`))
+    .concat(remoteTexts) // text from cross-origin frames, already labeled
     .join('\n');
 
   // Give embedded content up to half the room so a long page can't crowd it out
@@ -352,18 +391,37 @@ export function findElements(query: string, limit = 10): SnapshotElement[] {
     .slice(0, limit);
 }
 
+/** A snapshot being assembled: local elements first, then any from cross-origin frames. */
+export interface SnapshotParts {
+  elements: SnapshotElement[];
+  /** Vertical distance from the viewport per element id; drives the listing budget. */
+  distance: Map<number, number>;
+  opaqueFrames: OpaqueFrame[];
+  /** Labeled text from cross-origin frames. */
+  remoteTexts: string[];
+}
+
+/** What a frame's content script reports about itself (see entrypoints/frame.content.ts). */
+export interface FrameSnapshot {
+  elements: SnapshotElement[];
+  /** Top of each element in the frame's own viewport, by local id. */
+  tops: number[];
+  text: string;
+}
+
 /**
- * Create a compact snapshot of the page for the LLM.
- * Registers each interactive element under a numeric ID (and tags it with
- * data-genesis-id for debugging). Returns a text representation + the elements.
+ * Register this document's interactive elements (and those in its shadow roots
+ * and same-origin iframes) under fresh IDs, and list the cross-origin iframes
+ * it couldn't read into.
  */
-export function createDOMSnapshot(): { text: string; elements: SnapshotElement[] } {
+export function collectLocalElements(): SnapshotParts {
   // Clean up the previous snapshot's IDs, wherever those elements live
-  for (const el of registry.values()) el.removeAttribute('data-genesis-id');
+  for (const entry of registry.values()) if (isElement(entry)) entry.removeAttribute('data-genesis-id');
   registry.clear();
 
   const found: Found[] = [];
-  collectInteractive(document, undefined, found);
+  const opaqueFrames: OpaqueFrame[] = [];
+  collectInteractive(document, undefined, found, 0, opaqueFrames);
 
   const elements: SnapshotElement[] = [];
   const distance = new Map<number, number>();
@@ -375,6 +433,37 @@ export function createDOMSnapshot(): { text: string; elements: SnapshotElement[]
     elements.push(describe(el, id, frame));
     distance.set(id, viewportDistance(el, frameTop));
   }
+  return { elements, distance, opaqueFrames, remoteTexts: [] };
+}
+
+/** Add a cross-origin frame's elements under new IDs that forward to that frame. */
+export function addRemoteElements(parts: SnapshotParts, frame: OpaqueFrame, frameId: number, snap: FrameSnapshot): void {
+  const frameRect = frame.iframe.getBoundingClientRect();
+  const frameTop = frameRect.top + frame.iframe.clientTop;
+  for (const remote of snap.elements) {
+    const id = parts.elements.length;
+    registry.set(id, { frameId, localId: remote.id, iframe: frame.iframe });
+    parts.elements.push({ ...remote, id, frame: frame.label, selector: `frame ${frameId} #${remote.id}` });
+    const top = frameTop + (snap.tops[remote.id] ?? 0);
+    parts.distance.set(id, top < 0 ? -top : top > window.innerHeight ? top - window.innerHeight : 0);
+  }
+  const text = truncate(snap.text, 1000);
+  if (text) parts.remoteTexts.push(`[in frame "${frame.label}"] ${text}`);
+}
+
+/**
+ * Create a compact snapshot of the page for the LLM.
+ * Registers each interactive element under a numeric ID (and tags it with
+ * data-genesis-id for debugging). Returns a text representation + the elements.
+ * Local only; lib/agent/frames.ts adds cross-origin iframes.
+ */
+export function createDOMSnapshot(): { text: string; elements: SnapshotElement[] } {
+  return renderSnapshot(collectLocalElements());
+}
+
+/** Turn collected parts into the budgeted text the model sees. */
+export function renderSnapshot(parts: SnapshotParts): { text: string; elements: SnapshotElement[] } {
+  const { elements, distance, remoteTexts } = parts;
   lastElements = elements;
 
   // Collect landmark text for page context
@@ -421,7 +510,7 @@ export function createDOMSnapshot(): { text: string; elements: SnapshotElement[]
 
   // Add visible body text snippet for context, in whatever room is left
   const textBudget = Math.min(MAX_TEXT_CHARS, SNAPSHOT_BUDGET - lines.join('\n').length - 40);
-  const textSnippet = pageText(Math.max(textBudget, 0));
+  const textSnippet = pageText(Math.max(textBudget, 0), remoteTexts);
   if (textSnippet.length > 50) {
     lines.push('');
     lines.push('--- VISIBLE TEXT (excerpt) ---');

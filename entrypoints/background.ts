@@ -6,7 +6,7 @@ import {
   PROVIDERS, PROVIDER_IDS, SETTINGS_KEY, LEGACY_KEYS, readSettings, resolveConfig, configProblem,
   validateBaseUrl, maskKey, type LLMConfig, type ProviderId, type StoredLLMSettings,
 } from '@/lib/api/providers';
-import { formatError } from '@/lib/utils/errorHandler';
+import { formatError, withTimeout } from '@/lib/utils/errorHandler';
 import { trustedClick, trustedKey, trustedType, releaseTab, watchDetach } from '@/lib/agent/trustedInput';
 import { PREFS_KEY, DEFAULT_PREFS, type AgentPrefs } from '@/lib/agent/prefs';
 import { parseAgentAction } from '@/lib/agent/parseAction';
@@ -237,6 +237,48 @@ export default defineBackground(() => {
             else if (kind === 'key') await trustedKey(tabId, String(key ?? 'Enter'));
             else throw new Error(`Unknown trusted input: ${kind}`);
             sendResponse({ success: true });
+            break;
+          }
+
+          case 'FRAME_SNAPSHOTS': {
+            // Find which frames received the top page's tokens (see lib/agent/frames.ts),
+            // then collect a snapshot from each one's content script
+            const tabId = _sender.tab?.id;
+            if (tabId === undefined) throw new Error('No tab');
+            const tokens: string[] = Array.isArray(payload?.tokens) ? payload.tokens : [];
+            const probes = await chrome.scripting.executeScript({
+              target: { tabId, allFrames: true },
+              func: () => (globalThis as any).__genesisFrameToken ?? null,
+            });
+            const frames = probes.filter((p: any) => p.frameId !== 0 && tokens.includes(p.result));
+            const data = await Promise.all(frames.map(async (p: any) => {
+              try {
+                const res = await withTimeout(
+                  chrome.tabs.sendMessage(tabId, { action: 'FRAME_SNAPSHOT' }, { frameId: p.frameId }),
+                  3000,
+                  'Frame snapshot',
+                ) as any;
+                return { token: p.result, frameId: p.frameId, snapshot: res?.success ? res.data : null };
+              } catch {
+                return { token: p.result, frameId: p.frameId, snapshot: null };
+              }
+            }));
+            sendResponse({ success: true, data });
+            break;
+          }
+
+          case 'FRAME_EXECUTE': {
+            // Run an agent action inside a cross-origin frame's content script
+            const tabId = _sender.tab?.id;
+            if (tabId === undefined) throw new Error('No tab');
+            const { frameId, action: frameAction, offset } = payload ?? {};
+            const res = await withTimeout(
+              chrome.tabs.sendMessage(tabId, { action: 'FRAME_EXECUTE', payload: { action: frameAction, offset } }, { frameId }),
+              30000,
+              'Frame action',
+            ) as any;
+            if (!res?.success) throw new Error(res?.error || 'The frame did not respond');
+            sendResponse({ success: true, data: res.data });
             break;
           }
 

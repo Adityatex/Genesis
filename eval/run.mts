@@ -46,6 +46,8 @@ const { values: args } = parseArgs({
     'base-url': { type: 'string' },
     // Turn off trusted (DevTools Protocol) input, to compare against scripted events
     'scripted-input': { type: 'boolean', default: false },
+    // Print the page snapshot the model receives at every step (debugging)
+    'dump-prompts': { type: 'boolean', default: false },
     tpm: { type: 'string' },
   },
 });
@@ -125,6 +127,12 @@ function loadApiKey(provider: ProviderId): string {
     }
   }
   return '';
+}
+
+/** The goal + page snapshot part of a planner request (history left out). */
+function dumpPrompt(call: number, body: any): void {
+  const prompt: string = body?.messages?.at(-1)?.content ?? '';
+  console.log(`----- prompt #${call}\n${prompt.split('\n\nACTION HISTORY')[0]}\n`);
 }
 
 function chatCompletion(content: string) {
@@ -219,10 +227,12 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
     log(`planner call #${result.llmCalls}`);
     if (MODE === 'mock') {
       const body = route.request().postDataJSON();
+      if (args['dump-prompts']) dumpPrompt(result.llmCalls, body);
       await route.fulfill(chatCompletion(planMock(body.messages.at(-1).content)));
       return;
     }
     // ~4 chars/token for the prompt, plus headroom for the (reasoning) completion
+    if (args['dump-prompts']) dumpPrompt(result.llmCalls, route.request().postDataJSON());
     const entry = await throttle(Math.ceil((route.request().postData()?.length ?? 0) / 4) + 400);
     let response: APIResponse;
     let text: string;

@@ -1,7 +1,7 @@
 // lib/agent/actionExecutor.ts
 // Executes structured actions on the DOM returned by the LLM agent
 
-import { getElementById, findElements, formatElement, pageText, shadowRootOf } from '@/lib/agent/domSnapshot';
+import { getElementById, getRemoteRef, findElements, formatElement, pageText, shadowRootOf, type RemoteRef } from '@/lib/agent/domSnapshot';
 import { keyParams, normalizeKey } from '@/lib/agent/keys';
 
 export interface AgentAction {
@@ -45,14 +45,32 @@ function winOf(el: Element): Window & typeof globalThis {
 // unavailable (turned off, another debugger attached, unit tests), callers fall
 // back to scripted DOM events.
 
+/**
+ * When this script runs inside a cross-origin iframe on behalf of the top page,
+ * where that frame sits in the top-level viewport. Trusted clicks are dispatched
+ * in top-level coordinates, so the frame's local coordinates are shifted by it.
+ */
+let frameOffset: { x: number; y: number } | null = null;
+
+export function setFrameOffset(offset: { x: number; y: number } | null): void {
+  frameOffset = offset;
+}
+
 type TrustedRequest =
   | { kind: 'click'; x: number; y: number }
   | { kind: 'type'; text: string }
   | { kind: 'key'; key: string };
 
+/** Longest wait for the background; typing long text as keystrokes takes a while. */
+const TRUSTED_TIMEOUT_MS = 15_000;
+
 async function requestTrusted(payload: TrustedRequest): Promise<boolean> {
   try {
-    const res = await browser.runtime.sendMessage({ action: 'TRUSTED_INPUT', payload });
+    // Never let a stuck background stall an action; fall back to scripted events
+    const res = await Promise.race([
+      browser.runtime.sendMessage({ action: 'TRUSTED_INPUT', payload }),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), TRUSTED_TIMEOUT_MS)),
+    ]);
     return res?.success === true;
   } catch {
     return false;
@@ -222,7 +240,9 @@ async function clickElement(el: HTMLElement): Promise<ClickReport> {
       scriptedClick(el);
       return { trusted: false, coveredBy: shortLabel(hit) };
     }
-    if (await requestTrusted({ kind: 'click', ...point })) return { trusted: true };
+    const x = point.x + (frameOffset?.x ?? 0);
+    const y = point.y + (frameOffset?.y ?? 0);
+    if (await requestTrusted({ kind: 'click', x, y })) return { trusted: true };
   }
   scriptedClick(el);
   return { trusted: false };
@@ -386,10 +406,44 @@ async function typeText(elementId: number, text: string, clear: boolean): Promis
 }
 
 /**
+ * Run an action on an element inside a cross-origin iframe, through Genesis's
+ * content script in that frame. Passes along where the frame sits on screen so
+ * trusted clicks land in the right place.
+ */
+async function executeInFrame(ref: RemoteRef, action: AgentAction): Promise<string> {
+  ref.iframe.scrollIntoView({ behavior: 'instant', block: 'nearest' });
+  await sleep(100);
+  const rect = ref.iframe.getBoundingClientRect();
+  let x = rect.left + ref.iframe.clientLeft;
+  let y = rect.top + ref.iframe.clientTop;
+  for (let frame = winOf(ref.iframe).frameElement; frame; frame = winOf(frame).frameElement) {
+    const fr = frame.getBoundingClientRect();
+    x += fr.left + frame.clientLeft;
+    y += fr.top + frame.clientTop;
+  }
+  try {
+    const res = await browser.runtime.sendMessage({
+      action: 'FRAME_EXECUTE',
+      payload: { frameId: ref.frameId, action: { ...action, elementId: ref.localId }, offset: { x, y } },
+    });
+    if (res?.success) return res.data;
+    return `❌ Could not act inside the frame: ${res?.error ?? 'no response'}`;
+  } catch (err) {
+    return `❌ Could not act inside the frame: ${(err as Error).message}`;
+  }
+}
+
+/**
  * Execute a single agent action on the current page DOM.
  * Returns a human-readable description of what happened.
  */
 export async function executeAction(action: AgentAction): Promise<string> {
+  // Elements inside cross-origin iframes are handled by the frame's own script
+  if (action.elementId !== undefined) {
+    const remote = getRemoteRef(action.elementId);
+    if (remote) return executeInFrame(remote, action);
+  }
+
   switch (action.action) {
     case 'click': {
       if (action.elementId === undefined) return '❌ No element ID provided for click.';

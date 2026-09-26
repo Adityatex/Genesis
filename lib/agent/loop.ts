@@ -3,7 +3,7 @@
 // and resume-after-navigation. Previously duplicated in App.tsx.
 // No behavior change: same 20-step budget, same delays, same message shapes.
 
-import { createDOMSnapshot } from '@/lib/agent/domSnapshot';
+import { createPageSnapshot } from '@/lib/agent/frames';
 import { executeAction, type AgentAction } from '@/lib/agent/actionExecutor';
 
 export const MAX_AGENT_STEPS = 20;
@@ -76,7 +76,7 @@ export async function executeAgentLoop(
       cb.onProgress(`🔍 **Step ${stepCount}** — Scanning page...`, true);
       await sleep(300);
       if (cb.shouldStop()) break;
-      const snapshot = createDOMSnapshot();
+      const snapshot = await createPageSnapshot();
 
       // 2. Ask LLM for next action
       cb.onProgress(`🧠 **Step ${stepCount}** — Planning next action...`, true);
