@@ -2,6 +2,25 @@
 
 All runs are live: real model, real extension, real Chromium. A run passes only if the right requests reached the test server **and** the agent finished cleanly.
 
+## Expert tier: planning and judgment (2026-09-27)
+
+Once every hard task passed, the benchmark could no longer show improvements or separate models. Eight expert tasks (`f666ff3`) test planning rather than access: a 13-step checkout, comparing products whose specs are only on each product page, vague goals, a taken username, a server that fails the first submission, a blocking popup, and adding up invoices across two pages.
+
+| Model | Before | After | Remaining failures |
+|---|---|---|---|
+| `deepseek-v4-pro` (1 trial) | 4/8 | **8/8** | none |
+| `openai/gpt-oss-120b` (Groq, 1 trial) | 5/8 | **7/8** | username-taken |
+| `deepseek-flash` (3 trials) | 15/24 | **21/24** | compare-and-buy 2/3, username-taken 1/3 |
+| `qwen/qwen3.8-27b` (Groq, 1 trial) | 5/8 | **6/8** | username-taken, invoice-total (added the right invoices wrong: $309.75) |
+
+**What the tier found, and the fixes** (`cad19b2`, `81618af`, `04dcc2a`):
+
+- **No memory across pages.** Every model failed `compare-and-buy` and `invoice-total` the same way: once it left a page, what it had read was gone, so it ping-ponged between pages. Qwen answered $355.25, page 2's unpaid invoices only. Two fixes: a `note` action, and automatic memory, where the runner shows the model short excerpts of pages it has already read. With both, `invoice-total` went to 3/3 on deepseek-flash, and `compare-and-buy` passes for three of the four models.
+- **Reasoning models ran out of tokens.** deepseek-v4-pro sometimes spent the whole 1,024-token response cap thinking and returned nothing. The cap is now 4,096, except on Groq's free tier, which rejects any request whose `max_tokens` exceeds its output-tokens-per-minute limit (1,000). There it's 800, and the client also adapts when a provider names the limit.
+- **A test flaw.** `username-taken` first asked for "the username ada", which is taken, and two models rightly refused. The goal now says "ada, or something close if it's taken". So the "before" column for that task used the old wording.
+
+The "after" runs also use the new background runner (`5594143`). It is behavior-equivalent in mock (27/27) and about twice as fast per task.
+
 ## Cross-origin iframes (2026-09-26)
 
 Since `c837ca4` a small content script runs in every frame, so the agent can see and act inside iframes from another origin, like Stripe-style payment forms, which the top page can't read. Their elements join the snapshot labeled `(in frame "...")`, and actions on them are forwarded to the frame.

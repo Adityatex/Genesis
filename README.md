@@ -69,9 +69,9 @@ npm run eval:mock   # scripted planner, no API key (runs in CI)
 npm run eval        # live against a real provider (Groq by default, --provider to change), reports success rate / LLM calls / tokens / time
 ```
 
-The suite has 10 standard tasks (forms, dropdowns, radios, multi-page flows, slow backends, JS apps, extraction) and 9 hard ones that are hard for agents to see or act on: long pages, custom widgets, iframes, open and closed Shadow DOM, rich-text editors, and sites that only accept real (trusted) input. See [eval/README.md](eval/README.md).
+The suite has 10 standard tasks (forms, dropdowns, radios, multi-page flows, slow backends, JS apps, extraction) and 9 hard ones that are hard for agents to see or act on: long pages, custom widgets, iframes, open and closed Shadow DOM, rich-text editors, and sites that only accept real (trusted) input. 8 expert tasks test planning and judgment: long multi-page flows, comparing across pages, vague goals, and recovering from errors. See [eval/README.md](eval/README.md).
 
-**Results** (2026-09-25/26, live runs, [full results](eval/BASELINE.md)):
+**Results** (2026-09-25 to 27, live runs, [full results](eval/BASELINE.md)):
 
 | Hard tasks | Before the fixes | After the fixes |
 |---|---|---|
@@ -82,6 +82,15 @@ The suite has 10 standard tasks (forms, dropdowns, radios, multi-page flows, slo
 | Standard tasks (regression check) | 30/30 | 60/60 |
 
 "Before" is Qwen on Groq; "after" is `deepseek-flash`, since Qwen ran out of free daily quota mid-run. Its after-fix runs that got a response were also 9/9. The hard-task failures were never about the model: before the fixes, the elements weren't even in what the model received. All 9 hard tasks now pass. The fixes changed how the agent sees and acts on the page: it now reaches into Shadow DOM, iframes (including cross-origin ones, through a helper script in each frame) and ARIA widgets, types into rich-text editors, fits long pages into a size budget with a `find` action, checks that each action actually worked, and clicks and types through Chrome's DevTools Protocol, so pages see real input. That last part shows Chrome's "debugging this browser" banner while the agent works, and can be turned off in the popup.
+
+**Expert tier, by model** (before → after adding memory across pages and fixing reasoning-model token limits):
+
+| Model | Expert tasks |
+|---|---|
+| `deepseek-v4-pro` | 4/8 → **8/8** |
+| `openai/gpt-oss-120b` (Groq) | 5/8 → **7/8** |
+| `deepseek-flash` | 15/24 → **21/24** (3 trials) |
+| `qwen/qwen3.8-27b` (Groq) | 5/8 → **6/8** |
 
 ### Loading in Browser
 
@@ -101,10 +110,10 @@ The suite has 10 standard tasks (forms, dropdowns, radios, multi-page flows, slo
 │   │   ├── hooks/          # useChatMessages, useAgentLoop, useWorkspaceTools
 │   │   ├── components/     # GenesisLogo, FloatingFab, Header, ToolsGrid, MessageList, ChatInput
 │   │   └── sidebar.css     # Dark glassmorphic theme
-│   └── background.ts      # Service worker (LLM API proxy, BYOK-only)
+│   └── background.ts      # Service worker: runs the agent loop, LLM API proxy (BYOK-only)
 ├── lib/
 │   ├── api/                # Provider presets + OpenAI-compatible LLM client (BYOK)
-│   ├── agent/              # DOM snapshot, action executor, action parser/validator, loop core
+│   ├── agent/              # runner (background loop), DOM snapshot, action executor, frames, trusted input, parser
 │   ├── automation/         # Trustworthy form autofill
 │   ├── dom/                # DOM extraction & element detection
 │   └── utils/              # Messaging, error handling, markdown
