@@ -35,12 +35,14 @@ describe('resolveConfig', () => {
   it('uses the preset URL, the saved key and the benchmarked default model', () => {
     expect(resolveConfig(settings)).toEqual({
       provider: 'groq', label: 'Groq', baseUrl: PROVIDERS.groq.baseUrl, apiKey: 'gsk_1', model: PROVIDERS.groq.defaultModel,
+      maxOutputTokens: 2048, // Groq's free tier counts the response cap against 8k tokens/minute
     });
   });
 
   it('keeps a separate key and model per provider', () => {
     const c = resolveConfig(settings, 'deepseek');
     expect([c.apiKey, c.model]).toEqual(['sk-2', 'deepseek-x']);
+    expect(c.maxOutputTokens).toBeUndefined(); // no per-request limit: the planner's default applies
   });
 
   it('uses the custom URL without a trailing slash', () => {

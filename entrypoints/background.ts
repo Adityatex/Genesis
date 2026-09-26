@@ -3,18 +3,34 @@
 
 import { summarizePage, explainText, chatWithPage, planAgentStep, listModels } from '@/lib/api/llmClient';
 import {
+  startRun, stopRun, forgetRun, getRunView, isRunning, notifyTabLoading, type RunnerDeps,
+} from '@/lib/agent/runner';
+import {
   PROVIDERS, PROVIDER_IDS, SETTINGS_KEY, LEGACY_KEYS, readSettings, resolveConfig, configProblem,
   validateBaseUrl, maskKey, type LLMConfig, type ProviderId, type StoredLLMSettings,
 } from '@/lib/api/providers';
 import { formatError, withTimeout } from '@/lib/utils/errorHandler';
 import { trustedClick, trustedKey, trustedType, releaseTab, watchDetach } from '@/lib/agent/trustedInput';
 import { PREFS_KEY, DEFAULT_PREFS, type AgentPrefs } from '@/lib/agent/prefs';
-import { parseAgentAction } from '@/lib/agent/parseAction';
 
 declare var chrome: any;
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Keep the service worker alive while an agent runs: Chrome may stop an idle
+ * worker after ~30s, and one reasoning-model call can take longer than that.
+ * Any extension API call resets the idle timer.
+ */
+let keepAliveTimer: ReturnType<typeof setInterval> | undefined;
+let activeRuns = 0;
+function holdKeepAlive(): void {
+  if (activeRuns++ === 0) keepAliveTimer = setInterval(() => chrome.runtime.getPlatformInfo(), 20_000);
+}
+function releaseKeepAlive(): void {
+  if (--activeRuns === 0 && keepAliveTimer) clearInterval(keepAliveTimer);
 }
 
 export default defineBackground(() => {
@@ -27,8 +43,32 @@ export default defineBackground(() => {
     return { ...DEFAULT_PREFS, ...(stored[PREFS_KEY] ?? {}) };
   }
 
-  // In-memory agent session — persists across page navigations within the same browser session
-  let activeAgentSession: any = null;
+  // ---- Agent runner: the loop lives here, not in the page (lib/agent/runner.ts)
+  const runnerDeps: RunnerDeps = {
+    plan: async (goal, snapshot, history) => planAgentStep(goal, snapshot, history, await requireConfig()),
+    // frameId 0: only the top frame's content script (the sidebar) handles agent messages
+    send: (tabId, message, timeoutMs) => withTimeout(chrome.tabs.sendMessage(tabId, message, { frameId: 0 }), timeoutMs, 'Page'),
+    getTab: async (tabId) => {
+      const tab = await chrome.tabs.get(tabId);
+      return { status: tab.status, url: tab.url, title: tab.title };
+    },
+    navigate: async (tabId, url) => { await chrome.tabs.update(tabId, { url }); },
+    onRunEnded: (tabId) => releaseTab(tabId), // drop the debugger (and its banner)
+    sleep: wait,
+  };
+
+  function runAgent(tabId: number, goal: string): void {
+    holdKeepAlive();
+    startRun(runnerDeps, tabId, goal)
+      .catch((err) => console.error('[Genesis] Agent run failed:', err))
+      .finally(releaseKeepAlive);
+  }
+
+  // The runner needs to know when a page starts loading (clicks and form submits navigate)
+  chrome.tabs.onUpdated.addListener((tabId: number, changeInfo: { status?: string }) => {
+    if (changeInfo.status === 'loading' && isRunning(tabId)) notifyTabLoading(tabId);
+  });
+  chrome.tabs.onRemoved.addListener((tabId: number) => forgetRun(tabId));
 
   // Store the default API key on install
   browser.runtime.onInstalled.addListener(async () => {
@@ -126,101 +166,32 @@ export default defineBackground(() => {
             break;
           }
 
-          case 'AGENT_STEP': {
-            const config = await requireConfig();
-            const { goal, domSnapshot, actionHistory, stepCount } = payload;
-            const rawResponse = await planAgentStep(goal, domSnapshot, actionHistory || [], config);
-            console.log('[Genesis] LLM raw response:', rawResponse);
-            const parsed = parseAgentAction(rawResponse);
-            if (!parsed.ok) {
-              // Let the loop record the failure and re-plan instead of faking "done"
-              sendResponse({ success: false, code: 'INVALID_ACTION', error: parsed.error });
-              break;
-            }
-            const parsedAction = parsed.action;
-
-            console.log('[Genesis] Parsed action:', parsedAction.action, parsedAction.url ?? parsedAction.elementId ?? '');
-
-            // Always save session BEFORE returning the action to content script.
-            // If the action causes unintended navigation (clicking a link, form submit),
-            // the session is already persisted and can be resumed on the new page.
-            if (parsedAction.action !== 'done') {
-              const actionDesc = `${parsedAction.action}${parsedAction.elementId !== undefined ? ` [${parsedAction.elementId}]` : ''}${parsedAction.text ? ` "${parsedAction.text}"` : ''}${parsedAction.url ? ` → ${parsedAction.url}` : ''}`;
-              const updatedHistory = [...(actionHistory || []), `${actionDesc} → (executing...)`];
-              const sessionData = JSON.stringify({
-                goal,
-                actionHistory: updatedHistory,
-                // stepCount is already this step's number; the resumed loop
-                // increments before its next step (+1 here counted it twice)
-                stepCount: stepCount || 0,
-              });
-              await chrome.storage.local.set({ genesis_agent_session: sessionData });
-              console.log('[Genesis] Session pre-saved before action:', parsedAction.action);
-            }
-
-            // If navigate, handle entirely in background
-            if (parsedAction.action === 'navigate' && parsedAction.url && _sender.tab?.id) {
-              sendResponse({ success: true, data: { action: parsedAction, navigating: true } });
-              await wait(300);
-              console.log('[Genesis] Navigating tab', _sender.tab.id, 'to', parsedAction.url);
-              chrome.tabs.update(_sender.tab.id, { url: parsedAction.url });
-            } else {
-              sendResponse({ success: true, data: { action: parsedAction } });
-            }
-            break;
-          }
-
-          case 'NAVIGATE_TAB': {
-            // Save agent session to chrome.storage.local FIRST, then navigate
-            if (payload.session) {
-              const sessionStr = JSON.stringify(payload.session);
-              await chrome.storage.local.set({ genesis_agent_session: sessionStr });
-              // Verify the write
-              const verify = await chrome.storage.local.get('genesis_agent_session');
-              console.log('[Genesis] Session saved & verified:', !!verify.genesis_agent_session);
-            }
-            const tab = _sender.tab;
-            console.log('[Genesis] NAVIGATE_TAB - tab:', tab?.id, 'url:', payload.url);
-            if (tab?.id) {
-              sendResponse({ success: true });
-              // Delay to ensure response reaches content script before navigation kills it
-              await wait(200);
-              chrome.tabs.update(tab.id, { url: payload.url });
-            } else {
-              sendResponse({ success: false, error: 'No tab found' });
-            }
-            break;
-          }
-
-          case 'SAVE_AGENT_SESSION': {
-            const sessionStr = JSON.stringify(payload);
-            await chrome.storage.local.set({ genesis_agent_session: sessionStr });
-            console.log('[Genesis] Agent session saved');
+          case 'START_AGENT': {
+            // The sidebar asks; the background runs the whole task, surviving page loads
+            const tabId = _sender.tab?.id;
+            if (tabId === undefined) throw new Error('No tab');
+            const goal = String(payload?.goal ?? '').trim();
+            if (!goal) throw new Error('No goal');
+            await requireConfig(); // fail fast on missing key/model, before the run starts
+            runAgent(tabId, goal);
             sendResponse({ success: true });
             break;
           }
 
-          case 'GET_AGENT_SESSION': {
-            const stored = await chrome.storage.local.get('genesis_agent_session');
-            console.log('[Genesis] Raw storage read:', typeof stored.genesis_agent_session, stored.genesis_agent_session ? 'HAS DATA' : 'EMPTY');
-            let sessionData = null;
-            if (stored.genesis_agent_session) {
-              try {
-                sessionData = JSON.parse(stored.genesis_agent_session);
-              } catch (e) {
-                console.error('[Genesis] Failed to parse session:', e);
-              }
+          case 'STOP_AGENT': {
+            const tabId = _sender.tab?.id;
+            if (tabId !== undefined) {
+              if (payload?.forget) forgetRun(tabId);
+              else stopRun(tabId);
             }
-            sendResponse({ success: true, data: sessionData });
+            sendResponse({ success: true });
             break;
           }
 
-          case 'CLEAR_AGENT_SESSION': {
-            await chrome.storage.local.remove('genesis_agent_session');
-            console.log('[Genesis] Agent session cleared');
-            // The run is over (done, error, max steps or stopped): drop the debugger
-            if (_sender.tab?.id !== undefined) await releaseTab(_sender.tab.id);
-            sendResponse({ success: true });
+          case 'GET_AGENT_STATE': {
+            // A freshly loaded page asks what the agent is doing in its tab
+            const tabId = _sender.tab?.id;
+            sendResponse({ success: true, data: tabId === undefined ? null : getRunView(tabId) });
             break;
           }
 

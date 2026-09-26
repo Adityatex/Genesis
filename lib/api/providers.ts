@@ -17,6 +17,12 @@ export interface ProviderPreset {
    * providers the popup lists what the key can actually use via /models.
    */
   defaultModel?: string;
+  /**
+   * Response cap for agent planning. Groq's free tier counts the cap against
+   * its 8k tokens/minute budget on every request, so a large one throttles the
+   * agent to ~1 step a minute.
+   */
+  maxOutputTokens?: number;
   note?: string;
 }
 
@@ -28,6 +34,7 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     needsKey: true,
     keyUrl: 'https://console.groq.com/keys',
     defaultModel: 'qwen/qwen3.8-27b',
+    maxOutputTokens: 2048,
     note: 'Free tier: about 8k tokens/minute and 200k tokens/day per model.',
   },
   deepseek: {
@@ -90,6 +97,8 @@ export interface LLMConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
+  /** Planner response cap, if the provider needs a smaller one than the default. */
+  maxOutputTokens?: number;
 }
 
 /** Stored settings, migrating the old Groq-only keys if that's all there is. */
@@ -116,6 +125,7 @@ export function resolveConfig(settings: StoredLLMSettings, provider: ProviderId 
     baseUrl: (provider === 'custom' ? settings.customBaseUrl ?? '' : preset.baseUrl).replace(/\/+$/, ''),
     apiKey: settings.keys[provider] ?? '',
     model: settings.models[provider] || preset.defaultModel || '',
+    ...(preset.maxOutputTokens ? { maxOutputTokens: preset.maxOutputTokens } : {}),
   };
 }
 

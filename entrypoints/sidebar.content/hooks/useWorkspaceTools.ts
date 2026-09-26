@@ -4,7 +4,7 @@ import { extractVisibleText } from '@/lib/dom/extractVisibleText';
 import { detectInteractiveElements } from '@/lib/dom/detectInteractiveElements';
 import { fillForm, fillDropdowns } from '@/lib/automation/formAutofill';
 import { loadStoredProfile, isProfileEmpty } from '@/lib/automation/profile';
-import { isAgentCommand } from '@/lib/agent/loop';
+import { isAgentCommand } from '@/lib/agent/history';
 import type { Message } from './useChatMessages';
 
 interface Deps {
@@ -17,8 +17,9 @@ interface Deps {
   setStatus: (s: string) => void;
   chatInput: string;
   setChatInput: (s: string) => void;
-  stopAgent: () => void;
-  runFreshLoop: (goal: string, msgId: string, update: (t: string, l: boolean) => void) => Promise<void>;
+  /** Start a background agent run; progress arrives through useAgentRun. */
+  startAgent: (goal: string) => Promise<void>;
+  stopAgent: (forget?: boolean) => void;
 }
 
 export function useWorkspaceTools(d: Deps) {
@@ -127,8 +128,7 @@ export function useWorkspaceTools(d: Deps) {
   }, [d]);
 
   const handleClear = useCallback(() => {
-    d.stopAgent();
-    browser.runtime.sendMessage({ action: 'CLEAR_AGENT_SESSION', payload: {} }).catch(() => {});
+    d.stopAgent(true);
     d.setMessages([]);
     d.setPageText('');
     d.setStatus('ACTIVE');
@@ -144,10 +144,11 @@ export function useWorkspaceTools(d: Deps) {
     d.setStatus('WORKING');
 
     if (isAgentCommand(message)) {
-      const msgId = d.addBotMessage('🤖 **Agent Mode** — Analyzing your request...', true);
+      // Runs in the background; status and messages follow its updates
       try {
-        await d.runFreshLoop(message, msgId, (t, l) => d.updateBotMessage(msgId, t, l));
-      } finally {
+        await d.startAgent(message);
+      } catch (err: any) {
+        d.addBotMessage(`## ❌ Agent Error\n\n${err.message}`);
         d.setStatus('ACTIVE');
       }
     } else {

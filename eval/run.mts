@@ -18,7 +18,7 @@ import { parseArgs } from 'node:util';
 import { startFixtureServer, type FixtureServer } from './server.mts';
 import { redact } from './redact.mts';
 import { TASKS, type Task, type MockStep } from './tasks.mts';
-import { isAgentCommand } from '../lib/agent/loop.ts';
+import { isAgentCommand } from '../lib/agent/history.ts';
 import {
   PROVIDERS, PROVIDER_IDS, SETTINGS_KEY, resolveConfig, validateBaseUrl,
   type ProviderId, type StoredLLMSettings,
@@ -385,6 +385,12 @@ async function main() {
     const estimate = tasks.reduce((sum, t) => sum + (t.category === 'hard' ? 10_000 : t.category === 'expert' ? 15_000 : 2_500), 0) * TRIALS;
     const quota = PROVIDER === 'groq' ? " Groq's free tier allows 200k tokens per model per day (rolling)." : '';
     console.log(`${LLM.label} · ${LLM.model}. Estimated usage: up to ~${Math.round(estimate / 1000)}k tokens.${quota}\n`);
+  }
+
+  // A run that was killed can leave its browser profile behind, and profiles
+  // hold the API key. Remove stale ones; profiles in use are locked and skipped.
+  for (const dir of fs.readdirSync(os.tmpdir()).filter(d => d.startsWith('genesis-eval-'))) {
+    try { fs.rmSync(path.join(os.tmpdir(), dir), { recursive: true, force: true }); } catch { /* in use */ }
   }
 
   const server = await startFixtureServer();

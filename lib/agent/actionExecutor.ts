@@ -13,8 +13,6 @@ export interface AgentAction {
   key?: string;
   summary?: string;
   value?: string;
-  // Internal: session data to save before navigation
-  _session?: { goal: string; actionHistory: string[]; stepCount: number };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -494,19 +492,9 @@ export async function executeAction(action: AgentAction): Promise<string> {
       return `✅ Selected "${option.text.trim()}" in dropdown [${action.elementId}]`;
     }
 
-    case 'navigate': {
-      if (!action.url) return '❌ No URL provided for navigation.';
-      try {
-        await browser.runtime.sendMessage({
-          action: 'NAVIGATE_TAB',
-          payload: { url: action.url, session: action._session || null },
-        });
-      } catch {
-        // Fallback — will lose session but at least navigate
-        window.location.href = action.url;
-      }
-      return `🔄 NAVIGATING to ${action.url}`;
-    }
+    case 'navigate':
+      // The runner (background) navigates the tab itself and waits for the load
+      return '❌ navigate is handled by the agent runner, not the page.';
 
     case 'scroll': {
       const amount = action.direction === 'up' ? -400 : 400;

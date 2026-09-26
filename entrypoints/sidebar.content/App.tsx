@@ -1,5 +1,5 @@
 // entrypoints/sidebar.content/App.tsx
-// Thin composition shell — logic lives in hooks/, lib/agent/loop.ts, components/.
+// Thin composition shell — logic lives in hooks/, lib/agent/, components/.
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   FileText,
@@ -10,7 +10,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useChatMessages } from './hooks/useChatMessages';
-import { useAgentLoop } from './hooks/useAgentLoop';
+import { useAgentRun } from './hooks/useAgentRun';
 import { useWorkspaceTools } from './hooks/useWorkspaceTools';
 import FloatingFab from './components/FloatingFab';
 import SidebarHeader from './components/SidebarHeader';
@@ -25,7 +25,6 @@ export default function App() {
   const [chatInput, setChatInput] = useState('');
 
   const chat = useChatMessages();
-  const agent = useAgentLoop();
 
   // Sidebar resize state
   const [sidebarWidth, setSidebarWidth] = useState(420);
@@ -89,6 +88,22 @@ export default function App() {
     fabDragRef.current = { ...d, dragging: false, moved: false };
   }, []);
 
+  // The agent runs in the background and survives page loads. Show its state
+  // in one chat message per run; after a navigation the new page picks it up.
+  const agentMessageId = useRef<string | null>(null);
+  const agent = useAgentRun((view) => {
+    setSidebarOpen(true);
+    setStatus(view.status === 'running' ? 'WORKING' : 'ACTIVE');
+    const text = view.message || '🤖 **Agent Mode**: starting...';
+    if (agentMessageId.current) chat.updateBotMessage(agentMessageId.current, text, view.loading);
+    else agentMessageId.current = chat.addBotMessage(text, view.loading);
+  });
+
+  const startAgent = async (goal: string) => {
+    agentMessageId.current = chat.addBotMessage('🤖 **Agent Mode**: starting...', true);
+    await agent.start(goal);
+  };
+
   const toolsApi = useWorkspaceTools({
     pageText: chat.pageText,
     setPageText: chat.setPageText,
@@ -99,25 +114,12 @@ export default function App() {
     setStatus,
     chatInput,
     setChatInput,
-    stopAgent: agent.stop,
-    runFreshLoop: agent.runFreshLoop,
+    startAgent,
+    stopAgent: (forget) => {
+      agent.stop(forget);
+      if (forget) agentMessageId.current = null;
+    },
   });
-
-  // Resume saved agent session after navigation (same behavior as before)
-  const sessionChecked = useRef(false);
-  useEffect(() => {
-    agent.checkAndResume({
-      onOpened: () => setSidebarOpen(true),
-      onWorking: (w) => setStatus(w ? 'WORKING' : 'ACTIVE'),
-      onResumeFound: (goal, historyLog) =>
-        chat.addBotMessage(
-          `🤖 **Agent Resumed** — Continuing task on new page...\n\n**Goal:** ${goal}\n\n**Previous steps:**\n${historyLog}\n\n*Scanning new page...*`,
-          true,
-        ),
-      onProgress: (msgId, text, loading) => chat.updateBotMessage(msgId, text, loading),
-    }, sessionChecked);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const tools: ToolDef[] = [
     { id: 'text', label: 'Extract Text', icon: <FileText size={16} />, short: 'Text', onClick: toolsApi.handleExtractText },

@@ -356,6 +356,7 @@ RULES:
       role: 'user',
       content: `GOAL: ${goal}\n\nCURRENT PAGE DOM SNAPSHOT:\n${domSnapshot.substring(0, SNAPSHOT_SAFETY_CAP)}${historyText}\n\nWhat is the NEXT single action? Respond with JSON only.`,
     },
-  ], config, { maxTokens: 4096, temperature: 0, topP: 1, jsonMode: true }); // headroom: reasoning models think before answering
+  // Headroom: reasoning models think before answering (deepseek-v4-pro used >1k)
+  ], config, { maxTokens: config.maxOutputTokens ?? 4096, temperature: 0, topP: 1, jsonMode: true });
 }
 
