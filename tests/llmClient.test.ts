@@ -103,7 +103,7 @@ describe('callLLM / listModels with a stubbed provider', () => {
 
   it('lists model ids, sorted and de-duplicated', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ data: [{ id: 'b' }, { id: 'a' }, { id: 'b' }] }), { status: 200 }));
-    await expect(listModels(config)).resolves.toEqual(['a', 'b']);
+    await expect(listModels(config)).resolves.toEqual([{ id: 'a' }, { id: 'b' }]);
     expect(fetchMock.mock.calls[0][0]).toBe('https://api.test/v1/models');
   });
 });
@@ -139,5 +139,32 @@ describe('request too large', () => {
     vi.stubGlobal('fetch', fetchMock);
     await expect(callLLM([], config, { maxTokens: 4096 })).resolves.toBe('{"action":"done"}');
     expect(JSON.parse(fetchMock.mock.calls[1][1].body).max_tokens).toBe(2048);
+  });
+});
+
+describe('listModels: free models and provider filters', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const list = (data: unknown[]) => vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ data }), { status: 200 })));
+
+  it('Kilo: marks free and may-train models, lists free first, drops non-text models', async () => {
+    list([
+      { id: 'anthropic/claude-x', pricing: { prompt: '0.000003', completion: '0.000015' } },
+      { id: 'qwen/qwen3.8-27b:free', isFree: true, mayTrainOnYourPrompts: true, architecture: { output_modalities: ['text'] } },
+      { id: 'kilo-auto/free', pricing: { prompt: '0', completion: '0' } },
+      { id: 'google/lyria-3-pro-preview', architecture: { output_modalities: ['audio'] } },
+    ]);
+    const models = await listModels({ provider: 'kilo', label: 'Kilo', baseUrl: 'https://api.kilo.ai/api/gateway', apiKey: '', model: '' });
+    expect(models).toEqual([
+      { id: 'kilo-auto/free', free: true },
+      { id: 'qwen/qwen3.8-27b:free', free: true, mayTrain: true },
+      { id: 'anthropic/claude-x' },
+    ]);
+  });
+
+  it('OpenCode Zen: hides models that need other APIs, knows big-pickle is free', async () => {
+    list([{ id: 'claude-sonnet-5' }, { id: 'gpt-5.5' }, { id: 'qwen3.8-flash' }, { id: 'deepseek-v4-flash' }, { id: 'big-pickle' }, { id: 'mimo-v2.6-flash-free' }]);
+    const models = await listModels({ provider: 'opencode', label: 'OpenCode Zen', baseUrl: 'https://opencode.ai/zen/v1', apiKey: 'k', model: '' });
+    expect(models.map(m => m.id)).toEqual(['big-pickle', 'mimo-v2.6-flash-free', 'deepseek-v4-flash']);
+    expect(models.filter(m => m.free).map(m => m.id)).toEqual(['big-pickle', 'mimo-v2.6-flash-free']);
   });
 });

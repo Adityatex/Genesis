@@ -16,6 +16,7 @@ npm run eval -- --headed --verbose        # watch it, stream [Genesis] logs + ti
 npm run eval -- --scripted-input          # turn off trusted (DevTools Protocol) input to compare
 npm run eval -- --dump-prompts            # print the page snapshot the model gets at each step
 npm run eval -- --provider deepseek --model <id>              # other providers: key from DEEPSEEK_API_KEY etc.
+npm run eval -- --provider kilo --model qwen/qwen3.8-27b:free  # free model, key from KILO_API_KEY
 npm run eval -- --provider custom --base-url https://host/v1 --model <id>   # key from LLM_API_KEY
 ```
 

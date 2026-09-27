@@ -3,7 +3,7 @@
 // OpenRouter, Ollama, custom). Runs ONLY in the background service worker.
 
 import { withTimeout, formatError } from '@/lib/utils/errorHandler';
-import type { LLMConfig } from '@/lib/api/providers';
+import { PROVIDERS, type LLMConfig } from '@/lib/api/providers';
 
 const REQUEST_TIMEOUT = 15000;
 const MODELS_TIMEOUT = 10000;
@@ -236,8 +236,19 @@ export async function callLLM(messages: ChatMessage[], config: LLMConfig, opts: 
   throw new Error(`${config.label} request failed after retries.`);
 }
 
-/** Model IDs this config's key can use, from the provider's /models endpoint. */
-export async function listModels(config: LLMConfig): Promise<string[]> {
+export interface ModelInfo {
+  id: string;
+  free?: boolean;
+  /** The provider says it may train on your prompts (which include page content). */
+  mayTrain?: boolean;
+}
+
+/**
+ * Models this config's key can use, from the provider's /models endpoint:
+ * free ones first, without models Genesis can't use (non-text output, or an
+ * API other than chat completions).
+ */
+export async function listModels(config: LLMConfig): Promise<ModelInfo[]> {
   const response = await withTimeout(
     fetch(`${config.baseUrl}/models`, { headers: authHeaders(config) }),
     MODELS_TIMEOUT,
@@ -255,11 +266,25 @@ export async function listModels(config: LLMConfig): Promise<string[]> {
   } catch {
     throw new Error(`${config.label} returned an unexpected model list`);
   }
-  const items: unknown[] = Array.isArray(parsed?.data) ? parsed.data : Array.isArray(parsed?.models) ? parsed.models : [];
-  const ids = items
-    .map((m: any) => (typeof m === 'string' ? m : m?.id ?? m?.name))
-    .filter((id): id is string => typeof id === 'string' && id.length > 0);
-  return [...new Set(ids)].sort((a, b) => a.localeCompare(b));
+  const items: any[] = Array.isArray(parsed?.data) ? parsed.data : Array.isArray(parsed?.models) ? parsed.models : [];
+  const preset = PROVIDERS[config.provider];
+  const models = new Map<string, ModelInfo>();
+  for (const m of items) {
+    const id = typeof m === 'string' ? m : m?.id ?? m?.name;
+    if (typeof id !== 'string' || !id) continue;
+    // Skip image/audio generators: the agent needs text out
+    const outputs = m?.architecture?.output_modalities;
+    if (Array.isArray(outputs) && !outputs.includes('text')) continue;
+    if (preset.modelFilter && !preset.modelFilter(id)) continue;
+
+    const price = m?.pricing;
+    const free = m?.isFree === true
+      || /(:free|-free)$/.test(id)
+      || (price && Number(price.prompt) === 0 && Number(price.completion) === 0)
+      || !!preset.freeModels?.includes(id);
+    models.set(id, { id, ...(free ? { free: true } : {}), ...(m?.mayTrainOnYourPrompts === true ? { mayTrain: true } : {}) });
+  }
+  return [...models.values()].sort((a, b) => Number(!!b.free) - Number(!!a.free) || a.id.localeCompare(b.id));
 }
 
 /**

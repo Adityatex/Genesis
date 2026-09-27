@@ -24,7 +24,7 @@ Open-source Brave/Chrome extension (Manifest V3) that injects a floating AI-powe
 - **UI:** React + TypeScript
 - **Styling:** Tailwind CSS v4 with a dark glassmorphic theme
 - **Testing:** Vitest + happy-dom, GitHub Actions CI (typecheck → test → build)
-- **AI:** any OpenAI-compatible provider: Groq (default, `qwen/qwen3.8-27b`), DeepSeek, OpenAI, OpenRouter, local Ollama, or a custom server. Bring your own key
+- **AI:** any OpenAI-compatible provider: Groq (default, `qwen/qwen3.8-27b`), DeepSeek, OpenAI, OpenRouter, Kilo AI Gateway, OpenCode Zen, local Ollama, or a custom server. Bring your own key
 - **Architecture:** Manifest V3, Shadow DOM isolation. Permissions: `activeTab`, `scripting`, `storage`, and `debugger`, which is used only while the agent runs, for real mouse and keyboard input, and can be turned off in the popup
 
 ## 🚀 Getting Started
@@ -131,6 +131,8 @@ Open the extension popup and pick a provider under **AI model**:
 | DeepSeek | [platform.deepseek.com](https://platform.deepseek.com/api_keys) | |
 | OpenAI | [platform.openai.com](https://platform.openai.com/api-keys) | |
 | OpenRouter | [openrouter.ai](https://openrouter.ai/keys) | Many models behind one key |
+| Kilo AI Gateway | [app.kilo.ai](https://app.kilo.ai) | Hundreds of models; free ones are listed first and cost nothing with a free account key. Some free models may train on your prompts, which include page content; **Load models** flags them |
+| OpenCode Zen | [opencode.ai](https://opencode.ai/auth) | Needs a key with credit. Zen's free models only work inside the OpenCode app (they return 403 elsewhere), and its Claude/GPT/Gemini/Grok models use APIs Genesis doesn't speak yet, so those are hidden |
 | Ollama (local) | none | Runs on your machine. Start Ollama with `OLLAMA_ORIGINS=chrome-extension://*` |
 | Custom | optional | Any OpenAI-compatible `/chat/completions` server |
 

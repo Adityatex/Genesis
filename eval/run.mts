@@ -329,7 +329,7 @@ function report(results: RunResult[], tasks: Task[], meta: Record<string, string
   lines.push('');
 
   const limited = results.filter(r => r.outcome === 'rate-limited');
-  if (limited.length) lines.push(`> ${limited.length} run(s) ended on a Groq rate limit (429) and are excluded from success rates.`, '');
+  if (limited.length) lines.push(`> ${limited.length} run(s) ended on a ${LLM.label} rate limit (429) and are excluded from success rates.`, '');
   const scored = results.filter(r => r.outcome !== 'rate-limited');
   const standard = scored.filter(r => r.category !== 'hard' && r.category !== 'expert');
   const hard = scored.filter(r => r.category === 'hard');

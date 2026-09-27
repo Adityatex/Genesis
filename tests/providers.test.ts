@@ -88,3 +88,18 @@ describe('maskKey', () => {
     expect(maskKey('')).toBe('');
   });
 });
+
+describe('Kilo and OpenCode Zen presets', () => {
+  it('Kilo needs a key (keyless requests to its free models are rate-limited to nothing)', () => {
+    const c = resolveConfig({ provider: 'kilo', models: { kilo: 'qwen/qwen3.8-27b:free' }, keys: {} });
+    expect(c.baseUrl).toBe('https://api.kilo.ai/api/gateway');
+    expect(configProblem(c)).toMatch(/No API key for Kilo AI Gateway/);
+    expect(configProblem({ ...c, apiKey: 'k' })).toBeNull();
+  });
+
+  it('OpenCode Zen needs a key', () => {
+    const c = resolveConfig({ provider: 'opencode', models: { opencode: 'deepseek-v4-flash' }, keys: {} });
+    expect(c.baseUrl).toBe('https://opencode.ai/zen/v1');
+    expect(configProblem(c)).toMatch(/No API key for OpenCode Zen/);
+  });
+});

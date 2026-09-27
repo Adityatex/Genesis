@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { loadStoredProfile, saveStoredProfile, PROFILE_FIELDS, type AutofillProfile } from '@/lib/automation/profile';
 import { PROVIDERS, PROVIDER_IDS, type ProviderId } from '@/lib/api/providers';
+import type { ModelInfo } from '@/lib/api/llmClient';
 
 type Status = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -13,7 +14,7 @@ export default function App() {
   const [customBaseUrl, setCustomBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [status, setStatus] = useState<Status>('idle');
   const [message, setMessage] = useState('');
@@ -68,11 +69,12 @@ export default function App() {
         payload: { provider, apiKey: apiKey.trim(), customBaseUrl: customBaseUrl.trim() },
       });
       if (!res?.success) throw new Error(res?.error || 'Could not load models');
-      const models: string[] = res.data.models;
+      const models: ModelInfo[] = res.data.models;
       setAvailableModels(models);
+      const free = models.filter((m) => m.free).length;
       showMessage(models.length ? 'saved' : 'error', models.length
-        ? `${models.length} models available. Pick one in the Model field.`
-        : `${preset.label} returned no models for this key.`);
+        ? `${models.length} models available${free ? ` (${free} free, listed first)` : ''}. Pick one in the Model field.`
+        : `${preset.label} returned no usable models for this key.`);
     } catch (err: any) {
       showMessage('error', err.message);
     } finally {
@@ -193,7 +195,7 @@ export default function App() {
               type="password"
               placeholder={maskedKeys[provider]
                 ? 'Paste a new key to replace it'
-                : `Paste ${preset.label} API key${preset.needsKey ? '' : ' (if needed)'}...`}
+                : `Paste ${preset.label} API key${preset.needsKey ? '' : ' (optional)'}...`}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               className="api-input"
@@ -212,7 +214,13 @@ export default function App() {
             aria-label="Model"
           />
           <datalist id="model-options">
-            {availableModels.map((m) => <option key={m} value={m} />)}
+            {availableModels.map((m) => (
+              <option
+                key={m.id}
+                value={m.id}
+                label={[m.free && 'free', m.mayTrain && 'may train on your data'].filter(Boolean).join(' · ') || undefined}
+              />
+            ))}
           </datalist>
           <button onClick={handleLoadModels} className="secondary-btn" disabled={loadingModels} title="List the models your key can use">
             {loadingModels ? <span className="spinner"></span> : 'Load models'}

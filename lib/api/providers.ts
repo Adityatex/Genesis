@@ -2,7 +2,7 @@
 // LLM provider presets and settings. Every provider here speaks the OpenAI
 // chat-completions API, so one client (llmClient.ts) serves them all.
 
-export type ProviderId = 'groq' | 'deepseek' | 'openai' | 'openrouter' | 'ollama' | 'custom';
+export type ProviderId = 'groq' | 'deepseek' | 'openai' | 'openrouter' | 'kilo' | 'opencode' | 'ollama' | 'custom';
 
 export interface ProviderPreset {
   id: ProviderId;
@@ -11,6 +11,14 @@ export interface ProviderPreset {
   baseUrl: string;
   needsKey: boolean;
   keyUrl?: string;
+  /**
+   * Which of the provider's models Genesis can use. Some providers also serve
+   * models through non-chat-completions APIs (Anthropic messages, OpenAI
+   * responses) that Genesis doesn't speak yet.
+   */
+  modelFilter?: (id: string) => boolean;
+  /** Free models the provider's /models list doesn't mark as free. */
+  freeModels?: string[];
   /**
    * Only set where it has been benchmarked. Model names change and get
    * retired (Groq retired this project's original default), so for other
@@ -57,6 +65,26 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     baseUrl: 'https://openrouter.ai/api/v1',
     needsKey: true,
     keyUrl: 'https://openrouter.ai/keys',
+  },
+  kilo: {
+    id: 'kilo',
+    label: 'Kilo AI Gateway',
+    baseUrl: 'https://api.kilo.ai/api/gateway',
+    needsKey: true,
+    keyUrl: 'https://app.kilo.ai',
+    note: 'Hundreds of models, including free ones (marked "free"). Free models cost nothing with the key from a free Kilo account. Some free models may use your prompts, which include page content, for training.',
+  },
+  opencode: {
+    id: 'opencode',
+    label: 'OpenCode Zen',
+    baseUrl: 'https://opencode.ai/zen/v1',
+    needsKey: true,
+    keyUrl: 'https://opencode.ai/auth',
+    // Claude, GPT, Grok, Gemini, Muse, Jev and some Qwen models use other APIs
+    // (Anthropic messages, OpenAI responses, Gemini) on Zen; these don't.
+    modelFilter: (id) => !/^(claude-|gpt-|grok-|gemini-|muse-|jev-|qwen)/.test(id),
+    freeModels: ['big-pickle'],
+    note: 'Needs a Zen key with credit. Zen\'s free models refuse requests from outside the OpenCode app, so use a paid model here.',
   },
   ollama: {
     id: 'ollama',
