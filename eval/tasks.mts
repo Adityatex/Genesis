@@ -39,7 +39,8 @@ export interface Task {
   start: string;
   goal: string;
   check: (r: GradeInput) => boolean;
-  mockPlan: MockStep[];
+  /** Scripted responses, in order. An array is several actions in one response. */
+  mockPlan: (MockStep | MockStep[])[];
   knownIssue?: string;
 }
 
@@ -80,12 +81,12 @@ export const TASKS: Task[] = [
     goal: 'Sign up with the name Ada Lovelace and email ada@example.com, and accept the terms',
     check: r => hit(r.events, '/api/signup', d =>
       norm(d.name) === 'ada lovelace' && norm(d.email) === 'ada@example.com' && d.terms === 'on'),
-    mockPlan: [
+    mockPlan: [[
       { action: 'type', target: /type="text" "name"/, text: 'Ada Lovelace' },
       { action: 'type', target: /type="email"/, text: 'ada@example.com' },
       { action: 'click', target: /type="checkbox"/ },
       { action: 'click', target: /"Create account"/ },
-    ],
+    ]],
   },
   {
     id: 'shipping-dropdowns',
@@ -105,11 +106,11 @@ export const TASKS: Task[] = [
     start: '/login.html',
     goal: 'Log in with username demo and password hunter2',
     check: r => hit(r.events, '/api/login', d => d.username === 'demo' && d.password === 'hunter2'),
-    mockPlan: [
+    mockPlan: [[
       { action: 'type', target: /"Username"/, text: 'demo' },
       { action: 'type', target: /type="password"/, text: 'hunter2' },
       { action: 'click', target: /<button>.*"Sign in"/ },
-    ],
+    ]],
   },
   {
     id: 'feedback-radio',
@@ -278,18 +279,24 @@ export const TASKS: Task[] = [
         && norm(d.city) === 'london' && d.shipping === 'express';
     }),
     mockPlan: [
-      { action: 'type', target: /"Search shoes"/, text: 'trail runner' },
-      { action: 'press_key', key: 'Enter', target: /"Search shoes"/ },
+      [
+        { action: 'type', target: /"Search shoes"/, text: 'trail runner' },
+        { action: 'press_key', key: 'Enter', target: /"Search shoes"/ },
+      ],
       { action: 'click', target: /<a> "Trail Runner"/ },
-      { action: 'select', target: /<select> "Size"/, value: 'US 10' },
-      { action: 'clear_and_type', target: /"Quantity"/, text: '2' },
-      { action: 'click', target: /"Add to cart"/ },
+      [
+        { action: 'select', target: /<select> "Size"/, value: 'US 10' },
+        { action: 'clear_and_type', target: /"Quantity"/, text: '2' },
+        { action: 'click', target: /"Add to cart"/ },
+      ],
       { action: 'click', target: /"Proceed to checkout"/ },
-      { action: 'type', target: /"name"/, text: 'Ada Lovelace' },
-      { action: 'type', target: /"address"/, text: '12 Analytical Street' },
-      { action: 'type', target: /"city"/, text: 'London' },
-      { action: 'click', target: /"Express shipping/ },
-      { action: 'click', target: /"Place order"/ },
+      [
+        { action: 'type', target: /"name"/, text: 'Ada Lovelace' },
+        { action: 'type', target: /"address"/, text: '12 Analytical Street' },
+        { action: 'type', target: /"city"/, text: 'London' },
+        { action: 'click', target: /"Express shipping/ },
+        { action: 'click', target: /"Place order"/ },
+      ],
     ],
   },
   {

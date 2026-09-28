@@ -5,6 +5,7 @@
 import { withTimeout, formatError } from '@/lib/utils/errorHandler';
 import { PROVIDERS, type LLMConfig } from '@/lib/api/providers';
 import { promptHistory } from '@/lib/agent/history';
+import { MAX_BATCH } from '@/lib/agent/parseAction';
 
 const REQUEST_TIMEOUT = 15000;
 const MODELS_TIMEOUT = 10000;
@@ -340,15 +341,19 @@ export async function chatWithPage(message: string, pageContext: string, config:
 }
 
 /**
- * Agent step planner — given a goal, DOM snapshot, and action history,
- * returns the next action to take as structured JSON.
+ * Agent step planner: given a goal, DOM snapshot, action history and the
+ * model's own plan so far, returns its next actions as JSON (see the prompt).
  */
 export async function planAgentStep(
   goal: string,
   domSnapshot: string,
   actionHistory: string[],
+  currentPlan: string[],
   config: LLMConfig,
 ): Promise<string> {
+  const planText = currentPlan.length > 0
+    ? `\n\nYOUR PLAN (from your last response):\n${currentPlan.join('\n')}`
+    : '';
   const historyText = actionHistory.length > 0
     ? `\n\nACTION HISTORY (steps already taken):\n${promptHistory(actionHistory).join('\n')}`
     : '';
@@ -356,9 +361,14 @@ export async function planAgentStep(
   return callLLM([
     {
       role: 'system',
-      content: `You are a browser automation agent called Genesis. You control a web browser by issuing ONE action at a time.
+      content: `You are a browser automation agent called Genesis. You control a web browser to reach the user's goal, quickly and reliably.
 
-AVAILABLE ACTIONS (respond with exactly ONE as JSON):
+RESPONSE FORMAT (one JSON object, nothing else):
+{"plan": ["[x] finished step", "[ ] next step", "[ ] later step"], "actions": [<action>, <action>, ...]}
+- "plan": your short checklist for the whole goal (at most 8 items). Send it in your first response, and again whenever it changes or an item gets done. Leave it out otherwise.
+- "actions": 1 to ${MAX_BATCH} actions, run in order.
+
+ACTIONS:
 - {"action": "click", "elementId": <number>} — Click an interactive element by its ID
 - {"action": "type", "elementId": <number>, "text": "<text>"} — Append text to an input
 - {"action": "clear_and_type", "elementId": <number>, "text": "<text>"} — Clear input then type text
@@ -373,20 +383,20 @@ AVAILABLE ACTIONS (respond with exactly ONE as JSON):
 - {"action": "done", "summary": "<what was accomplished>"} — Task is complete
 
 RULES:
-1. Output ONLY a single JSON object. No explanation, no markdown, no extra text.
+1. Output ONLY the JSON object. No explanation, no markdown, no extra text.
 2. Use element IDs from the DOM snapshot [0], [1], [2]... to target elements.
-3. Think step by step — do ONE thing at a time.
+3. Send several actions at once when you can already see everything they need, e.g. fill every field of a form and then click its submit button. Put an action that changes the page (submitting, following a link, opening a menu or dialog) LAST: the rest of the list is skipped if the page changes or an action fails, and you'll get a fresh snapshot.
 4. After typing in a search box, press Enter or click the search button.
 5. If the page doesn't have what you need, navigate to the right URL first.
-6. If you've completed the goal, use "done" with a summary.
-7. If you're stuck or the goal is impossible, use "done" with an explanation.
+6. When the goal is complete, send "done" with a summary, on its own, after you've seen the result of your last actions. Only "note" actions may come before it in the same list.
+7. If you're stuck or the goal is impossible, send "done" with an explanation.
 8. On long pages the element list is cut short. If the element you need is not listed, use "find" with a keyword before scrolling or guessing URLs.
 9. You only see the current page. Once you leave it, its content is gone; your ACTION HISTORY is your only memory. Before leaving a page, "note" anything you need from it. The snapshot may also end with PAGES YOU VISITED EARLIER, excerpts of pages you already read. Never revisit a page just to re-read it: use your notes and those excerpts.
 10. Be efficient: take the shortest path to the goal. If an action didn't change anything, don't repeat it; try something else.`,
     },
     {
       role: 'user',
-      content: `GOAL: ${goal}\n\nCURRENT PAGE DOM SNAPSHOT:\n${domSnapshot.substring(0, SNAPSHOT_SAFETY_CAP)}${historyText}\n\nWhat is the NEXT single action? Respond with JSON only.`,
+      content: `GOAL: ${goal}\n\nCURRENT PAGE DOM SNAPSHOT:\n${domSnapshot.substring(0, SNAPSHOT_SAFETY_CAP)}${planText}${historyText}\n\nWhat are the NEXT actions? Respond with JSON only.`,
     },
   // Headroom: reasoning models think before answering (deepseek-v4-pro used >1k)
   ], config, { maxTokens: config.maxOutputTokens ?? 4096, temperature: 0, topP: 1, jsonMode: true });

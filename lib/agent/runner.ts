@@ -10,7 +10,7 @@
 // Chrome specifics are injected (RunnerDeps) so the loop can be unit-tested.
 
 import type { AgentAction } from '@/lib/agent/actionExecutor';
-import { parseAgentAction } from '@/lib/agent/parseAction';
+import { parseAgentResponse } from '@/lib/agent/parseAction';
 import { MAX_INVALID_RESPONSES, REPEAT_PAUSE, REPEAT_WARN, describeAction, formatHistory } from '@/lib/agent/history';
 
 /** "paused": waiting for the user to continue or stop (checkpoint, or the agent looks stuck). */
@@ -24,6 +24,8 @@ export interface RunView {
   message: string;
   loading: boolean;
   step: number;
+  /** The model's current plan, e.g. "[x] Open the cart", "[ ] Check out". */
+  plan: string[];
   /** Last change (ms since epoch): a newly loaded page shows recent results only. */
   updatedAt: number;
 }
@@ -35,8 +37,8 @@ export interface TabInfo {
 }
 
 export interface RunnerDeps {
-  /** Ask the model for the next action; returns its raw output. */
-  plan(goal: string, snapshot: string, history: string[]): Promise<string>;
+  /** Ask the model for its next actions; returns its raw output. */
+  plan(goal: string, snapshot: string, history: string[], currentPlan: string[]): Promise<string>;
   /** Message the tab's top-frame content script. Rejects if nothing answers (e.g. mid-navigation). */
   send(tabId: number, message: unknown, timeoutMs: number): Promise<any>;
   getTab(tabId: number): Promise<TabInfo>;
@@ -94,6 +96,9 @@ export function memorySection(visited: Map<string, string>, currentUrl: string |
 
 /** After an action, time for a click-triggered navigation to start. */
 const SETTLE_MS = 700;
+/** Actions that can't navigate or open anything need only a short pause. */
+const QUICK_SETTLE_MS = 100;
+const QUICK_ACTIONS: ReadonlySet<AgentAction['action']> = new Set(['type', 'clear_and_type', 'note', 'find', 'read', 'scroll', 'wait']);
 const READY_TIMEOUT_MS = 20_000;
 const SNAPSHOT_TIMEOUT_MS = 20_000;
 const EXECUTE_TIMEOUT_MS = 60_000;
@@ -103,8 +108,8 @@ const PAUSE_TIMEOUT_MS = 10 * 60_000;
 const runs = new Map<number, Run>();
 
 function view(run: Run): RunView {
-  const { goal, status, message, loading, step, updatedAt } = run;
-  return { goal, status, message, loading, step, updatedAt };
+  const { goal, status, message, loading, step, plan, updatedAt } = run;
+  return { goal, status, message, loading, step, plan, updatedAt };
 }
 
 export function getRunView(tabId: number): RunView | null {
@@ -167,8 +172,49 @@ async function waitForPage(deps: RunnerDeps, tabId: number): Promise<TabInfo> {
   throw new Error('The page did not finish loading within 20 seconds');
 }
 
+/** The plan as a checklist: "[x] a" → "☑ a", "[ ] b" → "☐ b". */
+export function formatPlan(plan: string[]): string {
+  return plan.map((item) => {
+    const m = item.match(/^\[([ xX✓]?)\]\s*(.*)$/);
+    if (!m) return `- ${item}`;
+    return `- ${m[1].trim() ? '☑' : '☐'} ${m[2]}`;
+  }).join('\n');
+}
+
 function progressMessage(run: Run, footer: string): string {
-  return `**Agent Progress** (step ${run.step})\n\n${formatHistory(run.history)}\n\n${footer}`;
+  const plan = run.plan.length ? `**Plan**\n${formatPlan(run.plan)}\n\n` : '';
+  return `**Agent Progress** (step ${run.step})\n\n${plan}${formatHistory(run.history)}\n\n${footer}`;
+}
+
+/**
+ * Run one action. If it navigates (link click, form submit), the page may
+ * unload before it answers; that's expected, not an error.
+ */
+async function runAction(deps: RunnerDeps, run: Run, action: AgentAction): Promise<{ result: string; pageChanged: boolean }> {
+  const { tabId } = run;
+  if (action.action === 'navigate') {
+    await deps.navigate(tabId, action.url!);
+    await deps.sleep(SETTLE_MS);
+    const tab = await waitForPage(deps, tabId);
+    return { result: `✅ now on "${tab.title || 'untitled page'}" (${tab.url})`, pageChanged: true };
+  }
+
+  const loadsBefore = run.loads;
+  const urlBefore = (await deps.getTab(tabId)).url;
+  let result: string;
+  try {
+    result = String(await deps.send(tabId, { action: 'AGENT_EXECUTE', payload: action }, EXECUTE_TIMEOUT_MS));
+  } catch {
+    result = '✅ Done (the page changed before it could report back)';
+  }
+
+  await deps.sleep(QUICK_ACTIONS.has(action.action) ? QUICK_SETTLE_MS : SETTLE_MS);
+  const now = await deps.getTab(tabId);
+  if (run.loads > loadsBefore || now.status === 'loading' || now.url !== urlBefore) {
+    const tab = await waitForPage(deps, tabId);
+    return { result: `${result}; page changed, now on "${tab.title || 'untitled page'}" (${tab.url})`, pageChanged: true };
+  }
+  return { result, pageChanged: false };
 }
 
 /** Short fingerprint of a page snapshot (FNV-1a), so repeats are cheap to spot. */
@@ -220,7 +266,7 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
     const snapshotText = String(snapshot?.text ?? '');
 
     publish(deps, run, run.history.length ? progressMessage(run, `*Step ${run.step}: planning...*`) : `🧠 **Step ${run.step}**: planning...`, true);
-    const raw = await deps.plan(run.goal, snapshotText + memorySection(run.visited, page.url), run.history);
+    const raw = await deps.plan(run.goal, snapshotText + memorySection(run.visited, page.url), run.history, run.plan);
     if (page.url) {
       // Re-insert so the most recently seen pages come last
       run.visited.delete(page.url);
@@ -228,70 +274,59 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
     }
     if (run.stopRequested) break;
 
-    const parsed = parseAgentAction(raw);
+    const parsed = parseAgentResponse(raw);
     if (!parsed.ok) {
       // Feed the error back through history so the model can correct itself
       invalidStreak++;
-      run.history.push(`(invalid response) → ❌ ${parsed.error}. Respond with ONE valid JSON action.`);
+      run.history.push(`(invalid response) → ❌ ${parsed.error}. Respond with valid JSON: {"plan": [...], "actions": [...]}.`);
       if (invalidStreak >= MAX_INVALID_RESPONSES) {
-        throw new Error(`Model returned ${invalidStreak} invalid actions in a row. Last error: ${parsed.error}`);
+        throw new Error(`Model returned ${invalidStreak} invalid responses in a row. Last error: ${parsed.error}`);
       }
       continue;
     }
     invalidStreak = 0;
-    const action: AgentAction = parsed.action;
+    if (parsed.plan?.length) run.plan = parsed.plan;
+    const { actions } = parsed;
+    const descs = actions.map(describeAction);
 
-    if (action.action === 'done') {
-      run.status = 'done';
-      publish(deps, run, `## ✅ Task Complete\n\n${action.summary || 'Done'}\n\n---\n**Steps taken:**\n${formatHistory(run.history)}`, false);
-      return;
-    }
-
-    const desc = describeAction(action);
-
-    // Stuck detection: the same action chosen again on the same, unchanged page
-    const stateKey = `${page.url}\n${hashText(snapshotText)}\n${desc}`;
+    // Stuck detection: the same actions chosen again on the same, unchanged page
+    const stateKey = `${page.url}\n${hashText(snapshotText)}\n${descs.join('\n')}`;
     const seen = (run.repeats.get(stateKey) ?? 0) + 1;
     run.repeats.set(stateKey, seen);
-    if (seen >= REPEAT_PAUSE) {
-      const reason = `The agent looks stuck: it chose \`${desc}\` ${seen} times on this page, and the page didn't change. Continue to let it try something else, or stop.`;
+    if (seen >= REPEAT_PAUSE && actions[0].action !== 'done') {
+      const what = descs.join(', ');
+      const reason = `The agent looks stuck: it chose \`${what}\` ${seen} times on this page, and the page didn't change. Continue to let it try something else, or stop.`;
       if (!await pause(deps, run, reason)) break;
       run.repeats.set(stateKey, REPEAT_WARN); // choosing it once more pauses again
-      run.history.push(`${desc} → ⏸️ not run: you chose this ${seen} times on this unchanged page. Do something different.`);
+      run.history.push(`${what} → ⏸️ not run: you chose this ${seen} times on this unchanged page. Do something different.`);
       continue;
     }
     const repeatWarning = seen >= REPEAT_WARN
       ? ' ⚠️ You already did exactly this on this same page. If nothing changed, do something different.'
       : '';
+    for (const note of parsed.notes) run.history.push(`(note from Genesis) ${note}`);
 
-    publish(deps, run, progressMessage(run, `*Step ${run.step}: ${desc}*`), true);
+    for (const [i, action] of actions.entries()) {
+      if (run.stopRequested) break;
+      if (action.action === 'done') {
+        run.status = 'done';
+        publish(deps, run, `## ✅ Task Complete\n\n${action.summary || 'Done'}\n\n---\n**Steps taken:**\n${formatHistory(run.history)}`, false);
+        return;
+      }
+      const desc = descs[i];
+      publish(deps, run, progressMessage(run, `*Step ${run.step}: ${desc}*`), true);
+      const { result, pageChanged } = await runAction(deps, run, action);
+      run.history.push(`${desc} → ${result}${i === 0 ? repeatWarning : ''}`);
 
-    if (action.action === 'navigate') {
-      await deps.navigate(tabId, action.url!);
-      await deps.sleep(SETTLE_MS);
-      const tab = await waitForPage(deps, tabId);
-      run.history.push(`${desc} → ✅ now on "${tab.title || 'untitled page'}" (${tab.url})${repeatWarning}`);
-      continue;
+      // Later actions were planned for the page as it was; stop if that changed
+      const left = actions.length - i - 1;
+      const failed = result.startsWith('❌');
+      if (left > 0 && (pageChanged || failed)) {
+        const why = pageChanged ? 'the page changed, so they may not fit it any more' : 'the action above failed';
+        run.history.push(`(note from Genesis) ${left} more action${left === 1 ? '' : 's'} not run: ${why}`);
+        break;
+      }
     }
-
-    // Run it in the page. If the action navigates (link click, form submit),
-    // the page may unload before it answers; that's expected, not an error.
-    const loadsBefore = run.loads;
-    const urlBefore = (await deps.getTab(tabId)).url;
-    let result: string;
-    try {
-      result = String(await deps.send(tabId, { action: 'AGENT_EXECUTE', payload: action }, EXECUTE_TIMEOUT_MS));
-    } catch {
-      result = '✅ Done (the page changed before it could report back)';
-    }
-
-    await deps.sleep(SETTLE_MS);
-    const now = await deps.getTab(tabId);
-    if (run.loads > loadsBefore || now.status === 'loading' || now.url !== urlBefore) {
-      const tab = await waitForPage(deps, tabId);
-      result += `; page changed, now on "${tab.title || 'untitled page'}" (${tab.url})`;
-    }
-    run.history.push(`${desc} → ${result}${repeatWarning}`);
   }
 
   // The loop only gets here when the run was stopped
@@ -308,7 +343,7 @@ export async function startRun(deps: RunnerDeps, tabId: number, goal: string, op
   stopRun(tabId);
 
   const run: Run = {
-    tabId, goal, status: 'running', message: '', loading: true, step: 0, updatedAt: Date.now(), history: [],
+    tabId, goal, status: 'running', message: '', loading: true, step: 0, plan: [], updatedAt: Date.now(), history: [],
     stopRequested: false, loads: 0, visited: new Map(), repeats: new Map(), checkpoint: Math.max(0, options.checkpoint ?? 0),
   };
   runs.set(tabId, run);

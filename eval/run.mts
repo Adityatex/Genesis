@@ -151,34 +151,37 @@ function chatCompletion(content: string) {
 }
 
 /** Planner that replays a task's mockPlan against the snapshot the extension sent. */
-function mockPlanner(plan: MockStep[]) {
+function mockPlanner(plan: (MockStep | MockStep[])[]) {
   let step = 0;
   return (prompt: string): string => {
     const next = plan[step++];
     if (!next) return JSON.stringify({ action: 'done', summary: 'MOCK: plan complete' });
-    if (next.action === 'done' || next.action === 'find') return JSON.stringify(next);
 
     // Only use elements the model would actually have seen: the snapshot's
     // listing, plus results of earlier `find` actions in the action history
     // (entries like `[160] <a> "Account settings" href=...`).
-    const visible = prompt.split('CURRENT PAGE DOM SNAPSHOT:')[1]?.split(/\n\nWhat is the NEXT/)[0] ?? '';
+    const visible = prompt.split('CURRENT PAGE DOM SNAPSHOT:')[1]?.split(/\n\nWhat are the NEXT/)[0] ?? '';
     const findId = (target: RegExp) => {
       for (const m of visible.matchAll(/\[(\d+)\] (<[^|\n]*)/g)) {
         if (target.test(m[2])) return Number(m[1]);
       }
       return undefined;
     };
+    /** The action as the model would send it, or a string saying what's missing. */
+    const resolve = (s: MockStep): object | string => {
+      if (s.action === 'done' || s.action === 'find') return s;
+      if (s.action === 'press_key') return { action: 'press_key', key: s.key, elementId: s.target ? findId(s.target) : undefined };
+      const elementId = findId(s.target);
+      if (elementId === undefined) return `MOCK: no element matching ${s.target} in snapshot`;
+      const { target: _target, ...rest } = s;
+      return { ...rest, elementId };
+    };
 
-    if (next.action === 'press_key') {
-      const elementId = next.target ? findId(next.target) : undefined;
-      return JSON.stringify({ action: 'press_key', key: next.key, elementId });
-    }
-    const elementId = findId(next.target);
-    if (elementId === undefined) {
-      return JSON.stringify({ action: 'done', summary: `MOCK: no element matching ${next.target} in snapshot` });
-    }
-    const { target: _target, ...rest } = next;
-    return JSON.stringify({ ...rest, elementId });
+    // An array is several actions in one response
+    const actions = (Array.isArray(next) ? next : [next]).map(resolve);
+    const missing = actions.find((a): a is string => typeof a === 'string');
+    if (missing) return JSON.stringify({ action: 'done', summary: missing });
+    return JSON.stringify(Array.isArray(next) ? { actions } : actions[0]);
   };
 }
 

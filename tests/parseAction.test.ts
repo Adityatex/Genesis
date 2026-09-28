@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAgentAction, extractFirstJsonObject } from '@/lib/agent/parseAction';
+import { parseAgentAction, parseAgentResponse, extractFirstJsonObject, MAX_BATCH } from '@/lib/agent/parseAction';
 
 function ok(raw: string) {
   const r = parseAgentAction(raw);
@@ -83,5 +83,53 @@ describe('note action', () => {
   it('parses notes and requires text', () => {
     expect(parseAgentAction('{"action":"note","text":"Aero 13: 8 GB, $899"}')).toEqual({ ok: true, action: { action: 'note', text: 'Aero 13: 8 GB, $899' } });
     expect(parseAgentAction('{"action":"note"}')).toEqual({ ok: false, error: 'note requires text to remember' });
+  });
+});
+
+describe('parseAgentResponse (plan + several actions)', () => {
+  it('reads a plan and a list of actions', () => {
+    const r = parseAgentResponse('{"plan":["[x] Open login","[ ] Sign in"],"actions":[{"action":"type","elementId":1,"text":"demo"},{"action":"click","elementId":"[2]"}]}');
+    expect(r).toEqual({
+      ok: true,
+      plan: ['[x] Open login', '[ ] Sign in'],
+      actions: [{ action: 'type', elementId: 1, text: 'demo' }, { action: 'click', elementId: 2 }],
+      notes: [],
+    });
+  });
+
+  it('still accepts a single action object', () => {
+    expect(parseAgentResponse('{"action":"scroll","direction":"up"}')).toEqual({
+      ok: true, plan: undefined, actions: [{ action: 'scroll', direction: 'up' }], notes: [],
+    });
+  });
+
+  it('rejects the whole response when one action is invalid, saying which', () => {
+    expect(parseAgentResponse('{"actions":[{"action":"click","elementId":1},{"action":"click"}]}'))
+      .toEqual({ ok: false, error: 'Action 2: click requires a numeric elementId' });
+    expect(parseAgentResponse('{"actions":[]}')).toMatchObject({ ok: false });
+    expect(parseAgentResponse('{"plan":["[ ] a"]}')).toEqual({ ok: false, error: 'Response has no "actions" list' });
+  });
+
+  it(`runs at most ${MAX_BATCH} actions`, () => {
+    const many = Array.from({ length: MAX_BATCH + 2 }, () => ({ action: 'scroll' }));
+    const r = parseAgentResponse(JSON.stringify({ actions: many }));
+    expect(r.ok && r.actions).toHaveLength(MAX_BATCH);
+    expect(r.ok && r.notes[0]).toBe(`only the first ${MAX_BATCH} actions were run`);
+  });
+
+  it('lets "done" follow notes, but not actions whose result is unseen', () => {
+    const notesThenDone = parseAgentResponse('{"actions":[{"action":"note","text":"total $42"},{"action":"done","summary":"$42"}]}');
+    expect(notesThenDone.ok && notesThenDone.actions.map((a) => a.action)).toEqual(['note', 'done']);
+
+    const clickThenDone = parseAgentResponse('{"actions":[{"action":"click","elementId":3},{"action":"done","summary":"ok"}]}');
+    expect(clickThenDone.ok && clickThenDone.actions.map((a) => a.action)).toEqual(['click']);
+    expect(clickThenDone.ok && clickThenDone.notes[0]).toMatch(/"done" was not run/);
+  });
+
+  it('drops empty plan items and caps the plan length', () => {
+    const plan = ['', '  ', ...Array.from({ length: 20 }, (_, i) => `[ ] step ${i}`)];
+    const r = parseAgentResponse(JSON.stringify({ plan, actions: [{ action: 'scroll' }] }));
+    expect(r.ok && r.plan).toHaveLength(12);
+    expect(r.ok && r.plan?.[0]).toBe('[ ] step 0');
   });
 });

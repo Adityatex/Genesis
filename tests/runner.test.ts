@@ -70,7 +70,7 @@ describe('agent runner (background loop)', () => {
     const { deps, prompts } = fakeDeps(['not json']);
     const result = await startRun(deps, 4, 'Anything');
     expect(result.status).toBe('error');
-    expect(result.message).toMatch(/Agent Error\n\nModel returned 3 invalid actions in a row/);
+    expect(result.message).toMatch(/Agent Error\n\nModel returned 3 invalid responses in a row/);
     expect(prompts[1][0]).toMatch(/^\(invalid response\) → ❌ No JSON object/);
   });
 
@@ -199,5 +199,72 @@ describe('automatic memory of visited pages', () => {
     expect(snapshots[1]).toContain('--- PAGES YOU VISITED EARLIER');
     expect(snapshots[1]).toContain('- https://shop.test/a: Aero 13 Price $899 Memory (RAM) 8 GB');
     expect(snapshots[1].split('PAGES YOU VISITED EARLIER')[1]).not.toContain('Kite 14'); // current page isn't repeated
+  });
+});
+
+describe('several actions per response', () => {
+  it('runs them all from one model call, then shows each in the history', async () => {
+    const { deps, prompts } = fakeDeps([
+      '{"plan":["[ ] Fill the form","[ ] Submit"],"actions":[{"action":"type","elementId":1,"text":"demo"},{"action":"type","elementId":2,"text":"pw"},{"action":"click","elementId":3}]}',
+      '{"action":"done","summary":"Signed in"}',
+    ]);
+    const result = await startRun(deps, 20, 'Sign in');
+    expect(result.status).toBe('done');
+    expect(deps.plan).toHaveBeenCalledTimes(2);
+    expect(prompts[1]).toEqual(['type [1] "demo" → ✅ ran type', 'type [2] "pw" → ✅ ran type', 'click [3] → ✅ ran click']);
+  });
+
+  it('skips the rest when an action changes the page', async () => {
+    const { deps, prompts } = fakeDeps([
+      '{"actions":[{"action":"click","elementId":1},{"action":"type","elementId":2,"text":"x"},{"action":"click","elementId":3}]}',
+      '{"action":"done","summary":"ok"}',
+    ], {
+      onExecute: (tab, action) => {
+        if (action.elementId === 1) { tab.url = 'https://shop.test/next'; tab.title = 'Next'; notifyTabLoading(21); }
+        return `✅ ran ${action.action}`;
+      },
+    });
+    await startRun(deps, 21, 'Go on');
+    expect(prompts[1]).toEqual([
+      'click [1] → ✅ ran click; page changed, now on "Next" (https://shop.test/next)',
+      '(note from Genesis) 2 more actions not run: the page changed, so they may not fit it any more',
+    ]);
+  });
+
+  it('skips the rest when an action fails', async () => {
+    const { deps, prompts } = fakeDeps([
+      '{"actions":[{"action":"click","elementId":9},{"action":"click","elementId":3}]}',
+      '{"action":"done","summary":"ok"}',
+    ], { onExecute: (_tab, action) => (action.elementId === 9 ? '❌ Element [9] not found' : '✅ ok') });
+    await startRun(deps, 22, 'Click');
+    expect(prompts[1]).toEqual(['click [9] → ❌ Element [9] not found', '(note from Genesis) 1 more action not run: the action above failed']);
+  });
+
+  it('keeps the latest plan, sends it back to the model and shows it', async () => {
+    const plans: string[][] = [];
+    const updates: RunView[] = [];
+    const { deps } = fakeDeps([]);
+    const answers = [
+      '{"plan":["[ ] Find the order","[ ] Read its status"],"actions":[{"action":"click","elementId":1}]}',
+      '{"actions":[{"action":"scroll","direction":"down"}]}',
+      '{"plan":["[x] Find the order","[ ] Read its status"],"actions":[{"action":"note","text":"Shipped"},{"action":"done","summary":"Shipped"}]}',
+    ];
+    (deps.plan as any).mockImplementation(async (_g: string, _s: string, _h: string[], plan: string[]) => {
+      plans.push([...plan]);
+      return answers[plans.length - 1];
+    });
+    const send = deps.send as any;
+    const original = send.getMockImplementation();
+    send.mockImplementation(async (id: number, m: any, t: number) => {
+      if (m.action === 'AGENT_UPDATE') updates.push(m.payload);
+      return original(id, m, t);
+    });
+
+    const result = await startRun(deps, 23, 'Check my order');
+    expect(result.status).toBe('done');
+    expect(result.message).toMatch(/Task Complete\n\nShipped/);
+    expect(plans).toEqual([[], ['[ ] Find the order', '[ ] Read its status'], ['[ ] Find the order', '[ ] Read its status']]);
+    expect(result.plan).toEqual(['[x] Find the order', '[ ] Read its status']);
+    expect(updates.some((u) => u.message.includes('**Plan**\n- ☐ Find the order\n- ☐ Read its status'))).toBe(true);
   });
 });

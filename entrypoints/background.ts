@@ -45,7 +45,7 @@ export default defineBackground(() => {
 
   // ---- Agent runner: the loop lives here, not in the page (lib/agent/runner.ts)
   const runnerDeps: RunnerDeps = {
-    plan: async (goal, snapshot, history) => planAgentStep(goal, snapshot, history, await requireConfig()),
+    plan: async (goal, snapshot, history, currentPlan) => planAgentStep(goal, snapshot, history, currentPlan, await requireConfig()),
     // frameId 0: only the top frame's content script (the sidebar) handles agent messages
     send: (tabId, message, timeoutMs) => withTimeout(chrome.tabs.sendMessage(tabId, message, { frameId: 0 }), timeoutMs, 'Page'),
     getTab: async (tabId) => {

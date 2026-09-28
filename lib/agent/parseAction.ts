@@ -124,3 +124,64 @@ export function parseAgentAction(raw: string): ParseResult {
 
   return { ok: true, action };
 }
+
+/** Most actions the model may send in one response. */
+export const MAX_BATCH = 6;
+/** Most plan items kept (and shown). */
+const MAX_PLAN_ITEMS = 12;
+
+export type ResponseParseResult =
+  | { ok: true; actions: AgentAction[]; plan?: string[]; notes: string[] }
+  | { ok: false; error: string };
+
+/**
+ * Parse a planner response: {"plan": [...], "actions": [{...}, ...]}, or a
+ * single action object (older format, and what weaker models fall back to).
+ * `notes` explain anything the runner dropped, for the model's history.
+ */
+export function parseAgentResponse(raw: string): ResponseParseResult {
+  const json = extractFirstJsonObject(raw);
+  if (!json) return { ok: false, error: `No JSON object in model response: ${raw.slice(0, 200)}` };
+
+  let obj: Record<string, unknown>;
+  try {
+    obj = JSON.parse(json);
+  } catch {
+    return { ok: false, error: `Malformed JSON in model response: ${json.slice(0, 200)}` };
+  }
+
+  const plan = Array.isArray(obj.plan)
+    ? obj.plan.map((item) => optionalString(item)?.trim()).filter((item): item is string => !!item).slice(0, MAX_PLAN_ITEMS)
+    : undefined;
+
+  if (!Array.isArray(obj.actions)) {
+    if (obj.action === undefined) return { ok: false, error: 'Response has no "actions" list' };
+    const single = parseAgentAction(json);
+    return single.ok ? { ok: true, actions: [single.action], plan, notes: [] } : single;
+  }
+  if (obj.actions.length === 0) return { ok: false, error: '"actions" is empty: send at least one action' };
+
+  const notes: string[] = [];
+  const items = obj.actions.slice(0, MAX_BATCH);
+  if (obj.actions.length > MAX_BATCH) notes.push(`only the first ${MAX_BATCH} actions were run`);
+
+  const actions: AgentAction[] = [];
+  for (const [i, item] of items.entries()) {
+    const parsed = parseAgentAction(JSON.stringify(item ?? null));
+    if (!parsed.ok) return { ok: false, error: `Action ${i + 1}: ${parsed.error}` };
+    actions.push(parsed.action);
+  }
+
+  // "done" ends the task, so it must come last, and only after actions whose
+  // results don't need checking (notes). Otherwise run the rest and let the
+  // model look at the result first.
+  const doneAt = actions.findIndex((a) => a.action === 'done');
+  if (doneAt !== -1 && actions.length > 1) {
+    const others = actions.filter((a) => a.action !== 'done');
+    if (others.length === 0) return { ok: true, actions: [actions[doneAt]], plan, notes };
+    if (doneAt === actions.length - 1 && others.every((a) => a.action === 'note')) return { ok: true, actions, plan, notes };
+    notes.push('"done" was not run: check the results of your actions first, then send "done" on its own');
+    return { ok: true, actions: others, plan, notes };
+  }
+  return { ok: true, actions, plan, notes };
+}
