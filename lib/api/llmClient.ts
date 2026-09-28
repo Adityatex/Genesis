@@ -139,7 +139,8 @@ function authHeaders(config: LLMConfig): Record<string, string> {
 /** Short message from a provider's error body, without echoing anything huge. */
 function errorMessage(body: string): string {
   try {
-    const parsed = JSON.parse(body);
+    let parsed = JSON.parse(body);
+    if (Array.isArray(parsed)) parsed = parsed[0]; // Gemini wraps errors in an array
     const msg = parsed?.error?.message ?? parsed?.message ?? parsed?.error;
     if (typeof msg === 'string') return msg.slice(0, 300);
   } catch { /* not JSON */ }
@@ -270,8 +271,10 @@ export async function listModels(config: LLMConfig): Promise<ModelInfo[]> {
   const preset = PROVIDERS[config.provider];
   const models = new Map<string, ModelInfo>();
   for (const m of items) {
-    const id = typeof m === 'string' ? m : m?.id ?? m?.name;
-    if (typeof id !== 'string' || !id) continue;
+    const rawId = typeof m === 'string' ? m : m?.id ?? m?.name;
+    if (typeof rawId !== 'string' || !rawId) continue;
+    const id = rawId.replace(/^models\//, ''); // Gemini lists "models/<id>" but takes "<id>"
+    if (m?.capabilities?.completion_chat === false) continue; // Mistral: embedding/OCR/moderation models
     // Skip image/audio generators: the agent needs text out
     const outputs = m?.architecture?.output_modalities;
     if (Array.isArray(outputs) && !outputs.includes('text')) continue;

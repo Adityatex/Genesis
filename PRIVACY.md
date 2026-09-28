@@ -1,7 +1,7 @@
 # Privacy Policy — Genesis AI Browser Assistant
 
 - No analytics, no tracking, no remote servers operated by us.
-- You choose the AI provider (Groq, DeepSeek, OpenAI, OpenRouter, Kilo AI Gateway, OpenCode Zen, a local Ollama, or a custom OpenAI-compatible server) and bring your own API key.
+- You choose the AI provider (Groq, Google AI Studio, Mistral, DeepSeek, OpenAI, OpenRouter, Kilo AI Gateway, OpenCode Zen, a local Ollama, or a custom OpenAI-compatible server) and bring your own API key.
 - API keys are stored only in `chrome.storage.local` on your device and are read only by the extension's background service worker. They are never shown back in full, and are sent only to the provider they belong to.
 - Page text / DOM snapshots are sent only to the provider you selected, and only when you trigger Summarize, Explain, Chat, or Agent actions. With Ollama they never leave your machine. Some free models on gateways such as Kilo may be used for training by their provider; the popup marks those models.
 - Keys and page content are only ever sent over HTTPS, except to servers on your own machine (localhost).

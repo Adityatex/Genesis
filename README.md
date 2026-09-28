@@ -24,7 +24,7 @@ Open-source Brave/Chrome extension (Manifest V3) that injects a floating AI-powe
 - **UI:** React + TypeScript
 - **Styling:** Tailwind CSS v4 with a dark glassmorphic theme
 - **Testing:** Vitest + happy-dom, GitHub Actions CI (typecheck → test → build)
-- **AI:** any OpenAI-compatible provider: Groq (default, `qwen/qwen3.8-27b`), DeepSeek, OpenAI, OpenRouter, Kilo AI Gateway, OpenCode Zen, local Ollama, or a custom server. Bring your own key
+- **AI:** any OpenAI-compatible provider: Groq (default, `qwen/qwen3.8-27b`), Google AI Studio (Gemini), Mistral, DeepSeek, OpenAI, OpenRouter, Kilo AI Gateway, OpenCode Zen, local Ollama, or a custom server. Bring your own key
 - **Architecture:** Manifest V3, Shadow DOM isolation. Permissions: `activeTab`, `scripting`, `storage`, and `debugger`, which is used only while the agent runs, for real mouse and keyboard input, and can be turned off in the popup
 
 ## 🚀 Getting Started
@@ -128,6 +128,8 @@ Open the extension popup and pick a provider under **AI model**:
 | Provider | Key | Notes |
 |---|---|---|
 | Groq (default) | [console.groq.com](https://console.groq.com/keys) | Free tier; default model `qwen/qwen3.8-27b` (see [baseline](eval/BASELINE.md)) |
+| Google AI Studio (Gemini) | [aistudio.google.com](https://aistudio.google.com/apikey) | Free key, no billing. On the free tier use a Flash-Lite model (~500 requests/day); other Flash models allow 20/day. Free-tier prompts may be used by Google |
+| Mistral | [console.mistral.ai](https://console.mistral.ai/api-keys) | Free Experiment plan, about 1 request/second; free-plan prompts may be used for training |
 | DeepSeek | [platform.deepseek.com](https://platform.deepseek.com/api_keys) | |
 | OpenAI | [platform.openai.com](https://platform.openai.com/api-keys) | |
 | OpenRouter | [openrouter.ai](https://openrouter.ai/keys) | Many models behind one key |

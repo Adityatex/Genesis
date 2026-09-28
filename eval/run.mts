@@ -257,7 +257,7 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
       log(`429 rate limited: ${detail.slice(0, 160)}`);
       // Per-day limits don't recover for hours; waiting out every retry just
       // burns time on runs that can't pass
-      if (/per day|\bTPD\b|\bRPD\b/i.test(detail)) dailyLimitHit ??= detail;
+      if (/per ?day|\bTPD\b|\bRPD\b/i.test(detail)) dailyLimitHit ??= detail;
     }
     try {
       const usage = JSON.parse(text).usage;

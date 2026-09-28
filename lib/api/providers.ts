@@ -2,7 +2,7 @@
 // LLM provider presets and settings. Every provider here speaks the OpenAI
 // chat-completions API, so one client (llmClient.ts) serves them all.
 
-export type ProviderId = 'groq' | 'deepseek' | 'openai' | 'openrouter' | 'kilo' | 'opencode' | 'ollama' | 'custom';
+export type ProviderId = 'groq' | 'gemini' | 'mistral' | 'deepseek' | 'openai' | 'openrouter' | 'kilo' | 'opencode' | 'ollama' | 'custom';
 
 export interface ProviderPreset {
   id: ProviderId;
@@ -44,6 +44,24 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
     defaultModel: 'qwen/qwen3.8-27b',
     maxOutputTokens: 800,
     note: 'Free tier: about 8k tokens/minute, 1k output tokens/minute and 200k tokens/day per model.',
+  },
+  gemini: {
+    id: 'gemini',
+    label: 'Google AI Studio (Gemini)',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    needsKey: true,
+    keyUrl: 'https://aistudio.google.com/apikey',
+    // The list also has speech, image, embedding and live-audio models
+    modelFilter: (id) => /^(gemini|gemma)-/.test(id) && !/(tts|image|embedding|live|audio|transcribe|robotics|computer-use)/.test(id),
+    note: 'A free AI Studio key needs no billing. On the free tier pick a Flash-Lite model (about 500 requests/day); other Flash models allow only 20 requests/day, about 4 tasks. Google may use free-tier prompts, which include page content, to improve its products.',
+  },
+  mistral: {
+    id: 'mistral',
+    label: 'Mistral',
+    baseUrl: 'https://api.mistral.ai/v1',
+    needsKey: true,
+    keyUrl: 'https://console.mistral.ai/api-keys',
+    note: 'The free Experiment plan (no card) allows about 1 request/second. On it, Mistral may use your prompts, which include page content, for training; check the data settings in its console.',
   },
   deepseek: {
     id: 'deepseek',

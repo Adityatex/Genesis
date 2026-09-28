@@ -168,3 +168,33 @@ describe('listModels: free models and provider filters', () => {
     expect(models.filter(m => m.free).map(m => m.id)).toEqual(['big-pickle', 'mimo-v2.6-flash-free']);
   });
 });
+
+describe('listModels: Gemini and Mistral lists', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const list = (data: unknown[]) => vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ data }), { status: 200 })));
+
+  it('Gemini: drops the "models/" prefix and non-chat models', async () => {
+    list([
+      { id: 'models/gemini-3.5-flash-lite' }, { id: 'models/gemma-4-31b-it' }, { id: 'models/gemini-3.8-flash-tts' },
+      { id: 'models/gemini-embedding-2' }, { id: 'models/gemini-3.1-flash-image' }, { id: 'models/veo-3-generate' },
+    ]);
+    const models = await listModels({ provider: 'gemini', label: 'Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', apiKey: 'k', model: '' });
+    expect(models.map(m => m.id)).toEqual(['gemini-3.5-flash-lite', 'gemma-4-31b-it']);
+  });
+
+  it('Mistral: keeps only models that can chat', async () => {
+    list([
+      { id: 'mistral-small-latest', capabilities: { completion_chat: true } },
+      { id: 'mistral-embed', capabilities: { completion_chat: false } },
+      { id: 'mistral-ocr-latest', capabilities: { completion_chat: false } },
+    ]);
+    const models = await listModels({ provider: 'mistral', label: 'Mistral', baseUrl: 'https://api.mistral.ai/v1', apiKey: 'k', model: '' });
+    expect(models).toEqual([{ id: 'mistral-small-latest' }]);
+  });
+
+  it('reads the message from an error wrapped in an array (Gemini)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify([{ error: { code: 400, message: 'API key not valid' } }]), { status: 400 })));
+    await expect(listModels({ provider: 'gemini', label: 'Gemini', baseUrl: 'https://x.test', apiKey: 'k', model: '' }))
+      .rejects.toThrow('Gemini could not list models (400): API key not valid');
+  });
+});
