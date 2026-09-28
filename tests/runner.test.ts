@@ -268,3 +268,46 @@ describe('several actions per response', () => {
     expect(updates.some((u) => u.message.includes('**Plan**\n- ☐ Find the order\n- ☐ Read its status'))).toBe(true);
   });
 });
+
+describe('handing a task to a backup provider', () => {
+  it('tells the new model it is continuing, with the plan and everything done so far', async () => {
+    const plans: string[][] = [];
+    const { deps, prompts } = fakeDeps([]);
+    const replies = [
+      { text: '{"plan":["[ ] Fill the form","[ ] Submit"],"actions":[{"action":"type","elementId":1,"text":"Ada"}]}', model: 'Groq · qwen' },
+      // Groq is rate-limited; Gemini answers the next call
+      { text: '{"plan":["[x] Fill the form","[ ] Submit"],"actions":[{"action":"click","elementId":2}]}', model: 'Gemini · flash-lite', unavailable: [{ label: 'Groq · qwen', reason: 'hit its rate limit' }] },
+      { text: '{"action":"done","summary":"Submitted"}', model: 'Gemini · flash-lite' },
+    ];
+    (deps.plan as any).mockImplementation(async (_g: string, _s: string, history: string[], plan: string[]) => {
+      prompts.push([...history]);
+      plans.push([...plan]);
+      return replies[plans.length - 1];
+    });
+
+    const result = await startRun(deps, 30, 'Sign up as Ada');
+    expect(result.status).toBe('done');
+    expect(result.model).toBe('Gemini · flash-lite');
+    // Gemini's first call already had Groq's plan and history...
+    expect(plans[1]).toEqual(['[ ] Fill the form', '[ ] Submit']);
+    expect(prompts[1]).toEqual(['type [1] "Ada" → ✅ ran type']);
+    // ...and the call after the switch is told what happened
+    expect(prompts[2][1]).toMatch(/^\(handoff\) Groq · qwen hit its rate limit, so Gemini · flash-lite takes over from here\. This task is already under way: plan items marked \[x\] are done, \[ \] items are left/);
+  });
+
+  it('notes a switch back to the main model without a reason', async () => {
+    const { deps, prompts } = fakeDeps([]);
+    const replies = [
+      { text: '{"action":"scroll"}', model: 'Gemini · flash-lite' },
+      { text: '{"action":"note","text":"x"}', model: 'Groq · qwen' },
+      { text: '{"action":"done","summary":"ok"}', model: 'Groq · qwen' },
+    ];
+    let i = 0;
+    (deps.plan as any).mockImplementation(async (_g: string, _s: string, history: string[]) => {
+      prompts.push([...history]);
+      return replies[i++];
+    });
+    await startRun(deps, 31, 'Anything');
+    expect(prompts[2][1]).toMatch(/^\(handoff\) Groq · qwen takes over from Gemini · flash-lite here\./);
+  });
+});

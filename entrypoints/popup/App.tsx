@@ -10,6 +10,9 @@ export default function App() {
   // AI provider settings. Keys stay in the background worker; the popup only
   // ever receives masked versions.
   const [provider, setProvider] = useState<ProviderId>('groq');
+  // The provider Genesis uses (the dropdown may show another one being set up)
+  const [activeProvider, setActiveProvider] = useState<ProviderId>('groq');
+  const [fallbacks, setFallbacks] = useState<ProviderId[]>([]);
   const [savedModels, setSavedModels] = useState<Partial<Record<ProviderId, string>>>({});
   const [maskedKeys, setMaskedKeys] = useState<Partial<Record<ProviderId, string>>>({});
   const [customBaseUrl, setCustomBaseUrl] = useState('');
@@ -28,8 +31,10 @@ export default function App() {
   useEffect(() => {
     browser.runtime.sendMessage({ action: 'GET_LLM_SETTINGS' }).then((res: any) => {
       if (!res?.success) return;
-      const { provider: p, models, customBaseUrl: url, maskedKeys: masked } = res.data;
+      const { provider: p, models, customBaseUrl: url, maskedKeys: masked, fallbacks: backups } = res.data;
       setProvider(p);
+      setActiveProvider(p);
+      setFallbacks(backups ?? []);
       setSavedModels(models);
       setMaskedKeys(masked);
       setCustomBaseUrl(url);
@@ -93,7 +98,14 @@ export default function App() {
     }
   };
 
-  const handleSave = async () => {
+  const handleRemoveBackup = async (id: ProviderId) => {
+    const next = fallbacks.filter((f) => f !== id);
+    const res: any = await browser.runtime.sendMessage({ action: 'SAVE_FALLBACKS', payload: { fallbacks: next } });
+    if (res?.success) setFallbacks(res.data.fallbacks);
+  };
+
+  /** Save the dropdown's provider, as the one Genesis uses or as a backup. */
+  const handleSave = async (asBackup = false) => {
     if (preset.needsKey && !apiKey.trim() && !maskedKeys[provider]) {
       showMessage('error', `Enter your ${preset.label} API key`);
       return;
@@ -107,13 +119,17 @@ export default function App() {
     try {
       const res = await browser.runtime.sendMessage({
         action: 'SAVE_LLM_SETTINGS',
-        payload: { provider, model: model.trim(), apiKey: apiKey.trim(), customBaseUrl: customBaseUrl.trim() },
+        payload: { provider, model: model.trim(), apiKey: apiKey.trim(), customBaseUrl: customBaseUrl.trim(), asBackup },
       });
       if (!res?.success) throw new Error(res?.error || 'Failed to save');
+      setActiveProvider(res.data.provider);
+      setFallbacks(res.data.fallbacks ?? []);
       setMaskedKeys((m) => ({ ...m, [provider]: res.data.maskedKey }));
       setSavedModels((m) => ({ ...m, [provider]: model.trim() }));
       setApiKey('');
-      showMessage('saved', `Saved. Genesis now uses ${preset.label} · ${model.trim()}`);
+      showMessage('saved', asBackup
+        ? `Saved. ${preset.label} · ${model.trim()} is backup #${res.data.fallbacks.indexOf(provider) + 1}.`
+        : `Saved. Genesis now uses ${preset.label} · ${model.trim()}`);
     } catch (err: any) {
       showMessage('error', err.message);
     }
@@ -220,7 +236,7 @@ export default function App() {
             placeholder={preset.defaultModel ?? 'Model id'}
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSave()}
+            onKeyDown={(e) => e.key === 'Enter' && handleSave(provider !== activeProvider && fallbacks.includes(provider))}
             className="api-input"
             aria-label="Model"
           />
@@ -238,12 +254,40 @@ export default function App() {
           </button>
         </div>
 
-        <button onClick={handleSave} className="profile-save-btn" disabled={status === 'saving'}>
-          {status === 'saving' ? 'Saving…' : 'Save'}
-        </button>
+        {provider === activeProvider ? (
+          <button onClick={() => handleSave()} className="profile-save-btn" disabled={status === 'saving'}>
+            {status === 'saving' ? 'Saving…' : 'Save'}
+          </button>
+        ) : (
+          <div className="input-group">
+            <button onClick={() => handleSave()} className="profile-save-btn" disabled={status === 'saving'}>
+              Use as main
+            </button>
+            <button onClick={() => handleSave(true)} className="secondary-btn" disabled={status === 'saving'}>
+              {fallbacks.includes(provider) ? 'Update backup' : 'Save as backup'}
+            </button>
+          </div>
+        )}
         {message && (
           <div className={`message ${status}`}>{message}</div>
         )}
+
+        <label className="section-label" style={{ marginTop: 12 }}>Backups</label>
+        {fallbacks.length > 0 ? (
+          <ol className="backup-list">
+            {fallbacks.map((id) => (
+              <li key={id}>
+                <span>{PROVIDERS[id].label} · {savedModels[id] || PROVIDERS[id].defaultModel}</span>
+                <button onClick={() => handleRemoveBackup(id)} className="link-btn" title="Remove this backup">Remove</button>
+              </li>
+            ))}
+          </ol>
+        ) : null}
+        <p className="hint">
+          {fallbacks.length
+            ? `When ${PROVIDERS[activeProvider].label} hits a rate limit or fails, the next backup takes over mid-task with the same plan and progress. Genesis goes back to ${PROVIDERS[activeProvider].label} when it's available again.`
+            : 'No backups. To add one, pick another provider above, enter its key and model, and press "Save as backup". When your main provider hits a rate limit, the backup takes over mid-task.'}
+        </p>
       </div>
 
       {/* Agent Section */}

@@ -6,10 +6,11 @@ import {
   startRun, stopRun, resumeRun, forgetRun, getRunView, isRunning, notifyTabLoading, type RunnerDeps,
 } from '@/lib/agent/runner';
 import {
-  PROVIDERS, PROVIDER_IDS, SETTINGS_KEY, LEGACY_KEYS, readSettings, resolveConfig, configProblem,
+  PROVIDERS, PROVIDER_IDS, SETTINGS_KEY, LEGACY_KEYS, readSettings, resolveConfig, resolveChain, configProblem,
   validateBaseUrl, maskKey, type LLMConfig, type ProviderId, type StoredLLMSettings,
 } from '@/lib/api/providers';
 import { formatError, withTimeout } from '@/lib/utils/errorHandler';
+import { providerPool, modelLabel, type FallbackResult } from '@/lib/api/fallback';
 import { trustedClick, trustedKey, trustedType, releaseTab, watchDetach } from '@/lib/agent/trustedInput';
 import { PREFS_KEY, DEFAULT_PREFS, type AgentPrefs } from '@/lib/agent/prefs';
 
@@ -45,7 +46,11 @@ export default defineBackground(() => {
 
   // ---- Agent runner: the loop lives here, not in the page (lib/agent/runner.ts)
   const runnerDeps: RunnerDeps = {
-    plan: async (goal, snapshot, history, currentPlan) => planAgentStep(goal, snapshot, history, currentPlan, await requireConfig()),
+    plan: async (goal, snapshot, history, currentPlan) => {
+      // Any provider in the chain can answer: the prompt carries the whole task state
+      const { value, config, skipped } = await ask((c) => planAgentStep(goal, snapshot, history, currentPlan, c));
+      return { text: value, model: modelLabel(config), unavailable: skipped };
+    },
     // frameId 0: only the top frame's content script (the sidebar) handles agent messages
     send: (tabId, message, timeoutMs) => withTimeout(chrome.tabs.sendMessage(tabId, message, { frameId: 0 }), timeoutMs, 'Page'),
     getTab: async (tabId) => {
@@ -88,6 +93,17 @@ export default defineBackground(() => {
     return config;
   }
 
+  /**
+   * Call the active provider, or a backup when it's rate-limited or failing
+   * (lib/api/fallback.ts). Throws if the active provider isn't set up.
+   */
+  async function ask<T>(call: (config: LLMConfig) => Promise<T>): Promise<FallbackResult<T>> {
+    const chain = resolveChain(await loadSettings());
+    const problem = configProblem(chain[0]);
+    if (problem) throw new Error(problem);
+    return providerPool.run(chain, call);
+  }
+
   function isProvider(id: unknown): id is ProviderId {
     return typeof id === 'string' && (PROVIDER_IDS as string[]).includes(id);
   }
@@ -104,29 +120,56 @@ export default defineBackground(() => {
             // The popup only ever sees masked keys
             const settings = await loadSettings();
             const maskedKeys = Object.fromEntries(PROVIDER_IDS.map(id => [id, maskKey(settings.keys[id] ?? '')]));
+            // Providers with a key and model saved, which can serve as backups
+            const ready = PROVIDER_IDS.filter(id => configProblem(resolveConfig(settings, id)) === null);
             sendResponse({
               success: true,
-              data: { provider: settings.provider, models: settings.models, customBaseUrl: settings.customBaseUrl ?? '', maskedKeys },
+              data: {
+                provider: settings.provider, models: settings.models, customBaseUrl: settings.customBaseUrl ?? '', maskedKeys,
+                fallbacks: settings.fallbacks ?? [], ready,
+              },
             });
             break;
           }
 
           case 'SAVE_LLM_SETTINGS': {
-            const { provider, model, apiKey, customBaseUrl } = payload ?? {};
+            // asBackup: save this provider's key and model and add it to the
+            // backups, without making it the active provider
+            const { provider, model, apiKey, customBaseUrl, asBackup } = payload ?? {};
             if (!isProvider(provider)) throw new Error('Unknown provider');
             if (provider === 'custom') {
               const urlError = validateBaseUrl(customBaseUrl ?? '');
               if (urlError) throw new Error(urlError);
             }
             const settings = await loadSettings();
-            settings.provider = provider;
             if (typeof model === 'string') settings.models[provider] = model.trim();
             // An empty key field means "keep the saved key"
             if (typeof apiKey === 'string' && apiKey.trim()) settings.keys[provider] = apiKey.trim();
             if (provider === 'custom') settings.customBaseUrl = customBaseUrl.trim();
+            if (asBackup && provider !== settings.provider) {
+              const problem = configProblem(resolveConfig(settings, provider));
+              if (problem) throw new Error(problem);
+              settings.fallbacks = [...(settings.fallbacks ?? []).filter(id => id !== provider), provider];
+            } else {
+              settings.provider = provider;
+              settings.fallbacks = (settings.fallbacks ?? []).filter(id => id !== provider);
+            }
             await browser.storage.local.set({ [SETTINGS_KEY]: settings });
             await browser.storage.local.remove([...LEGACY_KEYS]); // migrated
-            sendResponse({ success: true, data: { maskedKey: maskKey(settings.keys[provider] ?? '') } });
+            sendResponse({
+              success: true,
+              data: { maskedKey: maskKey(settings.keys[provider] ?? ''), provider: settings.provider, fallbacks: settings.fallbacks },
+            });
+            break;
+          }
+
+          case 'SAVE_FALLBACKS': {
+            // Backup providers, in order; each uses its own saved key and model
+            const list: unknown[] = Array.isArray(payload?.fallbacks) ? payload.fallbacks : [];
+            const settings = await loadSettings();
+            settings.fallbacks = [...new Set(list.filter(isProvider))].filter(id => id !== settings.provider);
+            await browser.storage.local.set({ [SETTINGS_KEY]: settings });
+            sendResponse({ success: true, data: { fallbacks: settings.fallbacks } });
             break;
           }
 
@@ -146,22 +189,19 @@ export default defineBackground(() => {
           }
 
           case 'SUMMARIZE': {
-            const config = await requireConfig();
-            const summary = await summarizePage(payload.text, config);
+            const { value: summary } = await ask((c) => summarizePage(payload.text, c));
             sendResponse({ success: true, data: { result: summary } });
             break;
           }
 
           case 'EXPLAIN': {
-            const config = await requireConfig();
-            const explanation = await explainText(payload.text, config);
+            const { value: explanation } = await ask((c) => explainText(payload.text, c));
             sendResponse({ success: true, data: { result: explanation } });
             break;
           }
 
           case 'CHAT': {
-            const config = await requireConfig();
-            const reply = await chatWithPage(payload.message, payload.pageContext || '', config);
+            const { value: reply } = await ask((c) => chatWithPage(payload.message, payload.pageContext || '', c));
             sendResponse({ success: true, data: { result: reply } });
             break;
           }

@@ -130,6 +130,11 @@ export interface StoredLLMSettings {
   /** API key per provider. Only the background service worker reads these. */
   keys: Partial<Record<ProviderId, string>>;
   customBaseUrl?: string;
+  /**
+   * Backup providers, in order. When the active one is rate-limited or fails,
+   * the next one takes over, with its own saved key and model.
+   */
+  fallbacks?: ProviderId[];
 }
 
 export const SETTINGS_KEY = 'genesis_llm';
@@ -145,13 +150,16 @@ export interface LLMConfig {
   model: string;
   /** Planner response cap, if the provider needs a smaller one than the default. */
   maxOutputTokens?: number;
+  /** Set by the fallback chain: give up at once on rate limits, another provider is waiting. */
+  failFast?: boolean;
 }
 
 /** Stored settings, migrating the old Groq-only keys if that's all there is. */
 export function readSettings(stored: Record<string, unknown>): StoredLLMSettings {
   const saved = stored[SETTINGS_KEY] as StoredLLMSettings | undefined;
   if (saved?.provider && PROVIDERS[saved.provider]) {
-    return { provider: saved.provider, models: saved.models ?? {}, keys: saved.keys ?? {}, customBaseUrl: saved.customBaseUrl };
+    const fallbacks = (saved.fallbacks ?? []).filter((id) => PROVIDERS[id] && id !== saved.provider);
+    return { provider: saved.provider, models: saved.models ?? {}, keys: saved.keys ?? {}, customBaseUrl: saved.customBaseUrl, fallbacks };
   }
   const legacyKey = typeof stored.groqApiKey === 'string' ? stored.groqApiKey : '';
   const legacyModel = typeof stored.groqModel === 'string' ? stored.groqModel : '';
@@ -175,7 +183,19 @@ export function resolveConfig(settings: StoredLLMSettings, provider: ProviderId 
   };
 }
 
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+/**
+ * The active provider's config, then each usable backup's, in order. Backups
+ * that aren't set up (no key or model saved) are left out.
+ */
+export function resolveChain(settings: StoredLLMSettings): LLMConfig[] {
+  const backups = [...new Set(settings.fallbacks ?? [])]
+    .filter((id) => id !== settings.provider && PROVIDERS[id])
+    .map((id) => resolveConfig(settings, id))
+    .filter((config) => configProblem(config) === null);
+  return [resolveConfig(settings, settings.provider), ...backups];
+}
+
+const LOOPBACK_HOSTS =new Set(['localhost', '127.0.0.1', '[::1]']);
 
 /**
  * API keys and page content go to this URL, so it must be HTTPS. Plain HTTP is

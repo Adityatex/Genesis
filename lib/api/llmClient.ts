@@ -45,6 +45,33 @@ export interface CallOptions {
   topP?: number;
   /** Ask for a JSON object (response_format json_object). */
   jsonMode?: boolean;
+  /**
+   * Throw at the first rate limit or connection failure instead of waiting and
+   * retrying: used when another provider can take the request.
+   */
+  failFast?: boolean;
+}
+
+/**
+ * Why a provider couldn't answer:
+ * - rate-limit: per-minute limits; retryAfterMs says when to try again, if known
+ * - daily: a per-day quota is used up
+ * - auth: key rejected; model: the key can't use this model
+ * - unavailable: timeout, network error or server error
+ * - other: any other error response
+ */
+export type LLMErrorKind = 'rate-limit' | 'daily' | 'auth' | 'model' | 'unavailable' | 'other';
+
+export class LLMError extends Error {
+  constructor(message: string, readonly kind: LLMErrorKind, readonly retryAfterMs?: number) {
+    super(message);
+    this.name = 'LLMError';
+  }
+}
+
+/** Per-day quota messages: Groq (TPD/RPD), Gemini (PerDay), and others' "per day". */
+export function isDailyLimit(message: string): boolean {
+  return /per ?day|\bTPD\b|\bRPD\b/i.test(message);
 }
 
 /**
@@ -158,6 +185,7 @@ export async function callLLM(messages: ChatMessage[], config: LLMConfig, opts: 
   const fixKey = `${config.baseUrl}|${config.model}`;
   let fixes: ParamFixes = learnedFixes.get(fixKey) ?? {};
   let fixesTried = 0;
+  const failFast = opts.failFast ?? config.failFast ?? false;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -191,28 +219,28 @@ export async function callLLM(messages: ChatMessage[], config: LLMConfig, opts: 
         }
 
         if (response.status === 401 || response.status === 403) {
-          throw new Error(`${config.label} rejected the API key (${response.status}): ${errorMessage(errorBody)}. Update it in the Genesis popup.`);
+          throw new LLMError(`${config.label} rejected the API key (${response.status}): ${errorMessage(errorBody)}. Update it in the Genesis popup.`, 'auth');
         }
 
         if (isModelNotFound(response.status, errorBody)) {
-          throw new Error(`${config.label} doesn't offer the model "${config.model}" to this key. Pick another with "Load models" in the Genesis popup.`);
-        }
-
-        if (response.status === 429 && attempt < MAX_RETRIES) {
-          const retryAfterHeader = response.headers.get('retry-after');
-          const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : NaN;
-          const delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-            ? Math.min(retryAfterSeconds * 1000, 15000)
-            : Math.min(1000 * (2 ** attempt), 12000);
-          await sleep(delayMs);
-          continue;
+          throw new LLMError(`${config.label} doesn't offer the model "${config.model}" to this key. Pick another with "Load models" in the Genesis popup.`, 'model');
         }
 
         if (response.status === 429) {
-          throw new Error(`Rate limit exceeded on ${config.label}: ${errorMessage(errorBody)}`);
+          const detail = errorMessage(errorBody);
+          const retryAfterSeconds = Number(response.headers.get('retry-after') ?? NaN);
+          const retryAfterMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : undefined;
+          // A per-day quota won't come back within any retry
+          if (isDailyLimit(detail)) throw new LLMError(`Daily limit reached on ${config.label}: ${detail}`, 'daily', retryAfterMs);
+          if (failFast || attempt >= MAX_RETRIES) {
+            throw new LLMError(`Rate limit exceeded on ${config.label}: ${detail}`, 'rate-limit', retryAfterMs);
+          }
+          await sleep(retryAfterMs ? Math.min(retryAfterMs, 15000) : Math.min(1000 * (2 ** attempt), 12000));
+          continue;
         }
 
-        throw new Error(`${config.label} API error ${response.status}: ${errorMessage(errorBody)}`);
+        const kind: LLMErrorKind = response.status >= 500 ? 'unavailable' : 'other';
+        throw new LLMError(`${config.label} API error ${response.status}: ${errorMessage(errorBody)}`, kind);
       }
 
       const data: ChatResponse = await response.json();
@@ -224,19 +252,19 @@ export async function callLLM(messages: ChatMessage[], config: LLMConfig, opts: 
         ? '(empty response: the model used its entire token budget before answering)'
         : 'No response received.';
     } catch (error) {
+      if (error instanceof LLMError) throw error; // already classified (and retried where useful)
       const message = formatError(error);
-      const isRetryable = /timed out|network|failed to fetch|rate limit exceeded/i.test(message);
-
-      if (attempt < MAX_RETRIES && isRetryable) {
+      const isConnection = /timed out|network|failed to fetch/i.test(message);
+      if (!isConnection) throw error;
+      if (attempt < MAX_RETRIES && !failFast) {
         await sleep(Math.min(1000 * (2 ** attempt), 12000));
         continue;
       }
-
-      throw error;
+      throw new LLMError(`${config.label} is unreachable: ${message}`, 'unavailable');
     }
   }
 
-  throw new Error(`${config.label} request failed after retries.`);
+  throw new LLMError(`${config.label} request failed after retries.`, 'unavailable');
 }
 
 export interface ModelInfo {

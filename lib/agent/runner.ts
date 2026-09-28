@@ -26,6 +26,8 @@ export interface RunView {
   step: number;
   /** The model's current plan, e.g. "[x] Open the cart", "[ ] Check out". */
   plan: string[];
+  /** The model that answered last, e.g. "Groq · qwen/qwen3.8-27b". */
+  model?: string;
   /** Last change (ms since epoch): a newly loaded page shows recent results only. */
   updatedAt: number;
 }
@@ -36,9 +38,18 @@ export interface TabInfo {
   title?: string;
 }
 
+/** A model's answer, and which model gave it (backup providers can take over). */
+export interface PlanReply {
+  text: string;
+  /** e.g. "Gemini · gemini-3.5-flash-lite" */
+  model: string;
+  /** Models tried before it that couldn't answer, and why. */
+  unavailable?: { label: string; reason: string }[];
+}
+
 export interface RunnerDeps {
   /** Ask the model for its next actions; returns its raw output. */
-  plan(goal: string, snapshot: string, history: string[], currentPlan: string[]): Promise<string>;
+  plan(goal: string, snapshot: string, history: string[], currentPlan: string[]): Promise<string | PlanReply>;
   /** Message the tab's top-frame content script. Rejects if nothing answers (e.g. mid-navigation). */
   send(tabId: number, message: unknown, timeoutMs: number): Promise<any>;
   getTab(tabId: number): Promise<TabInfo>;
@@ -108,8 +119,8 @@ const PAUSE_TIMEOUT_MS = 10 * 60_000;
 const runs = new Map<number, Run>();
 
 function view(run: Run): RunView {
-  const { goal, status, message, loading, step, plan, updatedAt } = run;
-  return { goal, status, message, loading, step, plan, updatedAt };
+  const { goal, status, message, loading, step, plan, model, updatedAt } = run;
+  return { goal, status, message, loading, step, plan, model, updatedAt };
 }
 
 export function getRunView(tabId: number): RunView | null {
@@ -183,7 +194,19 @@ export function formatPlan(plan: string[]): string {
 
 function progressMessage(run: Run, footer: string): string {
   const plan = run.plan.length ? `**Plan**\n${formatPlan(run.plan)}\n\n` : '';
-  return `**Agent Progress** (step ${run.step})\n\n${plan}${formatHistory(run.history)}\n\n${footer}`;
+  const by = run.model ? ` · ${run.model}` : '';
+  return `**Agent Progress** (step ${run.step}${by})\n\n${plan}${formatHistory(run.history)}\n\n${footer}`;
+}
+
+/**
+ * History entry for when another model takes over mid-task. The new model gets
+ * the same goal, plan, history and page as the old one would have; this tells
+ * it that it's continuing, not starting.
+ */
+export function handoffNote(previous: string, next: string, reason?: string): string {
+  const who = reason ? `${previous} ${reason}, so ${next} takes over from here.` : `${next} takes over from ${previous} here.`;
+  return `(handoff) ${who} This task is already under way: `
+    + 'plan items marked [x] are done, [ ] items are left, and the history above is everything done so far. Carry on from where it ends; don\'t start over.';
 }
 
 /**
@@ -266,7 +289,13 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
     const snapshotText = String(snapshot?.text ?? '');
 
     publish(deps, run, run.history.length ? progressMessage(run, `*Step ${run.step}: planning...*`) : `🧠 **Step ${run.step}**: planning...`, true);
-    const raw = await deps.plan(run.goal, snapshotText + memorySection(run.visited, page.url), run.history, run.plan);
+    const reply = await deps.plan(run.goal, snapshotText + memorySection(run.visited, page.url), run.history, run.plan);
+    const { text: raw, model, unavailable } = typeof reply === 'string' ? { text: reply, model: undefined, unavailable: undefined } : reply;
+    if (model && run.model && model !== run.model) {
+      const reason = unavailable?.find((u) => u.label === run.model)?.reason;
+      run.history.push(handoffNote(run.model, model, reason));
+    }
+    if (model) run.model = model;
     if (page.url) {
       // Re-insert so the most recently seen pages come last
       run.visited.delete(page.url);
