@@ -3,7 +3,7 @@
 
 import { summarizePage, explainText, chatWithPage, planAgentStep, listModels } from '@/lib/api/llmClient';
 import {
-  startRun, stopRun, forgetRun, getRunView, isRunning, notifyTabLoading, type RunnerDeps,
+  startRun, stopRun, resumeRun, forgetRun, getRunView, isRunning, notifyTabLoading, type RunnerDeps,
 } from '@/lib/agent/runner';
 import {
   PROVIDERS, PROVIDER_IDS, SETTINGS_KEY, LEGACY_KEYS, readSettings, resolveConfig, configProblem,
@@ -57,9 +57,9 @@ export default defineBackground(() => {
     sleep: wait,
   };
 
-  function runAgent(tabId: number, goal: string): void {
+  function runAgent(tabId: number, goal: string, checkpoint: number): void {
     holdKeepAlive();
-    startRun(runnerDeps, tabId, goal)
+    startRun(runnerDeps, tabId, goal, { checkpoint })
       .catch((err) => console.error('[Genesis] Agent run failed:', err))
       .finally(releaseKeepAlive);
   }
@@ -173,7 +173,7 @@ export default defineBackground(() => {
             const goal = String(payload?.goal ?? '').trim();
             if (!goal) throw new Error('No goal');
             await requireConfig(); // fail fast on missing key/model, before the run starts
-            runAgent(tabId, goal);
+            runAgent(tabId, goal, (await loadPrefs()).stepCheckpoint);
             sendResponse({ success: true });
             break;
           }
@@ -184,6 +184,14 @@ export default defineBackground(() => {
               if (payload?.forget) forgetRun(tabId);
               else stopRun(tabId);
             }
+            sendResponse({ success: true });
+            break;
+          }
+
+          case 'RESUME_AGENT': {
+            // Continue a run paused at a checkpoint or because it looked stuck
+            const tabId = _sender.tab?.id;
+            if (tabId !== undefined) resumeRun(tabId);
             sendResponse({ success: true });
             break;
           }

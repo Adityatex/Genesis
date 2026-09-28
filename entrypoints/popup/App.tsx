@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { loadStoredProfile, saveStoredProfile, PROFILE_FIELDS, type AutofillProfile } from '@/lib/automation/profile';
 import { PROVIDERS, PROVIDER_IDS, type ProviderId } from '@/lib/api/providers';
 import type { ModelInfo } from '@/lib/api/llmClient';
+import { CHECKPOINT_CHOICES, DEFAULT_PREFS } from '@/lib/agent/prefs';
 
 type Status = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -19,6 +20,7 @@ export default function App() {
   const [status, setStatus] = useState<Status>('idle');
   const [message, setMessage] = useState('');
   const [trustedInput, setTrustedInput] = useState(true);
+  const [stepCheckpoint, setStepCheckpoint] = useState(DEFAULT_PREFS.stepCheckpoint);
   const [profile, setProfile] = useState<AutofillProfile>({ fullname: '', email: '', phone: '', address: '', city: '', state: '', zip: '', country: '' });
   const [profileStatus, setProfileStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [profileMessage, setProfileMessage] = useState('');
@@ -34,7 +36,9 @@ export default function App() {
       setModel(models[p] || PROVIDERS[p as ProviderId].defaultModel || '');
     });
     browser.runtime.sendMessage({ action: 'GET_PREFS' }).then((res: any) => {
-      if (res?.success) setTrustedInput(res.data.trustedInput);
+      if (!res?.success) return;
+      setTrustedInput(res.data.trustedInput);
+      setStepCheckpoint(res.data.stepCheckpoint);
     });
     loadStoredProfile().then(setProfile).catch(() => {});
   }, []);
@@ -43,6 +47,13 @@ export default function App() {
     setTrustedInput(on);
     const res: any = await browser.runtime.sendMessage({ action: 'SAVE_PREFS', payload: { trustedInput: on } });
     if (!res?.success) setTrustedInput(!on);
+  };
+
+  const handleCheckpointChange = async (steps: number) => {
+    const previous = stepCheckpoint;
+    setStepCheckpoint(steps);
+    const res: any = await browser.runtime.sendMessage({ action: 'SAVE_PREFS', payload: { stepCheckpoint: steps } });
+    if (!res?.success) setStepCheckpoint(previous);
   };
 
   const preset = PROVIDERS[provider];
@@ -249,6 +260,24 @@ export default function App() {
         <p className="hint">
           Recommended: many sites ignore script-generated clicks and typing. While the agent works, Chrome shows a
           "started debugging this browser" banner; that's this feature, and it goes away when the agent finishes.
+        </p>
+        <label className="toggle-row" htmlFor="checkpoint">
+          <span>Check in with me every</span>
+          <select
+            id="checkpoint"
+            className="api-input"
+            style={{ width: 'auto', marginLeft: 'auto' }}
+            value={stepCheckpoint}
+            onChange={(e) => handleCheckpointChange(Number(e.target.value))}
+          >
+            {CHECKPOINT_CHOICES.map((n) => (
+              <option key={n} value={n}>{n ? `${n} steps` : 'Never'}</option>
+            ))}
+          </select>
+        </label>
+        <p className="hint">
+          Tasks have no step limit. The agent pauses at this point to ask whether to keep going, so a long run doesn't
+          quietly use up your API quota. It also pauses if it keeps repeating an action that changes nothing.
         </p>
       </div>
 

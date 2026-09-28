@@ -8,10 +8,18 @@ export interface AgentPrefs {
    * uses it. Off = scripted DOM events only, which some sites ignore.
    */
   trustedInput: boolean;
+  /**
+   * Pause and ask "keep going?" every this many steps (0 = never). Runs have
+   * no step limit; this only guards against quietly spending a lot of tokens.
+   */
+  stepCheckpoint: number;
 }
 
 export const PREFS_KEY = 'genesis_prefs';
 
+export const CHECKPOINT_CHOICES = [25, 50, 100, 0] as const;
+
 export const DEFAULT_PREFS: AgentPrefs = {
   trustedInput: true,
+  stepCheckpoint: 50,
 };

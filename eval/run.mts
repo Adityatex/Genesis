@@ -31,7 +31,11 @@ declare const chrome: any;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const EXTENSION_DIR = path.join(ROOT, '.output', 'chrome-mv3');
 const RESULTS_DIR = path.join(ROOT, 'eval', 'results');
-const OUTCOME_RE = /Task Complete|Max Steps Reached|Agent Error/;
+// Final and paused messages start with one of these headings. A pause (checkpoint,
+// or the agent looks stuck) ends the task: nobody is there to press Continue.
+const OUTCOME_RE = /^\W*(Task Complete|Paused|Stopped|Agent Error)/;
+/** Runs have no step limit; the benchmark caps them with the "keep going?" checkpoint. */
+const EVAL_CHECKPOINT = 40;
 
 const { values: args } = parseArgs({
   options: {
@@ -63,7 +67,7 @@ const LLM = resolveConfig({ provider: PROVIDER, models: args.model ? { [PROVIDER
 const TRIALS = Math.max(1, Number(args.trials));
 const TIMEOUT_MS = Number(args.timeout ?? (args.mock ? 90 : 300)) * 1000;
 
-type Outcome = 'done' | 'max-steps' | 'error' | 'timeout' | 'rate-limited';
+type Outcome = 'done' | 'paused' | 'error' | 'timeout' | 'rate-limited';
 
 // ---------------------------------------------------------------- rate limiting
 // Groq's free tier allows 8000 tokens/minute per model. Pace live planner calls
@@ -196,7 +200,7 @@ async function launch(apiKey: string): Promise<{ context: BrowserContext; userDa
   };
   await worker.evaluate(
     ([key, value, prefsKey, prefs]) => chrome.storage.local.set({ [key]: value, [prefsKey]: prefs }),
-    [SETTINGS_KEY, settings, PREFS_KEY, { trustedInput: !args['scripted-input'] }] as const,
+    [SETTINGS_KEY, settings, PREFS_KEY, { trustedInput: !args['scripted-input'], stepCheckpoint: EVAL_CHECKPOINT }] as const,
   );
   return { context, userDataDir };
 }
@@ -290,7 +294,7 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
 
     result.outcome = !finalText ? 'timeout'
       : finalText.includes('Task Complete') ? 'done'
-      : finalText.includes('Max Steps') ? 'max-steps'
+      : /^\W*(Paused|Stopped)/.test(finalText) ? 'paused'
       // Quota, not the agent: reported separately and excluded from success rates
       : /rate limit/i.test(finalText) ? 'rate-limited' : 'error';
     result.summary = finalText.includes('Task Complete')

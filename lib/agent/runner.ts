@@ -11,15 +11,16 @@
 
 import type { AgentAction } from '@/lib/agent/actionExecutor';
 import { parseAgentAction } from '@/lib/agent/parseAction';
-import { MAX_AGENT_STEPS, MAX_INVALID_RESPONSES, describeAction, formatHistory } from '@/lib/agent/history';
+import { MAX_INVALID_RESPONSES, REPEAT_PAUSE, REPEAT_WARN, describeAction, formatHistory } from '@/lib/agent/history';
 
-export type RunStatus = 'running' | 'done' | 'max-steps' | 'error' | 'stopped';
+/** "paused": waiting for the user to continue or stop (checkpoint, or the agent looks stuck). */
+export type RunStatus = 'running' | 'paused' | 'done' | 'error' | 'stopped';
 
 /** What the sidebar shows; pushed on every change and fetched on page load. */
 export interface RunView {
   goal: string;
   status: RunStatus;
-  /** Markdown; final messages start with "Task Complete", "Max Steps Reached" or "Agent Error". */
+  /** Markdown; final messages start with "Task Complete", "Stopped" or "Agent Error", pauses with "Paused". */
   message: string;
   loading: boolean;
   step: number;
@@ -53,6 +54,19 @@ interface Run extends RunView {
   loads: number;
   /** Text excerpts of pages already seen, by URL (automatic memory). */
   visited: Map<string, string>;
+  /** Times each action was chosen on each exact page state (stuck detection). */
+  repeats: Map<string, number>;
+  /** Pause every this many steps to ask the user (0 = never). */
+  checkpoint: number;
+  /** Set while paused: true = continue, false = stop. */
+  decide?: (keepGoing: boolean) => void;
+  /** Why the run stopped, when it wasn't the user's request. */
+  stopReason?: string;
+}
+
+export interface RunOptions {
+  /** Pause and ask "keep going?" every this many steps; 0 or absent = never. */
+  checkpoint?: number;
 }
 
 /** Automatic memory: how many earlier pages, and how much of each, the model sees. */
@@ -83,6 +97,8 @@ const SETTLE_MS = 700;
 const READY_TIMEOUT_MS = 20_000;
 const SNAPSHOT_TIMEOUT_MS = 20_000;
 const EXECUTE_TIMEOUT_MS = 60_000;
+/** A pause nobody answers ends the run (a paused run keeps the service worker awake). */
+const PAUSE_TIMEOUT_MS = 10 * 60_000;
 
 const runs = new Map<number, Run>();
 
@@ -96,8 +112,10 @@ export function getRunView(tabId: number): RunView | null {
   return run ? view(run) : null;
 }
 
+/** Running or paused: the run's loop is still alive. */
 export function isRunning(tabId: number): boolean {
-  return runs.get(tabId)?.status === 'running';
+  const status = runs.get(tabId)?.status;
+  return status === 'running' || status === 'paused';
 }
 
 /** Feed from chrome.tabs.onUpdated (status "loading"): tells the loop the page changed. */
@@ -106,16 +124,23 @@ export function notifyTabLoading(tabId: number): void {
   if (run) run.loads++;
 }
 
-/** Ask a running agent to stop after its current step. */
+/** Ask a running agent to stop after its current step (right away if paused). */
 export function stopRun(tabId: number): void {
   const run = runs.get(tabId);
-  if (run?.status === 'running') run.stopRequested = true;
+  if (!run || !isRunning(tabId)) return;
+  run.stopRequested = true;
+  run.decide?.(false);
+}
+
+/** Let a paused run carry on. */
+export function resumeRun(tabId: number): void {
+  runs.get(tabId)?.decide?.(true);
 }
 
 /** Forget a tab's run (tab closed, or the user cleared the chat). */
 export function forgetRun(tabId: number): void {
   stopRun(tabId);
-  if (runs.get(tabId)?.status !== 'running') runs.delete(tabId);
+  if (!isRunning(tabId)) runs.delete(tabId);
 }
 
 function publish(deps: RunnerDeps, run: Run, message: string, loading: boolean): void {
@@ -143,14 +168,49 @@ async function waitForPage(deps: RunnerDeps, tabId: number): Promise<TabInfo> {
 }
 
 function progressMessage(run: Run, footer: string): string {
-  return `**Agent Progress** (step ${run.step}/${MAX_AGENT_STEPS})\n\n${formatHistory(run.history)}\n\n${footer}`;
+  return `**Agent Progress** (step ${run.step})\n\n${formatHistory(run.history)}\n\n${footer}`;
+}
+
+/** Short fingerprint of a page snapshot (FNV-1a), so repeats are cheap to spot. */
+export function hashText(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
+/**
+ * Pause and wait for the user. Resolves true to continue; false if they stop
+ * or don't answer within PAUSE_TIMEOUT_MS.
+ */
+async function pause(deps: RunnerDeps, run: Run, reason: string): Promise<boolean> {
+  run.status = 'paused';
+  const decision = new Promise<boolean>((resolve) => { run.decide = resolve; });
+  publish(deps, run, `## ⏸️ Paused\n\n${reason}\n\n**Steps so far:**\n${formatHistory(run.history) || 'None'}`, false);
+  const keepGoing = await Promise.race([decision, deps.sleep(PAUSE_TIMEOUT_MS).then(() => null)]);
+  run.decide = undefined;
+  if (keepGoing) {
+    run.status = 'running';
+    return true;
+  }
+  if (keepGoing === null) run.stopReason = 'Paused for 10 minutes without an answer, so the agent stopped.';
+  run.stopRequested = true;
+  return false;
 }
 
 async function loop(deps: RunnerDeps, run: Run): Promise<void> {
   const { tabId } = run;
   let invalidStreak = 0;
+  let nextCheckpoint = run.checkpoint;
 
-  while (run.step < MAX_AGENT_STEPS && !run.stopRequested) {
+  // No step limit: the run ends when the model says "done" or the user stops it
+  while (!run.stopRequested) {
+    if (run.checkpoint > 0 && run.step >= nextCheckpoint) {
+      if (!await pause(deps, run, `The agent has taken ${run.step} steps without finishing. Keep going?`)) break;
+      nextCheckpoint = run.step + run.checkpoint;
+    }
     run.step++;
     publish(deps, run, run.history.length ? progressMessage(run, `*Step ${run.step}: scanning the page...*`) : `🔍 **Step ${run.step}**: scanning the page...`, true);
 
@@ -188,13 +248,29 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
     }
 
     const desc = describeAction(action);
+
+    // Stuck detection: the same action chosen again on the same, unchanged page
+    const stateKey = `${page.url}\n${hashText(snapshotText)}\n${desc}`;
+    const seen = (run.repeats.get(stateKey) ?? 0) + 1;
+    run.repeats.set(stateKey, seen);
+    if (seen >= REPEAT_PAUSE) {
+      const reason = `The agent looks stuck: it chose \`${desc}\` ${seen} times on this page, and the page didn't change. Continue to let it try something else, or stop.`;
+      if (!await pause(deps, run, reason)) break;
+      run.repeats.set(stateKey, REPEAT_WARN); // choosing it once more pauses again
+      run.history.push(`${desc} → ⏸️ not run: you chose this ${seen} times on this unchanged page. Do something different.`);
+      continue;
+    }
+    const repeatWarning = seen >= REPEAT_WARN
+      ? ' ⚠️ You already did exactly this on this same page. If nothing changed, do something different.'
+      : '';
+
     publish(deps, run, progressMessage(run, `*Step ${run.step}: ${desc}*`), true);
 
     if (action.action === 'navigate') {
       await deps.navigate(tabId, action.url!);
       await deps.sleep(SETTLE_MS);
       const tab = await waitForPage(deps, tabId);
-      run.history.push(`${desc} → ✅ now on "${tab.title || 'untitled page'}" (${tab.url})`);
+      run.history.push(`${desc} → ✅ now on "${tab.title || 'untitled page'}" (${tab.url})${repeatWarning}`);
       continue;
     }
 
@@ -215,27 +291,26 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
       const tab = await waitForPage(deps, tabId);
       result += `; page changed, now on "${tab.title || 'untitled page'}" (${tab.url})`;
     }
-    run.history.push(`${desc} → ${result}`);
+    run.history.push(`${desc} → ${result}${repeatWarning}`);
   }
 
-  if (run.stopRequested) {
-    run.status = 'stopped';
-    publish(deps, run, `## ⏹️ Stopped\n\n**Steps taken:**\n${formatHistory(run.history) || 'None'}`, false);
-    return;
-  }
-  run.status = 'max-steps';
-  publish(deps, run, `## ⚠️ Max Steps Reached\n\nCompleted ${MAX_AGENT_STEPS} steps without finishing.\n\n**Steps taken:**\n${formatHistory(run.history)}`, false);
+  // The loop only gets here when the run was stopped
+  run.status = 'stopped';
+  const why = run.stopReason ? `${run.stopReason}\n\n` : '';
+  publish(deps, run, `## ⏹️ Stopped\n\n${why}**Steps taken:**\n${formatHistory(run.history) || 'None'}`, false);
 }
 
 /**
  * Start an agent run in a tab and resolve when it ends. One run per tab: a new
  * one stops the old one first.
  */
-export async function startRun(deps: RunnerDeps, tabId: number, goal: string): Promise<RunView> {
-  const previous = runs.get(tabId);
-  if (previous?.status === 'running') previous.stopRequested = true;
+export async function startRun(deps: RunnerDeps, tabId: number, goal: string, options: RunOptions = {}): Promise<RunView> {
+  stopRun(tabId);
 
-  const run: Run = { tabId, goal, status: 'running', message: '', loading: true, step: 0, updatedAt: Date.now(), history: [], stopRequested: false, loads: 0, visited: new Map() };
+  const run: Run = {
+    tabId, goal, status: 'running', message: '', loading: true, step: 0, updatedAt: Date.now(), history: [],
+    stopRequested: false, loads: 0, visited: new Map(), repeats: new Map(), checkpoint: Math.max(0, options.checkpoint ?? 0),
+  };
   runs.set(tabId, run);
   try {
     await loop(deps, run);

@@ -10,7 +10,7 @@ Open-source Brave/Chrome extension (Manifest V3) that injects a floating AI-powe
 
 | Feature | Description |
 |---|---|
-| 🤖 **Autonomous Agent** | DOM snapshot → LLM planner → action executor with real (trusted) mouse and keyboard input, resumes across navigations (20-step budget) |
+| 🤖 **Autonomous Agent** | DOM snapshot → LLM planner → action executor with real (trusted) mouse and keyboard input, resumes across navigations. No step limit: it checks in every 50 steps (configurable) and pauses if it gets stuck |
 | 📝 **Text Extraction** | Extract all visible text from any webpage using TreeWalker API |
 | 🔍 **Element Detection** | Detect all interactive elements (inputs, buttons, dropdowns, etc.) |
 | ✏️ **Trustworthy Form Auto-Fill** | Fill forms with *your own* profile data (React/Angular compatible). Edit it in the popup — stored only in `chrome.storage.local`. No exam auto-solving. |

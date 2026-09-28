@@ -34,10 +34,15 @@ export function useAgentRun(onUpdate: (view: RunView) => void) {
     if (!res?.success) throw new Error(res?.error || 'Could not start the agent');
   };
 
+  /** Continue a paused run. */
+  const resume = (): void => {
+    browser.runtime.sendMessage({ action: 'RESUME_AGENT' }).catch(() => {});
+  };
+
   /** Stop after the current step; `forget` also clears it (e.g. "Clear all"). */
   const stop = (forget = false): void => {
     browser.runtime.sendMessage({ action: 'STOP_AGENT', payload: { forget } }).catch(() => {});
   };
 
-  return { start, stop };
+  return { start, stop, resume };
 }

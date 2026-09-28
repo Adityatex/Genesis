@@ -4,6 +4,7 @@
 
 import { withTimeout, formatError } from '@/lib/utils/errorHandler';
 import { PROVIDERS, type LLMConfig } from '@/lib/api/providers';
+import { promptHistory } from '@/lib/agent/history';
 
 const REQUEST_TIMEOUT = 15000;
 const MODELS_TIMEOUT = 10000;
@@ -349,7 +350,7 @@ export async function planAgentStep(
   config: LLMConfig,
 ): Promise<string> {
   const historyText = actionHistory.length > 0
-    ? `\n\nACTION HISTORY (steps already taken):\n${actionHistory.map((a, i) => `${i + 1}. ${a}`).join('\n')}`
+    ? `\n\nACTION HISTORY (steps already taken):\n${promptHistory(actionHistory).join('\n')}`
     : '';
 
   return callLLM([
@@ -381,7 +382,7 @@ RULES:
 7. If you're stuck or the goal is impossible, use "done" with an explanation.
 8. On long pages the element list is cut short. If the element you need is not listed, use "find" with a keyword before scrolling or guessing URLs.
 9. You only see the current page. Once you leave it, its content is gone; your ACTION HISTORY is your only memory. Before leaving a page, "note" anything you need from it. The snapshot may also end with PAGES YOU VISITED EARLIER, excerpts of pages you already read. Never revisit a page just to re-read it: use your notes and those excerpts.
-10. Maximum 20 steps per task — be efficient.`,
+10. Be efficient: take the shortest path to the goal. If an action didn't change anything, don't repeat it; try something else.`,
     },
     {
       role: 'user',

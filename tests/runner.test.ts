@@ -1,9 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
-import { startRun, stopRun, getRunView, notifyTabLoading, type RunnerDeps, type TabInfo } from '@/lib/agent/runner';
-import { MAX_AGENT_STEPS } from '@/lib/agent/history';
+import { startRun, stopRun, resumeRun, getRunView, notifyTabLoading, type RunnerDeps, type RunView, type TabInfo } from '@/lib/agent/runner';
+import { promptHistory, PROMPT_RECENT_STEPS } from '@/lib/agent/history';
 
-/** A fake tab + planner. `actions` are the model's answers, in order. */
-function fakeDeps(actions: string[], opts: { onExecute?: (tab: TabInfo, action: any) => unknown } = {}) {
+/**
+ * A fake tab + planner. `actions` are the model's answers, in order. Short
+ * sleeps are instant; the 10-minute pause timeout never fires.
+ */
+function fakeDeps(actions: string[], opts: {
+  onExecute?: (tab: TabInfo, action: any) => unknown;
+  onPause?: (view: RunView) => void;
+} = {}) {
   const tab: TabInfo = { status: 'complete', url: 'https://shop.test/', title: 'Shop' };
   const prompts: string[][] = [];
   let i = 0;
@@ -15,12 +21,13 @@ function fakeDeps(actions: string[], opts: { onExecute?: (tab: TabInfo, action: 
     send: vi.fn(async (_tabId, message: any) => {
       if (message.action === 'AGENT_SNAPSHOT') return { text: `PAGE: ${tab.title}` };
       if (message.action === 'AGENT_EXECUTE') return opts.onExecute ? opts.onExecute(tab, message.payload) : `✅ ran ${message.payload.action}`;
+      if (message.action === 'AGENT_UPDATE' && message.payload.status === 'paused') opts.onPause?.(message.payload);
       return { ok: true }; // AGENT_PING, AGENT_UPDATE
     }),
     getTab: vi.fn(async () => ({ ...tab })),
     navigate: vi.fn(async (_tabId, url) => { tab.url = url; tab.title = 'Somewhere else'; }),
     onRunEnded: vi.fn(),
-    sleep: vi.fn(async () => {}),
+    sleep: vi.fn(async (ms: number) => { if (ms >= 60_000) await new Promise(() => {}); }),
   };
   return { deps, tab, prompts };
 }
@@ -67,12 +74,13 @@ describe('agent runner (background loop)', () => {
     expect(prompts[1][0]).toMatch(/^\(invalid response\) → ❌ No JSON object/);
   });
 
-  it('stops at the step limit', async () => {
-    const { deps } = fakeDeps(['{"action":"scroll","direction":"down"}']);
-    const result = await startRun(deps, 5, 'Scroll forever');
-    expect(result.status).toBe('max-steps');
-    expect(result.message).toMatch(/Max Steps Reached/);
-    expect(deps.plan).toHaveBeenCalledTimes(MAX_AGENT_STEPS);
+  it('has no step limit', async () => {
+    const actions = Array.from({ length: 60 }, (_, i) => `{"action":"type","elementId":1,"text":"line ${i}"}`);
+    const { deps } = fakeDeps([...actions, '{"action":"done","summary":"Wrote 60 lines"}']);
+    const result = await startRun(deps, 5, 'Write 60 lines');
+    expect(result.status).toBe('done');
+    expect(result.step).toBe(61);
+    expect(deps.plan).toHaveBeenCalledTimes(61);
   });
 
   it('stops when asked, after the current step', async () => {
@@ -84,6 +92,85 @@ describe('agent runner (background loop)', () => {
     const result = await startRun(deps, 6, 'Scroll');
     expect(result.status).toBe('stopped');
     expect(deps.plan).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('checkpoints and stuck detection', () => {
+  const typing = Array.from({ length: 30 }, (_, i) => `{"action":"type","elementId":1,"text":"line ${i}"}`);
+
+  it('pauses every N steps and carries on when the user continues', async () => {
+    const pauses: RunView[] = [];
+    const { deps } = fakeDeps([...typing, '{"action":"done","summary":"ok"}'], {
+      onPause: (view) => { pauses.push(view); resumeRun(10); },
+    });
+    const result = await startRun(deps, 10, 'Type', { checkpoint: 10 });
+    expect(result.status).toBe('done');
+    expect(pauses.map((v) => v.step)).toEqual([10, 20, 30]);
+    expect(pauses[0].message).toMatch(/^## ⏸️ Paused\n\nThe agent has taken 10 steps without finishing\. Keep going\?/);
+  });
+
+  it('stops right away when the user stops a paused run', async () => {
+    const { deps } = fakeDeps(typing, { onPause: () => stopRun(11) });
+    const result = await startRun(deps, 11, 'Type', { checkpoint: 5 });
+    expect(result.status).toBe('stopped');
+    expect(deps.plan).toHaveBeenCalledTimes(5);
+  });
+
+  it('stops a pause nobody answers', async () => {
+    const { deps } = fakeDeps(typing);
+    (deps.sleep as any).mockImplementation(async () => {}); // the 10-minute timeout fires at once
+    const result = await startRun(deps, 12, 'Type', { checkpoint: 3 });
+    expect(result.status).toBe('stopped');
+    expect(result.message).toContain('Paused for 10 minutes without an answer');
+  });
+
+  it('warns on a repeated action, then pauses instead of running it a third time', async () => {
+    const { deps, prompts } = fakeDeps(['{"action":"click","elementId":4}'], { onPause: () => stopRun(13) });
+    const result = await startRun(deps, 13, 'Click it');
+    expect(result.status).toBe('stopped');
+    expect(prompts[1]).toEqual(['click [4] → ✅ ran click']);
+    expect(prompts[2][1]).toMatch(/^click \[4\] → ✅ ran click ⚠️ You already did exactly this on this same page/);
+    const executed = (deps.send as any).mock.calls.filter(([, m]: any) => m.action === 'AGENT_EXECUTE');
+    expect(executed).toHaveLength(2);
+  });
+
+  it('after the user continues a stuck run, tells the model to change course', async () => {
+    let paused = 0;
+    const { deps, prompts } = fakeDeps([
+      '{"action":"click","elementId":4}', '{"action":"click","elementId":4}', '{"action":"click","elementId":4}',
+      '{"action":"done","summary":"gave up on the button"}',
+    ], { onPause: () => { paused++; resumeRun(14); } });
+    const result = await startRun(deps, 14, 'Click it');
+    expect(result.status).toBe('done');
+    expect(paused).toBe(1);
+    expect(prompts[3][2]).toBe('click [4] → ⏸️ not run: you chose this 3 times on this unchanged page. Do something different.');
+  });
+
+  it('does not count the same action as a repeat when the page changed', async () => {
+    let n = 0;
+    const { deps } = fakeDeps(['{"action":"scroll","direction":"down"}']);
+    (deps.send as any).mockImplementation(async (_id: number, m: any) =>
+      m.action === 'AGENT_SNAPSHOT' ? { text: `rows 1-${++n * 10}` } : { ok: true });
+    (deps.plan as any).mockImplementation(async () => (n >= 8 ? '{"action":"done","summary":"loaded all"}' : '{"action":"scroll","direction":"down"}'));
+    const result = await startRun(deps, 15, 'Load everything');
+    expect(result.status).toBe('done');
+  });
+});
+
+describe('history sent to the model', () => {
+  it('keeps every note but only the most recent other steps', () => {
+    const history = ['navigate https://a.test/ → ✅', 'note "Aero costs $899" → ✅ noted',
+      ...Array.from({ length: PROMPT_RECENT_STEPS + 5 }, (_, i) => `scroll down → ✅ ${i}`)];
+    const lines = promptHistory(history);
+    expect(lines[0]).toBe('(1 earlier step not shown)');
+    expect(lines[1]).toBe('2. note "Aero costs $899" → ✅ noted');
+    expect(lines[2]).toBe('(5 earlier steps not shown)');
+    expect(lines[3]).toBe('8. scroll down → ✅ 5');
+    expect(lines).toHaveLength(3 + PROMPT_RECENT_STEPS);
+  });
+
+  it('sends a short history unchanged', () => {
+    expect(promptHistory(['a', 'b'])).toEqual(['1. a', '2. b']);
   });
 });
 

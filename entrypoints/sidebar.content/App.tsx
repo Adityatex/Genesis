@@ -17,6 +17,8 @@ import SidebarHeader from './components/SidebarHeader';
 import ToolsGrid, { type ToolDef } from './components/ToolsGrid';
 import MessageList from './components/MessageList';
 import ChatInput from './components/ChatInput';
+import AgentControls from './components/AgentControls';
+import type { RunStatus } from '@/lib/agent/runner';
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -91,8 +93,10 @@ export default function App() {
   // The agent runs in the background and survives page loads. Show its state
   // in one chat message per run; after a navigation the new page picks it up.
   const agentMessageId = useRef<string | null>(null);
+  const [agentStatus, setAgentStatus] = useState<RunStatus | null>(null);
   const agent = useAgentRun((view) => {
     setSidebarOpen(true);
+    setAgentStatus(view.status);
     setStatus(view.status === 'running' ? 'WORKING' : 'ACTIVE');
     const text = view.message || '🤖 **Agent Mode**: starting...';
     if (agentMessageId.current) chat.updateBotMessage(agentMessageId.current, text, view.loading);
@@ -117,7 +121,10 @@ export default function App() {
     startAgent,
     stopAgent: (forget) => {
       agent.stop(forget);
-      if (forget) agentMessageId.current = null;
+      if (forget) {
+        agentMessageId.current = null;
+        setAgentStatus(null);
+      }
     },
   });
 
@@ -164,6 +171,9 @@ export default function App() {
         onDetectElements={toolsApi.handleDetectElements}
         onSummarize={toolsApi.handleSummarize}
       />
+      {(agentStatus === 'running' || agentStatus === 'paused') && (
+        <AgentControls paused={agentStatus === 'paused'} onContinue={agent.resume} onStop={() => agent.stop()} />
+      )}
       <ChatInput
         value={chatInput}
         onChange={setChatInput}
