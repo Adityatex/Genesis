@@ -135,6 +135,11 @@ export interface StoredLLMSettings {
    * the next one takes over, with its own saved key and model.
    */
   fallbacks?: ProviderId[];
+  /**
+   * Optional fast model for routine agent steps, while the active provider's
+   * model plans and checks. It uses that provider's saved key.
+   */
+  executor?: { provider: ProviderId; model: string };
 }
 
 export const SETTINGS_KEY = 'genesis_llm';
@@ -159,7 +164,10 @@ export function readSettings(stored: Record<string, unknown>): StoredLLMSettings
   const saved = stored[SETTINGS_KEY] as StoredLLMSettings | undefined;
   if (saved?.provider && PROVIDERS[saved.provider]) {
     const fallbacks = (saved.fallbacks ?? []).filter((id) => PROVIDERS[id] && id !== saved.provider);
-    return { provider: saved.provider, models: saved.models ?? {}, keys: saved.keys ?? {}, customBaseUrl: saved.customBaseUrl, fallbacks };
+    const executor = saved.executor && PROVIDERS[saved.executor.provider] && saved.executor.model?.trim()
+      ? { provider: saved.executor.provider, model: saved.executor.model.trim() }
+      : undefined;
+    return { provider: saved.provider, models: saved.models ?? {}, keys: saved.keys ?? {}, customBaseUrl: saved.customBaseUrl, fallbacks, executor };
   }
   const legacyKey = typeof stored.groqApiKey === 'string' ? stored.groqApiKey : '';
   const legacyModel = typeof stored.groqModel === 'string' ? stored.groqModel : '';
@@ -195,7 +203,15 @@ export function resolveChain(settings: StoredLLMSettings): LLMConfig[] {
   return [resolveConfig(settings, settings.provider), ...backups];
 }
 
-const LOOPBACK_HOSTS =new Set(['localhost', '127.0.0.1', '[::1]']);
+/** Config for the fast executor model, or null if none is set up or it lacks a key. */
+export function resolveExecutor(settings: StoredLLMSettings): LLMConfig | null {
+  const choice = settings.executor;
+  if (!choice) return null;
+  const config = { ...resolveConfig(settings, choice.provider), model: choice.model };
+  return configProblem(config) === null ? config : null;
+}
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 /**
  * API keys and page content go to this URL, so it must be HTTPS. Plain HTTP is

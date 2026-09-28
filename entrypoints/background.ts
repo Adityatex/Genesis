@@ -6,7 +6,7 @@ import {
   startRun, stopRun, resumeRun, forgetRun, getRunView, isRunning, notifyTabLoading, type RunnerDeps,
 } from '@/lib/agent/runner';
 import {
-  PROVIDERS, PROVIDER_IDS, SETTINGS_KEY, LEGACY_KEYS, readSettings, resolveConfig, resolveChain, configProblem,
+  PROVIDERS, PROVIDER_IDS, SETTINGS_KEY, LEGACY_KEYS, readSettings, resolveConfig, resolveChain, resolveExecutor, configProblem,
   validateBaseUrl, maskKey, type LLMConfig, type ProviderId, type StoredLLMSettings,
 } from '@/lib/api/providers';
 import { formatError, withTimeout } from '@/lib/utils/errorHandler';
@@ -46,9 +46,13 @@ export default defineBackground(() => {
 
   // ---- Agent runner: the loop lives here, not in the page (lib/agent/runner.ts)
   const runnerDeps: RunnerDeps = {
-    plan: async (goal, snapshot, history, currentPlan) => {
-      // Any provider in the chain can answer: the prompt carries the whole task state
-      const { value, config, skipped } = await ask((c) => planAgentStep(goal, snapshot, history, currentPlan, c));
+    plan: async (goal, snapshot, history, currentPlan, role) => {
+      // Any provider in the chain can answer: the prompt carries the whole task state.
+      // Executor calls try the fast model first, then the usual chain.
+      const { value, config, skipped } = await ask(
+        (c) => planAgentStep(goal, snapshot, history, currentPlan, c),
+        role === 'executor',
+      );
       return { text: value, model: modelLabel(config), unavailable: skipped };
     },
     // frameId 0: only the top frame's content script (the sidebar) handles agent messages
@@ -62,9 +66,9 @@ export default defineBackground(() => {
     sleep: wait,
   };
 
-  function runAgent(tabId: number, goal: string, checkpoint: number): void {
+  function runAgent(tabId: number, goal: string, checkpoint: number, split: boolean): void {
     holdKeepAlive();
-    startRun(runnerDeps, tabId, goal, { checkpoint })
+    startRun(runnerDeps, tabId, goal, { checkpoint, split })
       .catch((err) => console.error('[Genesis] Agent run failed:', err))
       .finally(releaseKeepAlive);
   }
@@ -97,11 +101,20 @@ export default defineBackground(() => {
    * Call the active provider, or a backup when it's rate-limited or failing
    * (lib/api/fallback.ts). Throws if the active provider isn't set up.
    */
-  async function ask<T>(call: (config: LLMConfig) => Promise<T>): Promise<FallbackResult<T>> {
-    const chain = resolveChain(await loadSettings());
+  async function ask<T>(call: (config: LLMConfig) => Promise<T>, fast = false): Promise<FallbackResult<T>> {
+    const settings = await loadSettings();
+    const chain = resolveChain(settings);
     const problem = configProblem(chain[0]);
     if (problem) throw new Error(problem);
-    return providerPool.run(chain, call);
+    const executor = fast ? resolveExecutor(settings) : null;
+    return providerPool.run(executor ? [executor, ...chain] : chain, call);
+  }
+
+  /** A fast executor model is set up and differs from the main model. */
+  function hasExecutor(settings: StoredLLMSettings): boolean {
+    const executor = resolveExecutor(settings);
+    const main = resolveConfig(settings);
+    return !!executor && (executor.provider !== main.provider || executor.model !== main.model);
   }
 
   function isProvider(id: unknown): id is ProviderId {
@@ -126,7 +139,7 @@ export default defineBackground(() => {
               success: true,
               data: {
                 provider: settings.provider, models: settings.models, customBaseUrl: settings.customBaseUrl ?? '', maskedKeys,
-                fallbacks: settings.fallbacks ?? [], ready,
+                fallbacks: settings.fallbacks ?? [], ready, executor: settings.executor ?? null,
               },
             });
             break;
@@ -160,6 +173,24 @@ export default defineBackground(() => {
               success: true,
               data: { maskedKey: maskKey(settings.keys[provider] ?? ''), provider: settings.provider, fallbacks: settings.fallbacks },
             });
+            break;
+          }
+
+          case 'SAVE_EXECUTOR': {
+            // Fast model for routine agent steps ({provider, model}), or null to turn it off
+            const settings = await loadSettings();
+            const { provider, model } = payload?.executor ?? {};
+            if (!payload?.executor) {
+              delete settings.executor;
+            } else {
+              if (!isProvider(provider)) throw new Error('Unknown provider');
+              if (typeof model !== 'string' || !model.trim()) throw new Error('Choose a model for routine steps');
+              settings.executor = { provider, model: model.trim() };
+              const problem = configProblem({ ...resolveConfig(settings, provider), model: model.trim() });
+              if (problem) throw new Error(problem);
+            }
+            await browser.storage.local.set({ [SETTINGS_KEY]: settings });
+            sendResponse({ success: true, data: { executor: settings.executor ?? null } });
             break;
           }
 
@@ -213,7 +244,7 @@ export default defineBackground(() => {
             const goal = String(payload?.goal ?? '').trim();
             if (!goal) throw new Error('No goal');
             await requireConfig(); // fail fast on missing key/model, before the run starts
-            runAgent(tabId, goal, (await loadPrefs()).stepCheckpoint);
+            runAgent(tabId, goal, (await loadPrefs()).stepCheckpoint, hasExecutor(await loadSettings()));
             sendResponse({ success: true });
             break;
           }

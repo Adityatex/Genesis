@@ -38,6 +38,13 @@ export interface TabInfo {
   title?: string;
 }
 
+/**
+ * Which model a call goes to. With a fast "executor" model set up, it takes
+ * routine steps; the main "planner" model makes the plan, handles anything
+ * that went wrong, re-checks the plan now and then, and confirms "done".
+ */
+export type ModelRole = 'planner' | 'executor';
+
 /** A model's answer, and which model gave it (backup providers can take over). */
 export interface PlanReply {
   text: string;
@@ -49,7 +56,7 @@ export interface PlanReply {
 
 export interface RunnerDeps {
   /** Ask the model for its next actions; returns its raw output. */
-  plan(goal: string, snapshot: string, history: string[], currentPlan: string[]): Promise<string | PlanReply>;
+  plan(goal: string, snapshot: string, history: string[], currentPlan: string[], role: ModelRole): Promise<string | PlanReply>;
   /** Message the tab's top-frame content script. Rejects if nothing answers (e.g. mid-navigation). */
   send(tabId: number, message: unknown, timeoutMs: number): Promise<any>;
   getTab(tabId: number): Promise<TabInfo>;
@@ -75,12 +82,25 @@ interface Run extends RunView {
   decide?: (keepGoing: boolean) => void;
   /** Why the run stopped, when it wasn't the user's request. */
   stopReason?: string;
+  /** A fast executor model is set up (see ModelRole). */
+  split: boolean;
+  /** The next call must go to the planner. */
+  needPlanner: boolean;
+  /** Executor calls since the planner last answered. */
+  executorCalls: number;
+  /** The model that last answered for each role, to spot a backup taking over. */
+  roleModels: Partial<Record<ModelRole, string>>;
 }
 
 export interface RunOptions {
   /** Pause and ask "keep going?" every this many steps; 0 or absent = never. */
   checkpoint?: number;
+  /** A fast executor model takes routine steps (see ModelRole). */
+  split?: boolean;
 }
+
+/** With an executor, the planner still answers at least every this many calls. */
+export const PLANNER_EVERY = 5;
 
 /** Automatic memory: how many earlier pages, and how much of each, the model sees. */
 const MEMORY_PAGES = 8;
@@ -289,13 +309,22 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
     const snapshotText = String(snapshot?.text ?? '');
 
     publish(deps, run, run.history.length ? progressMessage(run, `*Step ${run.step}: planning...*`) : `🧠 **Step ${run.step}**: planning...`, true);
-    const reply = await deps.plan(run.goal, snapshotText + memorySection(run.visited, page.url), run.history, run.plan);
+    const role: ModelRole = !run.split || run.needPlanner || run.executorCalls >= PLANNER_EVERY ? 'planner' : 'executor';
+    const reply = await deps.plan(run.goal, snapshotText + memorySection(run.visited, page.url), run.history, run.plan, role);
     const { text: raw, model, unavailable } = typeof reply === 'string' ? { text: reply, model: undefined, unavailable: undefined } : reply;
-    if (model && run.model && model !== run.model) {
-      const reason = unavailable?.find((u) => u.label === run.model)?.reason;
-      run.history.push(handoffNote(run.model, model, reason));
+    // A different model in the same role means a backup took over; switching
+    // between the planner and executor is routine and needs no note
+    const before = run.roleModels[role];
+    if (model && before && model !== before) {
+      const reason = unavailable?.find((u) => u.label === before)?.reason;
+      run.history.push(handoffNote(before, model, reason));
     }
-    if (model) run.model = model;
+    if (model) {
+      run.model = model;
+      run.roleModels[role] = model;
+    }
+    run.executorCalls = role === 'executor' ? run.executorCalls + 1 : 0;
+    run.needPlanner = false;
     if (page.url) {
       // Re-insert so the most recently seen pages come last
       run.visited.delete(page.url);
@@ -307,6 +336,7 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
     if (!parsed.ok) {
       // Feed the error back through history so the model can correct itself
       invalidStreak++;
+      run.needPlanner = true;
       run.history.push(`(invalid response) → ❌ ${parsed.error}. Respond with valid JSON: {"plan": [...], "actions": [...]}.`);
       if (invalidStreak >= MAX_INVALID_RESPONSES) {
         throw new Error(`Model returned ${invalidStreak} invalid responses in a row. Last error: ${parsed.error}`);
@@ -327,16 +357,24 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
       const reason = `The agent looks stuck: it chose \`${what}\` ${seen} times on this page, and the page didn't change. Continue to let it try something else, or stop.`;
       if (!await pause(deps, run, reason)) break;
       run.repeats.set(stateKey, REPEAT_WARN); // choosing it once more pauses again
+      run.needPlanner = true;
       run.history.push(`${what} → ⏸️ not run: you chose this ${seen} times on this unchanged page. Do something different.`);
       continue;
     }
     const repeatWarning = seen >= REPEAT_WARN
       ? ' ⚠️ You already did exactly this on this same page. If nothing changed, do something different.'
       : '';
+    if (repeatWarning || parsed.notes.length) run.needPlanner = true;
     for (const note of parsed.notes) run.history.push(`(note from Genesis) ${note}`);
 
     for (const [i, action] of actions.entries()) {
       if (run.stopRequested) break;
+      if (action.action === 'done' && role === 'executor') {
+        // The fast model may call it done too early; the planner confirms
+        run.needPlanner = true;
+        run.history.push(`(note from Genesis) The fast model says the goal is complete: "${action.summary || 'Done'}". Check the page: if it really is, send "done"; if not, carry on.`);
+        break;
+      }
       if (action.action === 'done') {
         run.status = 'done';
         publish(deps, run, `## ✅ Task Complete\n\n${action.summary || 'Done'}\n\n---\n**Steps taken:**\n${formatHistory(run.history)}`, false);
@@ -350,6 +388,7 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
       // Later actions were planned for the page as it was; stop if that changed
       const left = actions.length - i - 1;
       const failed = result.startsWith('❌');
+      if (failed) run.needPlanner = true;
       if (left > 0 && (pageChanged || failed)) {
         const why = pageChanged ? 'the page changed, so they may not fit it any more' : 'the action above failed';
         run.history.push(`(note from Genesis) ${left} more action${left === 1 ? '' : 's'} not run: ${why}`);
@@ -374,6 +413,7 @@ export async function startRun(deps: RunnerDeps, tabId: number, goal: string, op
   const run: Run = {
     tabId, goal, status: 'running', message: '', loading: true, step: 0, plan: [], updatedAt: Date.now(), history: [],
     stopRequested: false, loads: 0, visited: new Map(), repeats: new Map(), checkpoint: Math.max(0, options.checkpoint ?? 0),
+    split: !!options.split, needPlanner: true, executorCalls: 0, roleModels: {},
   };
   runs.set(tabId, run);
   try {

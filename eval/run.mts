@@ -8,6 +8,7 @@
 //   ... -- --task login,todo-enter --trials 3 --headed --verbose
 //   ... -- --provider deepseek --model <id>   (key from DEEPSEEK_API_KEY or LLM_API_KEY)
 //   ... -- --provider custom --base-url https://host/v1 --model <id>
+//   ... -- --model <planner id> --executor-model <fast id>   (two models, same provider)
 
 import { chromium, type APIResponse, type BrowserContext, type Page, type Route } from 'playwright';
 import fs from 'node:fs';
@@ -46,6 +47,8 @@ const { values: args } = parseArgs({
     timeout: { type: 'string' },
     verbose: { type: 'boolean', default: false },
     model: { type: 'string' },
+    // Fast model (same provider) for routine steps, with --model as the planner
+    'executor-model': { type: 'string' },
     provider: { type: 'string', default: 'groq' },
     'base-url': { type: 'string' },
     // Turn off trusted (DevTools Protocol) input, to compare against scripted events
@@ -200,6 +203,7 @@ async function launch(apiKey: string): Promise<{ context: BrowserContext; userDa
     models: args.model ? { [PROVIDER]: args.model } : {},
     keys: apiKey ? { [PROVIDER]: apiKey } : {},
     customBaseUrl: PROVIDER === 'custom' ? args['base-url'] : undefined,
+    ...(args['executor-model'] ? { executor: { provider: PROVIDER, model: args['executor-model'] } } : {}),
   };
   await worker.evaluate(
     ([key, value, prefsKey, prefs]) => chrome.storage.local.set({ [key]: value, [prefsKey]: prefs }),
@@ -426,7 +430,8 @@ async function main() {
   const meta = {
     mode: MODE,
     date: new Date().toISOString(),
-    model: MODE === 'mock' ? 'scripted mock planner' : `${LLM.model} (${LLM.label})`,
+    model: MODE === 'mock' ? 'scripted mock planner'
+      : `${LLM.model}${args['executor-model'] ? ` + ${args['executor-model']} for routine steps` : ''} (${LLM.label})`,
     tasks: String(tasks.length),
     trials: String(TRIALS),
   };

@@ -24,7 +24,7 @@ Open-source Brave/Chrome extension (Manifest V3) that injects a floating AI-powe
 - **UI:** React + TypeScript
 - **Styling:** Tailwind CSS v4 with a dark glassmorphic theme
 - **Testing:** Vitest + happy-dom, GitHub Actions CI (typecheck → test → build)
-- **AI:** any OpenAI-compatible provider: Groq (default, `qwen/qwen3.8-27b`), Google AI Studio (Gemini), Mistral, DeepSeek, OpenAI, OpenRouter, Kilo AI Gateway, OpenCode Zen, local Ollama, or a custom server. Bring your own key
+- **AI:** any OpenAI-compatible provider: Groq (default, `qwen/qwen3.8-27b`), Google AI Studio (Gemini), Mistral, DeepSeek, OpenAI, OpenRouter, Kilo AI Gateway, OpenCode Zen, local Ollama, or a custom server. Bring your own key. Optional backup providers take over mid-task when the main one hits a rate limit (the plan and progress carry over), and an optional fast model can take routine steps while the main model plans and checks
 - **Architecture:** Manifest V3, Shadow DOM isolation. Permissions: `activeTab`, `scripting`, `storage`, and `debugger`, which is used only while the agent runs, for real mouse and keyboard input, and can be turned off in the popup
 
 ## 🚀 Getting Started

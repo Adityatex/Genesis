@@ -2,6 +2,22 @@
 
 All runs are live: real model, real extension, real Chromium. A run passes only if the right requests reached the test server **and** the agent finished cleanly.
 
+## Planner + fast executor model (2026-09-29)
+
+With a fast model set up, it takes routine steps while the main model makes the plan, steps in after anything goes wrong, re-checks every 5th call, and confirms when the fast model says the task is done. Expert tier, Groq free tier, 1 trial each, both runs with batched actions:
+
+| Setup | Expert tasks | Avg calls | Avg tokens | Failures |
+|---|---|---|---|---|
+| `openai/gpt-oss-120b` alone | 6/8 | 4.8 | 8,347 | compare-and-buy (3 invalid responses in a row), flaky-submit (said "sent" when it wasn't) |
+| gpt-oss-120b plans, `qwen/qwen3.8-27b` executes | **8/8** | 6.4 | 11,362 | none |
+
+The split won on accuracy, not on cost: about one more call per task, mostly the main model confirming "done", which is exactly the check that caught `flaky-submit`'s false finish. Times aren't comparable here, because the harness paces calls to stay under Groq's per-minute token limit. The work is spread across two models, so each model's separate free daily quota lasts longer. One trial per task is a small sample.
+
+```bash
+npm run eval -- --model openai/gpt-oss-120b --task <expert task ids>
+npm run eval -- --model openai/gpt-oss-120b --executor-model qwen/qwen3.8-27b --task <expert task ids>
+```
+
 ## Expert tier: planning and judgment (2026-09-27)
 
 Once every hard task passed, the benchmark could no longer show improvements or separate models. Eight expert tasks (`f666ff3`) test planning rather than access: a 13-step checkout, comparing products whose specs are only on each product page, vague goals, a taken username, a server that fails the first submission, a blocking popup, and adding up invoices across two pages.

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { startRun, stopRun, resumeRun, getRunView, notifyTabLoading, type RunnerDeps, type RunView, type TabInfo } from '@/lib/agent/runner';
+import { startRun, stopRun, resumeRun, getRunView, notifyTabLoading, PLANNER_EVERY, type RunnerDeps, type RunView, type TabInfo } from '@/lib/agent/runner';
 import { promptHistory, PROMPT_RECENT_STEPS } from '@/lib/agent/history';
 
 /**
@@ -309,5 +309,54 @@ describe('handing a task to a backup provider', () => {
     });
     await startRun(deps, 31, 'Anything');
     expect(prompts[2][1]).toMatch(/^\(handoff\) Groq · qwen takes over from Gemini · flash-lite here\./);
+  });
+});
+
+describe('planner and fast executor models', () => {
+  /** Runs a scripted task and records which role each call went to. */
+  async function roles(answers: string[], opts: { split?: boolean; onExecute?: (tab: TabInfo, action: any) => unknown } = {}) {
+    const calls: { role: string; history: string[] }[] = [];
+    const { deps } = fakeDeps([], { onExecute: opts.onExecute });
+    (deps.plan as any).mockImplementation(async (_g: string, _s: string, history: string[], _p: string[], role: string) => {
+      calls.push({ role, history: [...history] });
+      const text = answers[Math.min(calls.length - 1, answers.length - 1)];
+      return { text, model: role === 'executor' ? 'Groq · fast' : 'Groq · smart' };
+    });
+    const result = await startRun(deps, 40 + Math.floor(Math.random() * 1000), 'Task', { split: opts.split ?? true });
+    return { result, calls, order: calls.map((c) => c.role) };
+  }
+  const typing = (n: number) => Array.from({ length: n }, (_, i) => `{"action":"type","elementId":1,"text":"t${i}"}`);
+
+  it('sends everything to the main model when no fast model is set up', async () => {
+    const { order } = await roles([...typing(3), '{"action":"done","summary":"ok"}'], { split: false });
+    expect(order).toEqual(['planner', 'planner', 'planner', 'planner']);
+  });
+
+  it('plans with the main model, then hands routine steps to the fast one, re-checking regularly', async () => {
+    const { order } = await roles([...typing(PLANNER_EVERY + 3), '{"action":"done","summary":"ok"}']);
+    expect(order.slice(0, PLANNER_EVERY + 3)).toEqual([
+      'planner', ...Array(PLANNER_EVERY).fill('executor'), 'planner', 'executor',
+    ]);
+  });
+
+  it('brings the main model back after an action fails', async () => {
+    const { order } = await roles(
+      ['{"action":"click","elementId":1}', '{"action":"click","elementId":9}', '{"action":"click","elementId":2}', '{"action":"done","summary":"ok"}'],
+      { onExecute: (_t, a) => (a.elementId === 9 ? '❌ Element [9] not found' : '✅ ok') },
+    );
+    expect(order).toEqual(['planner', 'executor', 'planner', 'executor', 'planner']); // the last one confirms "done"
+  });
+
+  it('has the main model confirm when the fast model says it is done', async () => {
+    const { result, calls, order } = await roles(['{"action":"click","elementId":1}', '{"action":"done","summary":"Ordered"}']);
+    // planner clicks; executor says done; planner is asked and confirms
+    expect(order).toEqual(['planner', 'executor', 'planner']);
+    expect(calls[2].history.at(-1)).toBe('(note from Genesis) The fast model says the goal is complete: "Ordered". Check the page: if it really is, send "done"; if not, carry on.');
+    expect(result.status).toBe('done');
+  });
+
+  it('writes no handoff note for the routine switch between the two models', async () => {
+    const { calls } = await roles([...typing(3), '{"action":"done","summary":"ok"}']);
+    expect(calls.flatMap((c) => c.history).some((h) => h.startsWith('(handoff)'))).toBe(false);
   });
 });

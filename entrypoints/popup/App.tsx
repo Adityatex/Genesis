@@ -13,6 +13,11 @@ export default function App() {
   // The provider Genesis uses (the dropdown may show another one being set up)
   const [activeProvider, setActiveProvider] = useState<ProviderId>('groq');
   const [fallbacks, setFallbacks] = useState<ProviderId[]>([]);
+  // Providers with a key and model saved
+  const [ready, setReady] = useState<ProviderId[]>([]);
+  const [executorProvider, setExecutorProvider] = useState<ProviderId | ''>('');
+  const [executorModel, setExecutorModel] = useState('');
+  const [executorMessage, setExecutorMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [savedModels, setSavedModels] = useState<Partial<Record<ProviderId, string>>>({});
   const [maskedKeys, setMaskedKeys] = useState<Partial<Record<ProviderId, string>>>({});
   const [customBaseUrl, setCustomBaseUrl] = useState('');
@@ -31,7 +36,10 @@ export default function App() {
   useEffect(() => {
     browser.runtime.sendMessage({ action: 'GET_LLM_SETTINGS' }).then((res: any) => {
       if (!res?.success) return;
-      const { provider: p, models, customBaseUrl: url, maskedKeys: masked, fallbacks: backups } = res.data;
+      const { provider: p, models, customBaseUrl: url, maskedKeys: masked, fallbacks: backups, ready: readyIds, executor } = res.data;
+      setReady(readyIds ?? []);
+      setExecutorProvider(executor?.provider ?? '');
+      setExecutorModel(executor?.model ?? '');
       setProvider(p);
       setActiveProvider(p);
       setFallbacks(backups ?? []);
@@ -98,6 +106,15 @@ export default function App() {
     }
   };
 
+  const handleSaveExecutor = async (p: ProviderId | '', m: string) => {
+    const res: any = await browser.runtime.sendMessage({
+      action: 'SAVE_EXECUTOR',
+      payload: { executor: p ? { provider: p, model: m.trim() } : null },
+    });
+    if (!res?.success) setExecutorMessage({ ok: false, text: res?.error || 'Could not save' });
+    else setExecutorMessage({ ok: true, text: p ? `Routine steps now go to ${PROVIDERS[p].label} · ${m.trim()}.` : 'Off: your main model takes every step.' });
+  };
+
   const handleRemoveBackup = async (id: ProviderId) => {
     const next = fallbacks.filter((f) => f !== id);
     const res: any = await browser.runtime.sendMessage({ action: 'SAVE_FALLBACKS', payload: { fallbacks: next } });
@@ -124,6 +141,7 @@ export default function App() {
       if (!res?.success) throw new Error(res?.error || 'Failed to save');
       setActiveProvider(res.data.provider);
       setFallbacks(res.data.fallbacks ?? []);
+      setReady((r) => (r.includes(provider) ? r : [...r, provider]));
       setMaskedKeys((m) => ({ ...m, [provider]: res.data.maskedKey }));
       setSavedModels((m) => ({ ...m, [provider]: model.trim() }));
       setApiKey('');
@@ -287,6 +305,43 @@ export default function App() {
           {fallbacks.length
             ? `When ${PROVIDERS[activeProvider].label} hits a rate limit or fails, the next backup takes over mid-task with the same plan and progress. Genesis goes back to ${PROVIDERS[activeProvider].label} when it's available again.`
             : 'No backups. To add one, pick another provider above, enter its key and model, and press "Save as backup". When your main provider hits a rate limit, the backup takes over mid-task.'}
+        </p>
+
+        <label className="section-label" style={{ marginTop: 12 }} htmlFor="executor-provider">Fast model for routine steps</label>
+        <div className="input-group">
+          <select
+            id="executor-provider"
+            className="api-input"
+            style={{ flex: '0 0 40%' }}
+            value={executorProvider}
+            onChange={(e) => {
+              const p = e.target.value as ProviderId | '';
+              setExecutorProvider(p);
+              if (!p) handleSaveExecutor('', '');
+            }}
+          >
+            <option value="">Off</option>
+            {ready.map((id) => <option key={id} value={id}>{PROVIDERS[id].label}</option>)}
+          </select>
+          {executorProvider && (
+            <>
+              <input
+                placeholder="Model id"
+                value={executorModel}
+                onChange={(e) => setExecutorModel(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSaveExecutor(executorProvider, executorModel)}
+                className="api-input"
+                aria-label="Fast model"
+              />
+              <button onClick={() => handleSaveExecutor(executorProvider, executorModel)} className="secondary-btn">Save</button>
+            </>
+          )}
+        </div>
+        {executorMessage && <div className={`message ${executorMessage.ok ? 'saved' : 'error'}`}>{executorMessage.text}</div>}
+        <p className="hint">
+          Optional. A quick, cheap model takes the routine steps; your main model makes the plan, steps in when something
+          goes wrong and confirms the task is done. Any provider with a saved key works, including a smaller model on the
+          same provider, which on free tiers also means a second quota.
         </p>
       </div>
 
