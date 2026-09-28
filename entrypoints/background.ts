@@ -1,9 +1,9 @@
 // entrypoints/background.ts
 // Background service worker — message router, LLM API proxy, storage management
 
-import { summarizePage, explainText, chatWithPage, planAgentStep, listModels } from '@/lib/api/llmClient';
+import { summarizePage, explainText, chatWithPage, planAgentStep, listModels, acceptsImages } from '@/lib/api/llmClient';
 import {
-  startRun, stopRun, resumeRun, forgetRun, getRunView, isRunning, notifyTabLoading, type RunnerDeps,
+  startRun, stopRun, resumeRun, forgetRun, getRunView, isRunning, notifyTabLoading, type RunnerDeps, type RunOptions,
 } from '@/lib/agent/runner';
 import {
   PROVIDERS, PROVIDER_IDS, SETTINGS_KEY, LEGACY_KEYS, readSettings, resolveConfig, resolveChain, resolveExecutor, configProblem,
@@ -11,7 +11,8 @@ import {
 } from '@/lib/api/providers';
 import { formatError, withTimeout } from '@/lib/utils/errorHandler';
 import { providerPool, modelLabel, type FallbackResult } from '@/lib/api/fallback';
-import { trustedClick, trustedKey, trustedType, releaseTab, watchDetach } from '@/lib/agent/trustedInput';
+import { trustedClick, trustedKey, trustedType, releaseTab, watchDetach, debuggerScreenshot } from '@/lib/agent/trustedInput';
+import { annotate, base64ToBlob, type VisualInfo } from '@/lib/agent/screenshot';
 import { PREFS_KEY, DEFAULT_PREFS, type AgentPrefs } from '@/lib/agent/prefs';
 
 declare var chrome: any;
@@ -46,14 +47,28 @@ export default defineBackground(() => {
 
   // ---- Agent runner: the loop lives here, not in the page (lib/agent/runner.ts)
   const runnerDeps: RunnerDeps = {
-    plan: async (goal, snapshot, history, currentPlan, role) => {
+    plan: async (goal, snapshot, history, currentPlan, role, image) => {
       // Any provider in the chain can answer: the prompt carries the whole task state.
       // Executor calls try the fast model first, then the usual chain.
       const { value, config, skipped } = await ask(
-        (c) => planAgentStep(goal, snapshot, history, currentPlan, c),
+        (c) => planAgentStep(goal, snapshot, history, currentPlan, c, image),
         role === 'executor',
       );
-      return { text: value, model: modelLabel(config), unavailable: skipped };
+      return { text: value, model: modelLabel(config), unavailable: skipped, imageDropped: !!image && !acceptsImages(config) };
+    },
+    screenshot: async (tabId, visual) => {
+      // Through the debugger when trusted input is on: that works even if the
+      // user is looking at another tab. Otherwise only while the tab is visible.
+      let captured: Blob;
+      if ((await loadPrefs()).trustedInput) {
+        captured = base64ToBlob(await debuggerScreenshot(tabId));
+      } else {
+        const tab = await chrome.tabs.get(tabId);
+        if (!tab.active) return null;
+        const dataUrl: string = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 80 });
+        captured = await (await fetch(dataUrl)).blob();
+      }
+      return annotate(captured, visual as VisualInfo);
     },
     // frameId 0: only the top frame's content script (the sidebar) handles agent messages
     send: (tabId, message, timeoutMs) => withTimeout(chrome.tabs.sendMessage(tabId, message, { frameId: 0 }), timeoutMs, 'Page'),
@@ -66,9 +81,9 @@ export default defineBackground(() => {
     sleep: wait,
   };
 
-  function runAgent(tabId: number, goal: string, checkpoint: number, split: boolean): void {
+  function runAgent(tabId: number, goal: string, options: RunOptions): void {
     holdKeepAlive();
-    startRun(runnerDeps, tabId, goal, { checkpoint, split })
+    startRun(runnerDeps, tabId, goal, options)
       .catch((err) => console.error('[Genesis] Agent run failed:', err))
       .finally(releaseKeepAlive);
   }
@@ -244,7 +259,8 @@ export default defineBackground(() => {
             const goal = String(payload?.goal ?? '').trim();
             if (!goal) throw new Error('No goal');
             await requireConfig(); // fail fast on missing key/model, before the run starts
-            runAgent(tabId, goal, (await loadPrefs()).stepCheckpoint, hasExecutor(await loadSettings()));
+            const prefs = await loadPrefs();
+            runAgent(tabId, goal, { checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots });
             sendResponse({ success: true });
             break;
           }

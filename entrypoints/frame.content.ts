@@ -27,9 +27,11 @@ export default defineContentScript({
     browser.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
       if (message?.action === 'FRAME_SNAPSHOT') {
         const { elements } = createDOMSnapshot();
+        const rects = elements.map(el => getElementById(el.id)?.getBoundingClientRect());
         const snapshot: FrameSnapshot = {
           elements,
-          tops: elements.map(el => getElementById(el.id)?.getBoundingClientRect().top ?? 0),
+          tops: rects.map(r => r?.top ?? 0),
+          boxes: rects.map(r => (r ? { x: r.left, y: r.top, w: r.width, h: r.height } : null)),
           text: pageText(1200),
         };
         sendResponse({ success: true, data: snapshot });

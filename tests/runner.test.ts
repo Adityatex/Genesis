@@ -360,3 +360,68 @@ describe('planner and fast executor models', () => {
     expect(calls.flatMap((c) => c.history).some((h) => h.startsWith('(handoff)'))).toBe(false);
   });
 });
+
+describe('screenshots', () => {
+  async function shots(mode: 'off' | 'planning' | 'always', answers: string[], opts: { onExecute?: (tab: TabInfo, a: any) => unknown; dropped?: boolean } = {}) {
+    const { deps, prompts } = fakeDeps([], { onExecute: opts.onExecute });
+    const images: (string | undefined)[] = [];
+    const visualAsked: boolean[] = [];
+    const send = deps.send as any;
+    const original = send.getMockImplementation();
+    send.mockImplementation(async (id: number, m: any, t: number) => {
+      if (m.action === 'AGENT_SNAPSHOT') {
+        visualAsked.push(!!m.visual);
+        return { text: `PAGE ${visualAsked.length}`, ...(m.visual ? { visual: { marks: [] } } : {}) };
+      }
+      return original(id, m, t);
+    });
+    deps.screenshot = vi.fn(async () => 'data:image/jpeg;base64,SHOT');
+    (deps.plan as any).mockImplementation(async (_g: string, _s: string, history: string[], _p: string[], _r: string, image?: string) => {
+      prompts.push([...history]);
+      images.push(image);
+      return { text: answers[Math.min(images.length - 1, answers.length - 1)], model: 'Gemini · flash', imageDropped: opts.dropped && !!image };
+    });
+    const result = await startRun(deps, 60 + Math.floor(Math.random() * 1000), 'Task', { screenshots: mode });
+    return { result, images, visualAsked, deps, prompts };
+  }
+  const typing = (n: number) => Array.from({ length: n }, (_, i) => `{"action":"type","elementId":1,"text":"t${i}"}`);
+
+  it('takes none when off', async () => {
+    const { images, visualAsked, deps } = await shots('off', [...typing(2), '{"action":"done","summary":"ok"}']);
+    expect(images.every((i) => i === undefined)).toBe(true);
+    expect(visualAsked.every((v) => !v)).toBe(true);
+    expect(deps.screenshot).not.toHaveBeenCalled();
+  });
+
+  it('sends one with every step when set to always', async () => {
+    const { images } = await shots('always', [...typing(2), '{"action":"done","summary":"ok"}']);
+    expect(images).toEqual(['data:image/jpeg;base64,SHOT', 'data:image/jpeg;base64,SHOT', 'data:image/jpeg;base64,SHOT']);
+  });
+
+  it('on planning steps only: the first, after a failure, and every 5th', async () => {
+    const answers = ['{"action":"click","elementId":9}', ...typing(PLANNER_EVERY + 1), '{"action":"done","summary":"ok"}'];
+    const { images } = await shots('planning', answers, { onExecute: (_t, a) => (a.elementId === 9 ? '❌ Element [9] not found' : '✅ ok') });
+    const sent = images.map((i) => (i ? 'shot' : '-'));
+    // step 1 plans; its click fails, so step 2 re-plans; then 5 routine steps; step 8 re-checks
+    expect(sent.slice(0, 8)).toEqual(['shot', 'shot', '-', '-', '-', '-', '-', 'shot']);
+  });
+
+  it('carries on with text only when no screenshot can be taken', async () => {
+    const { deps } = fakeDeps(['{"action":"done","summary":"ok"}']);
+    const send = deps.send as any;
+    const original = send.getMockImplementation();
+    send.mockImplementation(async (id: number, m: any, t: number) =>
+      (m.action === 'AGENT_SNAPSHOT' ? { text: 'PAGE', visual: { marks: [] } } : original(id, m, t)));
+    deps.screenshot = vi.fn(async () => { throw new Error('tab hidden'); });
+    const result = await startRun(deps, 70, 'Task', { screenshots: 'always' });
+    expect(result.status).toBe('done');
+    expect(deps.screenshot).toHaveBeenCalledTimes(1);
+    expect((deps.plan as any).mock.calls[0][5]).toBeUndefined();
+  });
+
+  it('says once when a model can\'t read the screenshots', async () => {
+    const { prompts } = await shots('always', [...typing(2), '{"action":"done","summary":"ok"}'], { dropped: true });
+    const notes = prompts.at(-1)!.filter((h) => h.includes("doesn't accept images"));
+    expect(notes).toEqual(["(note from Genesis) Screenshots are on, but Gemini · flash doesn't accept images, so it gets the page as text only."]);
+  });
+});

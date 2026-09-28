@@ -20,9 +20,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** OpenAI-style message content: text, or text and images. */
+export type ContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
+
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | ContentPart[];
 }
 
 interface ChatResponse {
@@ -89,6 +92,8 @@ export interface ParamFixes {
    * limit (Groq's free tier: prompt + max_tokens must fit in 8k tokens/minute).
    */
   maxTokens?: number;
+  /** The model doesn't accept images: send the text parts only. */
+  noImages?: boolean;
 }
 
 /** The response cap is never reduced below this. */
@@ -97,8 +102,24 @@ const MIN_MAX_TOKENS = 256;
 // Learned per baseUrl + model, so only the first request pays for a rejected field
 const learnedFixes = new Map<string, ParamFixes>();
 
+function hasImages(messages: ChatMessage[]): boolean {
+  return messages.some((m) => Array.isArray(m.content) && m.content.some((part) => part.type === 'image_url'));
+}
+
+/** Messages with images removed (each content list becomes its text). */
+function textOnly(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((m) => (Array.isArray(m.content)
+    ? { ...m, content: m.content.map((part) => (part.type === 'text' ? part.text : '')).filter(Boolean).join('\n\n') }
+    : m));
+}
+
+/** Whether this model takes images: true until it has refused one. */
+export function acceptsImages(config: LLMConfig): boolean {
+  return !learnedFixes.get(`${config.baseUrl}|${config.model}`)?.noImages;
+}
+
 export function buildRequestBody(model: string, messages: ChatMessage[], opts: CallOptions, fixes: ParamFixes): Record<string, unknown> {
-  const body: Record<string, unknown> = { model, messages };
+  const body: Record<string, unknown> = { model, messages: fixes.noImages ? textOnly(messages) : messages };
   body[fixes.useMaxCompletionTokens ? 'max_completion_tokens' : 'max_tokens'] = fixes.maxTokens ?? opts.maxTokens ?? 2048;
   if (!fixes.noTemperature) body.temperature = opts.temperature ?? 0.3;
   if (!fixes.noTopP) body.top_p = opts.topP ?? 1;
@@ -110,8 +131,13 @@ export function buildRequestBody(model: string, messages: ChatMessage[], opts: C
  * Given a 400 error body, the field change that should fix it, or null if the
  * error isn't about a request field we can drop or rename.
  */
-export function adaptParams(errorBody: string, fixes: ParamFixes, requestedMaxTokens = 2048): ParamFixes | null {
+export function adaptParams(errorBody: string, fixes: ParamFixes, requestedMaxTokens = 2048, sentImages = false): ParamFixes | null {
   const e = errorBody.toLowerCase();
+  // A text-only model refusing the screenshot (DeepSeek: "unknown variant `image_url`",
+  // OpenAI: "image_url is only supported by certain models", others: "does not support images")
+  if (sentImages && !fixes.noImages && /image|vision|multimodal|unknown variant|expected `text`/.test(e)) {
+    return { ...fixes, noImages: true };
+  }
   // "Request too large": the response cap is over a limit. If the error names an
   // output-tokens-per-minute limit (Groq's OTPM), go safely under it; else halve.
   const cap = fixes.maxTokens ?? requestedMaxTokens;
@@ -201,14 +227,14 @@ export async function callLLM(messages: ChatMessage[], config: LLMConfig, opts: 
 
       if (!response.ok) {
         const errorBody = await response.text().catch(() => 'Unknown error');
-        // 400 = a field was rejected; 413, or 429 "Request too large", = the request
+        // 400/422 = a field (or an image) was rejected; 413, or 429 "Request too large", = the request
         // (prompt + response cap) is over a size limit. Both are fixable by adjusting it.
         const tooLarge = response.status === 413 || (response.status === 429 && /request too large/i.test(errorBody));
-        if (response.status === 400 || tooLarge) {
+        if (response.status === 400 || response.status === 422 || tooLarge) {
           const recovered = recoverFailedGeneration(errorBody);
           if (recovered !== null) return recovered;
 
-          const adapted = adaptParams(errorBody, fixes, opts.maxTokens);
+          const adapted = adaptParams(errorBody, fixes, opts.maxTokens, hasImages(messages));
           if (adapted && fixesTried < MAX_PARAM_FIXES) {
             fixes = adapted;
             fixesTried++;
@@ -368,6 +394,18 @@ export async function chatWithPage(message: string, pageContext: string, config:
   ], config);
 }
 
+/** The agent's user message: the text, plus the screenshot if there is one. */
+function agentUserContent(text: string, image?: string): string | ContentPart[] {
+  if (!image) return text;
+  return [
+    {
+      type: 'text',
+      text: `${text}\n\nA SCREENSHOT of the visible part of the page is attached. Each numbered box on it is the element with that ID in the snapshot; use it to see layout, popups, images and anything the text leaves out.`,
+    },
+    { type: 'image_url', image_url: { url: image } },
+  ];
+}
+
 /**
  * Agent step planner: given a goal, DOM snapshot, action history and the
  * model's own plan so far, returns its next actions as JSON (see the prompt).
@@ -378,6 +416,8 @@ export async function planAgentStep(
   actionHistory: string[],
   currentPlan: string[],
   config: LLMConfig,
+  /** Screenshot (data URL) with the snapshot's element IDs drawn on it. */
+  image?: string,
 ): Promise<string> {
   const planText = currentPlan.length > 0
     ? `\n\nYOUR PLAN (from your last response):\n${currentPlan.join('\n')}`
@@ -424,7 +464,10 @@ RULES:
     },
     {
       role: 'user',
-      content: `GOAL: ${goal}\n\nCURRENT PAGE DOM SNAPSHOT:\n${domSnapshot.substring(0, SNAPSHOT_SAFETY_CAP)}${planText}${historyText}\n\nWhat are the NEXT actions? Respond with JSON only.`,
+      content: agentUserContent(
+        `GOAL: ${goal}\n\nCURRENT PAGE DOM SNAPSHOT:\n${domSnapshot.substring(0, SNAPSHOT_SAFETY_CAP)}${planText}${historyText}\n\nWhat are the NEXT actions? Respond with JSON only.`,
+        image,
+      ),
     },
   // Headroom: reasoning models think before answering (deepseek-v4-pro used >1k)
   ], config, { maxTokens: config.maxOutputTokens ?? 4096, temperature: 0, topP: 1, jsonMode: true });

@@ -71,6 +71,17 @@ export async function trustedType(tabId: number, text: string): Promise<void> {
   for (const ch of text) await keyStroke(tabId, ch === '\n' ? 'Enter' : ch);
 }
 
+/**
+ * JPEG screenshot of the tab's viewport (base64, device pixels), through the
+ * same debugger session. Unlike tabs.captureVisibleTab it works while the
+ * user is looking at another tab.
+ */
+export async function debuggerScreenshot(tabId: number): Promise<string> {
+  await ensureAttached(tabId);
+  const result = await send(tabId, 'Page.captureScreenshot', { format: 'jpeg', quality: 80 }) as { data: string };
+  return result.data;
+}
+
 /** Detach at the end of an agent run so Chrome's debugging banner goes away. */
 export async function releaseTab(tabId: number): Promise<void> {
   declined.delete(tabId);

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { loadStoredProfile, saveStoredProfile, PROFILE_FIELDS, type AutofillProfile } from '@/lib/automation/profile';
 import { PROVIDERS, PROVIDER_IDS, type ProviderId } from '@/lib/api/providers';
 import type { ModelInfo } from '@/lib/api/llmClient';
-import { CHECKPOINT_CHOICES, DEFAULT_PREFS } from '@/lib/agent/prefs';
+import { CHECKPOINT_CHOICES, DEFAULT_PREFS, type ScreenshotMode } from '@/lib/agent/prefs';
 
 type Status = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -29,6 +29,7 @@ export default function App() {
   const [message, setMessage] = useState('');
   const [trustedInput, setTrustedInput] = useState(true);
   const [stepCheckpoint, setStepCheckpoint] = useState(DEFAULT_PREFS.stepCheckpoint);
+  const [screenshots, setScreenshots] = useState<ScreenshotMode>(DEFAULT_PREFS.screenshots);
   const [profile, setProfile] = useState<AutofillProfile>({ fullname: '', email: '', phone: '', address: '', city: '', state: '', zip: '', country: '' });
   const [profileStatus, setProfileStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [profileMessage, setProfileMessage] = useState('');
@@ -52,6 +53,7 @@ export default function App() {
       if (!res?.success) return;
       setTrustedInput(res.data.trustedInput);
       setStepCheckpoint(res.data.stepCheckpoint);
+      setScreenshots(res.data.screenshots);
     });
     loadStoredProfile().then(setProfile).catch(() => {});
   }, []);
@@ -60,6 +62,13 @@ export default function App() {
     setTrustedInput(on);
     const res: any = await browser.runtime.sendMessage({ action: 'SAVE_PREFS', payload: { trustedInput: on } });
     if (!res?.success) setTrustedInput(!on);
+  };
+
+  const handleScreenshotsChange = async (mode: ScreenshotMode) => {
+    const previous = screenshots;
+    setScreenshots(mode);
+    const res: any = await browser.runtime.sendMessage({ action: 'SAVE_PREFS', payload: { screenshots: mode } });
+    if (!res?.success) setScreenshots(previous);
   };
 
   const handleCheckpointChange = async (steps: number) => {
@@ -378,6 +387,34 @@ export default function App() {
           Tasks have no step limit. The agent pauses at this point to ask whether to keep going, so a long run doesn't
           quietly use up your API quota. It also pauses if it keeps repeating an action that changes nothing.
         </p>
+
+        <label className="toggle-row" htmlFor="screenshots">
+          <span>Screenshots for vision models</span>
+          <select
+            id="screenshots"
+            className="api-input"
+            style={{ width: 'auto', marginLeft: 'auto' }}
+            value={screenshots}
+            onChange={(e) => handleScreenshotsChange(e.target.value as ScreenshotMode)}
+          >
+            <option value="off">Off</option>
+            <option value="planning">When planning</option>
+            <option value="always">Every step</option>
+          </select>
+        </label>
+        <p className="hint">
+          Lets a model that can read images see the page, with each element's number drawn on it: useful for visual
+          layouts, canvases and popups the page text doesn't describe.
+        </p>
+        {screenshots !== 'off' && (
+          <p className="hint advisory">
+            ⚠️ Screenshots use more tokens: each one adds roughly 500–1,500 to a step, depending on the model (about 1,300
+            on Groq's Qwen), which can be as much again as the page text. {screenshots === 'always'
+              ? 'On every step that adds up quickly, and on free tiers with per-minute limits (Groq: about 8k tokens/minute) the agent will be slower.'
+              : '"When planning" sends one only on the first step, after something goes wrong, and every 5th step, which keeps most of the benefit for much less.'}
+            {' '}Models that can't read images get text only, and the step log says so.
+          </p>
+        )}
       </div>
 
       {/* Autofill Profile Section */}

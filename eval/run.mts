@@ -55,6 +55,8 @@ const { values: args } = parseArgs({
     'scripted-input': { type: 'boolean', default: false },
     // Print the page snapshot the model receives at every step (debugging)
     'dump-prompts': { type: 'boolean', default: false },
+    // Send screenshots (off | planning | always); each one sent is saved under eval/results/screenshots
+    screenshots: { type: 'string', default: 'off' },
     tpm: { type: 'string' },
   },
 });
@@ -137,8 +139,32 @@ function loadApiKey(provider: ProviderId): string {
 }
 
 /** The goal + page snapshot part of a planner request (history left out). */
+/** A message's text, whether its content is a string or a list of text and image parts. */
+function textOf(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.filter((part: any) => part?.type === 'text').map((part: any) => part.text).join('\n\n');
+}
+
+/** Images in a request, as data URLs. */
+function imagesOf(body: any): string[] {
+  return (body?.messages ?? []).flatMap((m: any) => (Array.isArray(m.content) ? m.content : []))
+    .filter((part: any) => part?.type === 'image_url').map((part: any) => String(part.image_url?.url ?? ''));
+}
+
+/** Keep each screenshot the extension sends, to check what the model saw. */
+function saveImages(taskId: string, call: number, body: any): void {
+  imagesOf(body).forEach((url, i) => {
+    const m = /^data:image\/(\w+);base64,(.*)$/.exec(url);
+    if (!m) return;
+    const dir = path.join(RESULTS_DIR, 'screenshots');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${taskId}-call${call}${i ? `-${i}` : ''}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`), Buffer.from(m[2], 'base64'));
+  });
+}
+
 function dumpPrompt(call: number, body: any): void {
-  const prompt: string = body?.messages?.at(-1)?.content ?? '';
+  const prompt = textOf(body?.messages?.at(-1)?.content);
   console.log(`----- prompt #${call}\n${prompt.split('\n\nACTION HISTORY')[0]}\n`);
 }
 
@@ -156,6 +182,8 @@ function chatCompletion(content: string) {
 /** Planner that replays a task's mockPlan against the snapshot the extension sent. */
 function mockPlanner(plan: (MockStep | MockStep[])[]) {
   let step = 0;
+  /** The step whose element was missing once already (see below). */
+  let retried = -1;
   return (prompt: string): string => {
     const next = plan[step++];
     if (!next) return JSON.stringify({ action: 'done', summary: 'MOCK: plan complete' });
@@ -183,6 +211,12 @@ function mockPlanner(plan: (MockStep | MockStep[])[]) {
     // An array is several actions in one response
     const actions = (Array.isArray(next) ? next : [next]).map(resolve);
     const missing = actions.find((a): a is string => typeof a === 'string');
+    if (missing && retried !== step) {
+      // Maybe it hasn't appeared yet (a popup that opens after load): wait and
+      // look once more, as a model would, instead of failing on a timing race
+      retried = step--;
+      return JSON.stringify({ action: 'wait', text: '500' });
+    }
     if (missing) return JSON.stringify({ action: 'done', summary: missing });
     return JSON.stringify(Array.isArray(next) ? { actions } : actions[0]);
   };
@@ -207,7 +241,7 @@ async function launch(apiKey: string): Promise<{ context: BrowserContext; userDa
   };
   await worker.evaluate(
     ([key, value, prefsKey, prefs]) => chrome.storage.local.set({ [key]: value, [prefsKey]: prefs }),
-    [SETTINGS_KEY, settings, PREFS_KEY, { trustedInput: !args['scripted-input'], stepCheckpoint: EVAL_CHECKPOINT }] as const,
+    [SETTINGS_KEY, settings, PREFS_KEY, { trustedInput: !args['scripted-input'], stepCheckpoint: EVAL_CHECKPOINT, screenshots: args.screenshots }] as const,
   );
   return { context, userDataDir };
 }
@@ -239,7 +273,8 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
     if (MODE === 'mock') {
       const body = route.request().postDataJSON();
       if (args['dump-prompts']) dumpPrompt(result.llmCalls, body);
-      await route.fulfill(chatCompletion(planMock(body.messages.at(-1).content)));
+      saveImages(task.id, result.llmCalls, body);
+      await route.fulfill(chatCompletion(planMock(textOf(body.messages.at(-1).content))));
       return;
     }
     if (args['dump-prompts']) dumpPrompt(result.llmCalls, route.request().postDataJSON());
@@ -247,8 +282,12 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
     // per-minute budget before any reply exists, so estimate with the cap, then
     // correct to actual usage once the response arrives.
     const requestBody = route.request().postDataJSON() ?? {};
+    saveImages(task.id, result.llmCalls, requestBody);
     const cap = Number(requestBody.max_tokens ?? requestBody.max_completion_tokens ?? 400);
-    const entry = await throttle(Math.ceil((route.request().postData()?.length ?? 0) / 4) + cap);
+    // Images count as ~1,000 tokens each, not by the length of their base64
+    const images = imagesOf(requestBody);
+    const textChars = (route.request().postData()?.length ?? 0) - images.reduce((n, url) => n + url.length, 0);
+    const entry = await throttle(Math.ceil(textChars / 4) + images.length * 1000 + cap);
     let response: APIResponse;
     let text: string;
     try {

@@ -13,7 +13,14 @@ export interface AgentPrefs {
    * no step limit; this only guards against quietly spending a lot of tokens.
    */
   stepCheckpoint: number;
+  /**
+   * Send the model screenshots with the page's elements numbered: never,
+   * on planning steps only, or every step. Images cost tokens; off by default.
+   */
+  screenshots: ScreenshotMode;
 }
+
+export type ScreenshotMode = 'off' | 'planning' | 'always';
 
 export const PREFS_KEY = 'genesis_prefs';
 
@@ -22,4 +29,5 @@ export const CHECKPOINT_CHOICES = [25, 50, 100, 0] as const;
 export const DEFAULT_PREFS: AgentPrefs = {
   trustedInput: true,
   stepCheckpoint: 50,
+  screenshots: 'off',
 };

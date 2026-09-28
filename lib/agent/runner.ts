@@ -11,6 +11,7 @@
 
 import type { AgentAction } from '@/lib/agent/actionExecutor';
 import { parseAgentResponse } from '@/lib/agent/parseAction';
+import type { ScreenshotMode } from '@/lib/agent/prefs';
 import { MAX_INVALID_RESPONSES, REPEAT_PAUSE, REPEAT_WARN, describeAction, formatHistory } from '@/lib/agent/history';
 
 /** "paused": waiting for the user to continue or stop (checkpoint, or the agent looks stuck). */
@@ -52,11 +53,15 @@ export interface PlanReply {
   model: string;
   /** Models tried before it that couldn't answer, and why. */
   unavailable?: { label: string; reason: string }[];
+  /** A screenshot was sent, but this model doesn't accept images, so it got text only. */
+  imageDropped?: boolean;
 }
 
 export interface RunnerDeps {
   /** Ask the model for its next actions; returns its raw output. */
-  plan(goal: string, snapshot: string, history: string[], currentPlan: string[], role: ModelRole): Promise<string | PlanReply>;
+  plan(goal: string, snapshot: string, history: string[], currentPlan: string[], role: ModelRole, image?: string): Promise<string | PlanReply>;
+  /** Screenshot of the tab with the snapshot's elements numbered (data URL), or null if it can't be taken. */
+  screenshot?(tabId: number, visual: unknown): Promise<string | null>;
   /** Message the tab's top-frame content script. Rejects if nothing answers (e.g. mid-navigation). */
   send(tabId: number, message: unknown, timeoutMs: number): Promise<any>;
   getTab(tabId: number): Promise<TabInfo>;
@@ -86,8 +91,11 @@ interface Run extends RunView {
   split: boolean;
   /** The next call must go to the planner. */
   needPlanner: boolean;
-  /** Executor calls since the planner last answered. */
-  executorCalls: number;
+  /** Routine (non-planning) steps since the last planning step. */
+  routineCalls: number;
+  screenshots: ScreenshotMode;
+  /** Models already reported as not accepting screenshots. */
+  noVision: Set<string>;
   /** The model that last answered for each role, to spot a backup taking over. */
   roleModels: Partial<Record<ModelRole, string>>;
 }
@@ -97,9 +105,10 @@ export interface RunOptions {
   checkpoint?: number;
   /** A fast executor model takes routine steps (see ModelRole). */
   split?: boolean;
+  screenshots?: ScreenshotMode;
 }
 
-/** With an executor, the planner still answers at least every this many calls. */
+/** A planning step (the planner answers, if there's an executor) at least every this many calls. */
 export const PLANNER_EVERY = 5;
 
 /** Automatic memory: how many earlier pages, and how much of each, the model sees. */
@@ -303,15 +312,30 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
     run.step++;
     publish(deps, run, run.history.length ? progressMessage(run, `*Step ${run.step}: scanning the page...*`) : `🔍 **Step ${run.step}**: scanning the page...`, true);
 
+    // Planning steps: the first, any after trouble, and a regular re-check
+    const planning = run.needPlanner || run.routineCalls >= PLANNER_EVERY;
+    const role: ModelRole = run.split && !planning ? 'executor' : 'planner';
+    const wantImage = run.screenshots === 'always' || (run.screenshots === 'planning' && planning);
+
     const page = await waitForPage(deps, tabId);
-    const snapshot = await deps.send(tabId, { action: 'AGENT_SNAPSHOT' }, SNAPSHOT_TIMEOUT_MS);
+    const snapshot = await deps.send(tabId, { action: 'AGENT_SNAPSHOT', visual: wantImage }, SNAPSHOT_TIMEOUT_MS);
     if (run.stopRequested) break;
     const snapshotText = String(snapshot?.text ?? '');
+    let image: string | undefined;
+    if (wantImage && snapshot?.visual && deps.screenshot) {
+      // No screenshot (tab hidden, capture refused) just means text only this step
+      image = (await deps.screenshot(tabId, snapshot.visual).catch(() => null)) ?? undefined;
+    }
 
     publish(deps, run, run.history.length ? progressMessage(run, `*Step ${run.step}: planning...*`) : `🧠 **Step ${run.step}**: planning...`, true);
-    const role: ModelRole = !run.split || run.needPlanner || run.executorCalls >= PLANNER_EVERY ? 'planner' : 'executor';
-    const reply = await deps.plan(run.goal, snapshotText + memorySection(run.visited, page.url), run.history, run.plan, role);
-    const { text: raw, model, unavailable } = typeof reply === 'string' ? { text: reply, model: undefined, unavailable: undefined } : reply;
+    const reply = await deps.plan(run.goal, snapshotText + memorySection(run.visited, page.url), run.history, run.plan, role, image);
+    const { text: raw, model, unavailable, imageDropped } = typeof reply === 'string'
+      ? { text: reply, model: undefined, unavailable: undefined, imageDropped: false }
+      : reply;
+    if (imageDropped && model && !run.noVision.has(model)) {
+      run.noVision.add(model);
+      run.history.push(`(note from Genesis) Screenshots are on, but ${model} doesn't accept images, so it gets the page as text only.`);
+    }
     // A different model in the same role means a backup took over; switching
     // between the planner and executor is routine and needs no note
     const before = run.roleModels[role];
@@ -323,7 +347,7 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
       run.model = model;
       run.roleModels[role] = model;
     }
-    run.executorCalls = role === 'executor' ? run.executorCalls + 1 : 0;
+    run.routineCalls = planning ? 0 : run.routineCalls + 1;
     run.needPlanner = false;
     if (page.url) {
       // Re-insert so the most recently seen pages come last
@@ -413,7 +437,8 @@ export async function startRun(deps: RunnerDeps, tabId: number, goal: string, op
   const run: Run = {
     tabId, goal, status: 'running', message: '', loading: true, step: 0, plan: [], updatedAt: Date.now(), history: [],
     stopRequested: false, loads: 0, visited: new Map(), repeats: new Map(), checkpoint: Math.max(0, options.checkpoint ?? 0),
-    split: !!options.split, needPlanner: true, executorCalls: 0, roleModels: {},
+    split: !!options.split, needPlanner: true, routineCalls: 0, roleModels: {},
+    screenshots: options.screenshots ?? 'off', noVision: new Set(),
   };
   runs.set(tabId, run);
   try {

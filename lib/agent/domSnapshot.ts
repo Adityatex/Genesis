@@ -59,6 +59,8 @@ export interface RemoteRef {
 }
 
 const registry = new Map<number, Element | RemoteRef>();
+/** Boxes of elements in cross-origin frames, in their frame's viewport, by snapshot ID. */
+const remoteBoxes = new Map<number, { x: number; y: number; w: number; h: number }>();
 
 const isElement = (entry: Element | RemoteRef | undefined): entry is Element =>
   !!entry && typeof (entry as Element).nodeType === 'number';
@@ -69,6 +71,48 @@ export function getElementById(id: number): HTMLElement | null {
   if (entry) return null; // a remote element: see getRemoteRef
   // Fallback for elements tagged outside a snapshot (e.g. unit tests)
   return document.querySelector(`[data-genesis-id="${id}"]`) as HTMLElement | null;
+}
+
+/** Where an element with a snapshot ID is on screen, in CSS pixels of the top-level viewport. */
+export interface Mark {
+  id: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * On-screen boxes of registered elements, for numbering them on a screenshot.
+ * Elements in cross-origin frames use the boxes their frame's script reported.
+ */
+export function viewportMarks(max = 80): Mark[] {
+  const marks: Mark[] = [];
+  for (const [id, entry] of registry) {
+    if (marks.length >= max) break;
+    let box: { x: number; y: number; w: number; h: number };
+    if (isElement(entry)) {
+      if (!entry.isConnected) continue;
+      const rect = entry.getBoundingClientRect();
+      box = { x: rect.left, y: rect.top, w: rect.width, h: rect.height };
+      // Same-origin iframes: add each enclosing frame's offset
+      for (let frame = entry.ownerDocument.defaultView?.frameElement; frame; frame = frame.ownerDocument.defaultView?.frameElement) {
+        const fr = frame.getBoundingClientRect();
+        box.x += fr.left + frame.clientLeft;
+        box.y += fr.top + frame.clientTop;
+      }
+    } else {
+      // Cross-origin frame: its script measured the element; add where the frame is
+      const local = remoteBoxes.get(id);
+      if (!local || !entry.iframe.isConnected) continue;
+      const fr = entry.iframe.getBoundingClientRect();
+      box = { ...local, x: local.x + fr.left + entry.iframe.clientLeft, y: local.y + fr.top + entry.iframe.clientTop };
+    }
+    if (box.w < 2 || box.h < 2) continue;
+    if (box.x + box.w <= 0 || box.y + box.h <= 0 || box.x >= window.innerWidth || box.y >= window.innerHeight) continue;
+    marks.push({ id, ...box });
+  }
+  return marks;
 }
 
 /** The frame an element lives in, if it is inside a cross-origin iframe. */
@@ -406,6 +450,8 @@ export interface FrameSnapshot {
   elements: SnapshotElement[];
   /** Top of each element in the frame's own viewport, by local id. */
   tops: number[];
+  /** Each element's box in the frame's own viewport, by local id (for screenshot marks). */
+  boxes?: ({ x: number; y: number; w: number; h: number } | null)[];
   text: string;
 }
 
@@ -418,6 +464,7 @@ export function collectLocalElements(): SnapshotParts {
   // Clean up the previous snapshot's IDs, wherever those elements live
   for (const entry of registry.values()) if (isElement(entry)) entry.removeAttribute('data-genesis-id');
   registry.clear();
+  remoteBoxes.clear();
 
   const found: Found[] = [];
   const opaqueFrames: OpaqueFrame[] = [];
@@ -443,6 +490,8 @@ export function addRemoteElements(parts: SnapshotParts, frame: OpaqueFrame, fram
   for (const remote of snap.elements) {
     const id = parts.elements.length;
     registry.set(id, { frameId, localId: remote.id, iframe: frame.iframe });
+    const box = snap.boxes?.[remote.id];
+    if (box) remoteBoxes.set(id, box);
     parts.elements.push({ ...remote, id, frame: frame.label, selector: `frame ${frameId} #${remote.id}` });
     const top = frameTop + (snap.tops[remote.id] ?? 0);
     parts.distance.set(id, top < 0 ? -top : top > window.innerHeight ? top - window.innerHeight : 0);

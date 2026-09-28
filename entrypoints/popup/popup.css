@@ -417,3 +417,12 @@ body {
   accent-color: var(--accent-blue);
   cursor: pointer;
 }
+
+/* Cost warnings next to a setting */
+.hint.advisory {
+  padding: 6px 8px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius);
+  background: rgba(245, 158, 11, 0.08);
+  color: #f5c16c;
+}

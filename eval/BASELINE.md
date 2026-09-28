@@ -2,6 +2,17 @@
 
 All runs are live: real model, real extension, real Chromium. A run passes only if the right requests reached the test server **and** the agent finished cleanly.
 
+## Screenshots for vision models (2026-09-29)
+
+Screenshots are off by default. When on, the model gets the visible page with each element's snapshot ID drawn in a numbered box (the sidebar is cropped off, and elements inside cross-origin frames are boxed too). `qwen/qwen3.8-27b` on Groq reads them: asked what number the Pay button had, it answered correctly. One 820×740 screenshot cost about 1,300 prompt tokens.
+
+| Setup (Groq, qwen3.8-27b, 1 trial) | login, custom-dropdown, modal-overlay, checkout-flow | Avg tokens |
+|---|---|---|
+| Text only | 4/4 | 4,795 |
+| Screenshots on planning steps (6 sent in 14 calls) | 4/4 | 5,495 (+15%) |
+
+These pages are simple enough to do from text, so this run measures the cost, not a gain. The benchmark has no visually heavy tasks yet (canvas, image-only buttons). `--screenshots planning|always` turns them on in the eval, which saves each image sent under `eval/results/screenshots/`.
+
 ## Planner + fast executor model (2026-09-29)
 
 With a fast model set up, it takes routine steps while the main model makes the plan, steps in after anything goes wrong, re-checks every 5th call, and confirms when the fast model says the task is done. Expert tier, Groq free tier, 1 trial each, both runs with batched actions:
