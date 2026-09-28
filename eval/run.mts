@@ -111,6 +111,8 @@ interface RunResult {
   /** Groq's message for the last 429, e.g. which limit was reached. */
   rateLimitDetail?: string;
   promptTokens: number;
+  /** Prompt tokens the provider served from its prompt cache (if it reports them). */
+  cachedTokens: number;
   completionTokens: number;
   durationMs: number;
   finalUrl: string;
@@ -190,8 +192,11 @@ function mockPlanner(plan: (MockStep | MockStep[])[]) {
 
     // Only use elements the model would actually have seen: the snapshot's
     // listing, plus results of earlier `find` actions in the action history
-    // (entries like `[160] <a> "Account settings" href=...`).
-    const visible = prompt.split('CURRENT PAGE DOM SNAPSHOT:')[1]?.split(/\n\nWhat are the NEXT/)[0] ?? '';
+    // (entries like `[160] <a> "Account settings" href=...`). The snapshot
+    // comes last, so its IDs are checked before older ones in the history.
+    const beforeQuestion = prompt.split(/\n\nWhat are the NEXT/)[0];
+    const [historyPart, snapshotPart = ''] = beforeQuestion.split('CURRENT PAGE DOM SNAPSHOT:');
+    const visible = `${snapshotPart}\n${historyPart}`;
     const findId = (target: RegExp) => {
       for (const m of visible.matchAll(/\[(\d+)\] (<[^|\n]*)/g)) {
         if (target.test(m[2])) return Number(m[1]);
@@ -262,7 +267,7 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
   const { context, userDataDir } = await launch(apiKey);
   const result: RunResult = {
     id: task.id, category: task.category, trial, pass: false, outcome: 'timeout',
-    llmCalls: 0, rateLimitHits: 0, promptTokens: 0, completionTokens: 0, durationMs: 0,
+    llmCalls: 0, rateLimitHits: 0, promptTokens: 0, cachedTokens: 0, completionTokens: 0, durationMs: 0,
     finalUrl: '', summary: '', knownIssue: task.knownIssue,
   };
 
@@ -313,6 +318,8 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
       const usage = JSON.parse(text).usage;
       if (usage) entry.tokens = usage.total_tokens ?? entry.tokens;
       result.promptTokens += usage?.prompt_tokens ?? 0;
+      // OpenAI/Groq/Gemini report prompt_tokens_details.cached_tokens; DeepSeek prompt_cache_hit_tokens
+      result.cachedTokens += usage?.prompt_tokens_details?.cached_tokens ?? usage?.prompt_cache_hit_tokens ?? 0;
       result.completionTokens += usage?.completion_tokens ?? 0;
     } catch { /* non-JSON error body */ }
     await route.fulfill({ response, body: text }).catch(() => {});
@@ -384,9 +391,11 @@ function report(results: RunResult[], tasks: Task[], meta: Record<string, string
   const standard = scored.filter(r => r.category !== 'hard' && r.category !== 'expert');
   const hard = scored.filter(r => r.category === 'hard');
   const expert = scored.filter(r => r.category === 'expert');
-  lines.push('| Suite | Success | Avg LLM calls | Avg tokens | Avg time |', '|---|---|---|---|---|');
+  lines.push('| Suite | Success | Avg LLM calls | Avg tokens | Cached prompt | Avg time |', '|---|---|---|---|---|---|');
   for (const [name, rs] of [['Standard', standard], ['Hard', hard], ['Expert', expert], ['**All**', scored]] as const) {
-    lines.push(`| ${name} | ${pct(passes(rs), rs.length)} (${passes(rs)}/${rs.length}) | ${avg(rs, r => r.llmCalls).toFixed(1)} | ${Math.round(avg(rs, r => r.promptTokens + r.completionTokens))} | ${(avg(rs, r => r.durationMs) / 1000).toFixed(1)}s |`);
+    const prompt = rs.reduce((n, r) => n + r.promptTokens, 0);
+    const cached = rs.reduce((n, r) => n + (r.cachedTokens ?? 0), 0);
+    lines.push(`| ${name} | ${pct(passes(rs), rs.length)} (${passes(rs)}/${rs.length}) | ${avg(rs, r => r.llmCalls).toFixed(1)} | ${Math.round(avg(rs, r => r.promptTokens + r.completionTokens))} | ${prompt ? pct(cached, prompt) : '-'} | ${(avg(rs, r => r.durationMs) / 1000).toFixed(1)}s |`);
   }
   lines.push('', '| Task | Category | Pass | Outcome | LLM calls | Notes |', '|---|---|---|---|---|---|');
   for (const { task, runs } of byTask) {

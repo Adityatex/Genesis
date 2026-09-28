@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { startRun, stopRun, resumeRun, getRunView, notifyTabLoading, PLANNER_EVERY, type RunnerDeps, type RunView, type TabInfo } from '@/lib/agent/runner';
+import { startRun, stopRun, resumeRun, getRunView, notifyTabLoading, changesSection, PLANNER_EVERY, type RunnerDeps, type RunView, type TabInfo } from '@/lib/agent/runner';
 import { promptHistory, PROMPT_RECENT_STEPS } from '@/lib/agent/history';
 
 /**
@@ -158,15 +158,25 @@ describe('checkpoints and stuck detection', () => {
 });
 
 describe('history sent to the model', () => {
-  it('keeps every note but only the most recent other steps', () => {
+  it('keeps every note but only the most recent other steps, dropping old ones 10 at a time', () => {
+    // 2 + 35 = 37 steps: 12 over the 25 kept, so the oldest 10 go
     const history = ['navigate https://a.test/ → ✅', 'note "Aero costs $899" → ✅ noted',
-      ...Array.from({ length: PROMPT_RECENT_STEPS + 5 }, (_, i) => `scroll down → ✅ ${i}`)];
+      ...Array.from({ length: PROMPT_RECENT_STEPS + 10 }, (_, i) => `scroll down → ✅ ${i}`)];
     const lines = promptHistory(history);
     expect(lines[0]).toBe('(1 earlier step not shown)');
     expect(lines[1]).toBe('2. note "Aero costs $899" → ✅ noted');
-    expect(lines[2]).toBe('(5 earlier steps not shown)');
-    expect(lines[3]).toBe('8. scroll down → ✅ 5');
-    expect(lines).toHaveLength(3 + PROMPT_RECENT_STEPS);
+    expect(lines[2]).toBe('(8 earlier steps not shown)');
+    expect(lines[3]).toBe('11. scroll down → ✅ 8');
+    expect(lines).toHaveLength(3 + 27);
+  });
+
+  it('keeps the start of the history the same for several steps, for prompt caching', () => {
+    const steps = (n: number) => Array.from({ length: n }, (_, i) => `scroll down → ✅ ${i}`);
+    const at = (n: number) => promptHistory(steps(n))[0];
+    expect(at(PROMPT_RECENT_STEPS + 3)).toBe('1. scroll down → ✅ 0'); // under a block over: nothing dropped yet
+    expect(at(PROMPT_RECENT_STEPS + 10)).toBe('(10 earlier steps not shown)');
+    expect(at(PROMPT_RECENT_STEPS + 19)).toBe('(10 earlier steps not shown)');
+    expect(at(PROMPT_RECENT_STEPS + 20)).toBe('(20 earlier steps not shown)');
   });
 
   it('sends a short history unchanged', () => {
@@ -423,5 +433,50 @@ describe('screenshots', () => {
     const { prompts } = await shots('always', [...typing(2), '{"action":"done","summary":"ok"}'], { dropped: true });
     const notes = prompts.at(-1)!.filter((h) => h.includes("doesn't accept images"));
     expect(notes).toEqual(["(note from Genesis) Screenshots are on, but Gemini · flash doesn't accept images, so it gets the page as text only."]);
+  });
+});
+
+describe('what changed after the last actions', () => {
+  const page = (elements: string[], text: string[]) =>
+    `PAGE: Sign up\n--- INTERACTIVE ELEMENTS (${elements.length}) ---\n${elements.join('\n')}\n\n--- VISIBLE TEXT (excerpt) ---\n${text.join('\n')}`;
+
+  it('reports new text, elements that appeared (with their new IDs) and ones that went away', () => {
+    const before = page(['[0] <input> "Username"', '[1] <button> "Create account"'], ['Sign up', 'Pick a username']);
+    const after = page(['[0] <input> "Username" value="ada"', '[1] <a> "Try ada_l instead"', '[2] <button> "Create account"'],
+      ['Sign up', 'Pick a username', 'That username is taken']);
+    expect(changesSection(before, after)).toBe(
+      '\n\n--- WHAT CHANGED AFTER YOUR LAST ACTIONS ---\n'
+      + 'New text: "That username is taken"\n'
+      + 'New elements:\n[1] <a> "Try ada_l instead"',
+    );
+  });
+
+  it('says so when nothing changed, and ignores values that were just typed', () => {
+    const before = page(['[0] <input> "Email"'], ['Newsletter']);
+    const after = page(['[0] <input> "Email" value="a@b.c"'], ['Newsletter']);
+    expect(changesSection(before, after)).toBe('\n\n--- WHAT CHANGED AFTER YOUR LAST ACTIONS ---\nNothing visible changed on the page.');
+  });
+
+  it('lists elements that are gone, e.g. a closed popup', () => {
+    const before = page(['[0] <button> "No thanks"', '[1] <button> "Download"'], ['Subscribe?', 'Report']);
+    const after = page(['[0] <button> "Download"'], ['Report']);
+    expect(changesSection(before, after)).toBe('\n\n--- WHAT CHANGED AFTER YOUR LAST ACTIONS ---\nGone: <button> "No thanks"');
+  });
+
+  it('is added on the same page after actions, but not on the first step or a new page', async () => {
+    const snaps: string[] = [];
+    const { deps, tab } = fakeDeps([
+      '{"action":"click","elementId":1}',
+      '{"action":"navigate","url":"https://shop.test/next"}',
+      '{"action":"done","summary":"ok"}',
+    ]);
+    const plan = deps.plan as any;
+    const original = plan.getMockImplementation();
+    plan.mockImplementation(async (...args: any[]) => { snaps.push(args[1]); return original(...args); });
+    tab.url = 'https://shop.test/';
+    await startRun(deps, 80, 'Go');
+    expect(snaps[0]).not.toContain('WHAT CHANGED'); // first look at the page
+    expect(snaps[1]).toContain('WHAT CHANGED AFTER YOUR LAST ACTIONS ---\nNothing visible changed'); // same page after the click
+    expect(snaps[2]).not.toContain('WHAT CHANGED'); // a different page
   });
 });

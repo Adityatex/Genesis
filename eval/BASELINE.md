@@ -2,6 +2,26 @@
 
 All runs are live: real model, real extension, real Chromium. A run passes only if the right requests reached the test server **and** the agent finished cleanly.
 
+## What changed, and a cache-friendly prompt (2026-09-29)
+
+Two changes to what the model reads. After acting on a page, it gets a short **"what changed"** section: new text (an error, a confirmation), elements that appeared (with their new IDs) and ones that went away, or "Nothing visible changed on the page". And the prompt now puts what changes least first (instructions, goal, step history, plan, then the page), with old history steps dropped 10 at a time. Providers that cache prompt prefixes can then reuse most of the previous call's prompt, which costs less and answers faster. Every call still sends the whole task, so fallback to another provider works as before.
+
+| Expert tier, `openai/gpt-oss-120b` (Groq, 1 trial) | Passed | Avg calls | Prompt served from cache |
+|---|---|---|---|
+| Before (same day, batched actions) | 6/8 | 4.8 | not measured |
+| After | **7/8** | 5.0 | 23% |
+
+`username-taken` went from 11 calls to 5, and `flaky-submit` now passes: the failed first submission shows up as new text, where the model had claimed success before. `compare-and-buy` still fails the same way, with three malformed responses in a row from gpt-oss.
+
+Prompt order alone, `deepseek-flash`, checkout-flow + username-taken + compare-and-buy, 1 trial, same code otherwise:
+
+| Order | Passed | Avg tokens | Prompt served from cache |
+|---|---|---|---|
+| Page first (old) | 2/3 | 59,091 | 42% |
+| Instructions, goal, history, page (new) | **3/3** | **21,360** | **62%** |
+
+The cache share is the reliable signal here. Most of the token difference is one run: with the old order `compare-and-buy` ping-ponged until the 40-step check-in, and deepseek-flash has looped on that task before (2/3 on 2026-09-27). The summary table now has a "Cached prompt" column.
+
 ## Screenshots for vision models (2026-09-29)
 
 Screenshots are off by default. When on, the model gets the visible page with each element's snapshot ID drawn in a numbered box (the sidebar is cropped off, and elements inside cross-origin frames are boxed too). `qwen/qwen3.8-27b` on Groq reads them: asked what number the Pay button had, it answered correctly. One 820×740 screenshot cost about 1,300 prompt tokens.

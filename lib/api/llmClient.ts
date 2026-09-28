@@ -465,7 +465,10 @@ RULES:
     {
       role: 'user',
       content: agentUserContent(
-        `GOAL: ${goal}\n\nCURRENT PAGE DOM SNAPSHOT:\n${domSnapshot.substring(0, SNAPSHOT_SAFETY_CAP)}${planText}${historyText}\n\nWhat are the NEXT actions? Respond with JSON only.`,
+        // What changes least comes first: providers that cache prompt prefixes
+        // (DeepSeek, OpenAI, Gemini, Groq) then reuse most of the previous
+        // call's prompt, which is cheaper and faster. The page changes most.
+        `GOAL: ${goal}${historyText}${planText}\n\nCURRENT PAGE DOM SNAPSHOT:\n${domSnapshot.substring(0, SNAPSHOT_SAFETY_CAP)}\n\nWhat are the NEXT actions? Respond with JSON only.`,
         image,
       ),
     },

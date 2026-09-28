@@ -96,6 +96,8 @@ interface Run extends RunView {
   screenshots: ScreenshotMode;
   /** Models already reported as not accepting screenshots. */
   noVision: Set<string>;
+  /** The snapshot the model last saw, to tell it what its actions changed. */
+  lastSnapshot?: { url?: string; text: string };
   /** The model that last answered for each role, to spot a backup taking over. */
   roleModels: Partial<Record<ModelRole, string>>;
 }
@@ -132,6 +134,49 @@ export function memorySection(visited: Map<string, string>, currentUrl: string |
   if (entries.length === 0) return '';
   const lines = entries.map(([url, excerpt]) => `- ${url}: ${excerpt}`);
   return `\n\n--- PAGES YOU VISITED EARLIER (what they said; they are not on screen now) ---\n${lines.join('\n')}`;
+}
+
+/** Most new text lines, new elements and gone elements listed in a change summary. */
+const MAX_NEW_TEXT = 5;
+const MAX_NEW_ELEMENTS = 8;
+const MAX_GONE_ELEMENTS = 5;
+
+/** Element lines of a snapshot, keyed by description: IDs are renumbered every snapshot, and typed values are in the history. */
+function elementLines(snapshot: string): Map<string, string> {
+  const lines = new Map<string, string>();
+  for (const line of snapshot.split('\n')) {
+    if (!/^\[\d+\] </.test(line)) continue;
+    lines.set(line.replace(/^\[\d+\] /, '').replace(/ value="[^"]*"/, ''), line);
+  }
+  return lines;
+}
+
+function textLines(snapshot: string): Set<string> {
+  const text = snapshot.split('--- VISIBLE TEXT (excerpt) ---')[1] ?? '';
+  return new Set(text.split('\n').map((l) => l.trim()).filter((l) => l.length > 2));
+}
+
+/**
+ * What changed on the page since the previous snapshot of the same page:
+ * new text (error messages, confirmations), elements that appeared (a popup,
+ * a menu) and elements that went away. Or, just as useful, that nothing did.
+ */
+export function changesSection(previous: string, current: string): string {
+  const before = elementLines(previous);
+  const after = elementLines(current);
+  const added = [...after].filter(([key]) => !before.has(key)).map(([, line]) => line);
+  const gone = [...before.keys()].filter((key) => !after.has(key));
+  const oldText = textLines(previous);
+  const newText = [...textLines(current)].filter((line) => !oldText.has(line));
+
+  if (!added.length && !gone.length && !newText.length) {
+    return '\n\n--- WHAT CHANGED AFTER YOUR LAST ACTIONS ---\nNothing visible changed on the page.';
+  }
+  const out: string[] = [];
+  if (newText.length) out.push(`New text: ${newText.slice(0, MAX_NEW_TEXT).map((l) => `"${l.length > 120 ? `${l.slice(0, 120)}…` : l}"`).join(' | ')}`);
+  if (added.length) out.push(`New elements:\n${added.slice(0, MAX_NEW_ELEMENTS).join('\n')}${added.length > MAX_NEW_ELEMENTS ? `\n… and ${added.length - MAX_NEW_ELEMENTS} more` : ''}`);
+  if (gone.length) out.push(`Gone: ${gone.slice(0, MAX_GONE_ELEMENTS).join('; ')}${gone.length > MAX_GONE_ELEMENTS ? `; and ${gone.length - MAX_GONE_ELEMENTS} more` : ''}`);
+  return `\n\n--- WHAT CHANGED AFTER YOUR LAST ACTIONS ---\n${out.join('\n')}`;
 }
 
 /** After an action, time for a click-triggered navigation to start. */
@@ -328,7 +373,11 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
     }
 
     publish(deps, run, run.history.length ? progressMessage(run, `*Step ${run.step}: planning...*`) : `🧠 **Step ${run.step}**: planning...`, true);
-    const reply = await deps.plan(run.goal, snapshotText + memorySection(run.visited, page.url), run.history, run.plan, role, image);
+    // Same page as last time: say what the last actions changed (a new page is all new)
+    const last = run.lastSnapshot;
+    const changes = last && last.url === page.url && run.history.length ? changesSection(last.text, snapshotText) : '';
+    run.lastSnapshot = { url: page.url, text: snapshotText };
+    const reply = await deps.plan(run.goal, snapshotText + changes + memorySection(run.visited, page.url), run.history, run.plan, role, image);
     const { text: raw, model, unavailable, imageDropped } = typeof reply === 'string'
       ? { text: reply, model: undefined, unavailable: undefined, imageDropped: false }
       : reply;

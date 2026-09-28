@@ -16,8 +16,14 @@ export const MAX_INVALID_RESPONSES = 3;
 export const REPEAT_WARN = 2;
 export const REPEAT_PAUSE = 3;
 
-/** How much history the model sees: every note, plus the most recent steps. */
+/** How much history the model sees: every note, plus at least this many recent steps. */
 export const PROMPT_RECENT_STEPS = 25;
+/**
+ * Older steps are dropped this many at a time, so the history's beginning
+ * stays the same for several calls in a row (a prompt-cache hit), instead of
+ * shifting on every step.
+ */
+export const PROMPT_TRIM_BLOCK = 10;
 
 export function isAgentCommand(msg: string): boolean {
   const actionWords = /\b(go to|open|navigate|click|search|find|type|fill|submit|scroll|press|select|visit|browse|download|sign in|log in|sign up|play|watch|buy|add to cart|checkout|subscribe)\b/i;
@@ -35,7 +41,8 @@ export function formatHistory(actionHistory: string[]): string {
  * the facts the model wrote down to use later.
  */
 export function promptHistory(actionHistory: string[]): string[] {
-  const firstRecent = Math.max(0, actionHistory.length - PROMPT_RECENT_STEPS);
+  const excess = Math.max(0, actionHistory.length - PROMPT_RECENT_STEPS);
+  const firstRecent = Math.floor(excess / PROMPT_TRIM_BLOCK) * PROMPT_TRIM_BLOCK;
   const lines: string[] = [];
   let skipped = 0;
   actionHistory.forEach((entry, i) => {
