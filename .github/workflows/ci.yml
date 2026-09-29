@@ -15,9 +15,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            mcp/package-lock.json
 
       - name: Install
         run: npm ci
+
+      - name: Install genesis-mcp
+        run: npm --prefix mcp ci
 
       - name: Typecheck
         run: npm run typecheck
@@ -27,6 +33,9 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Build genesis-mcp
+        run: npm --prefix mcp run build
 
       - name: Upload unpacked extension
         uses: actions/upload-artifact@v4
@@ -56,6 +65,12 @@ jobs:
 
       - name: Mock eval
         run: npm run eval:mock -- --timeout 45
+
+      - name: genesis-mcp end to end (MCP client, real extension, real Chromium)
+        run: |
+          npm --prefix mcp ci
+          npm --prefix mcp run build
+          npm run eval:mcp
 
       - name: Upload results
         if: always()

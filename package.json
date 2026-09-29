@@ -15,7 +15,9 @@
     "eval": "tsx eval/run.mts",
     "eval:mock": "tsx eval/run.mts --mock",
     "fixtures": "tsx eval/serve.mts",
-    "postinstall": "wxt prepare"
+    "postinstall": "wxt prepare",
+    "build:mcp": "npm --prefix mcp install && npm --prefix mcp run build",
+    "eval:mcp": "tsx eval/mcp-e2e.mts"
   },
   "dependencies": {
     "lucide-react": "^1.8.0",

@@ -142,6 +142,28 @@ Paste your key, click **Load models** to list the models your key can actually u
 
 Keys are stored per provider in `chrome.storage.local` and read only by the background service worker. They are never exposed to content scripts, never shown back in full, and never committed. Keys and page content are only sent over HTTPS, except to servers on localhost. See [PRIVACY.md](PRIVACY.md).
 
+## 🤝 Use it from Claude Code, Claude Desktop or Codex (MCP)
+
+`genesis-mcp` lets an AI app you already use drive your real browser through Genesis. The model runs inside that app, on your plan with it, so Genesis needs no API key for this. Genesis supplies what it's good at: page snapshots with numbered elements (including iframes and Shadow DOM), real mouse and keyboard input, and screenshots with those numbers drawn on.
+
+```bash
+npm run build:mcp                 # once: installs and builds mcp/
+node mcp/dist/server.js token     # prints your pairing token and the setup commands
+claude mcp add genesis -- node "<path to repo>/mcp/dist/server.js"   # Claude Code; Codex: codex mcp add ...
+```
+
+Then, in the Genesis popup under **AI apps (MCP)**, turn on **Let AI apps control this browser** and paste the token. The toolbar icon shows **MCP** while an app is connected.
+
+| Tool | What it does |
+|---|---|
+| `browser_tabs`, `browser_open`, `browser_select_tab` | List, open and switch tabs |
+| `browser_snapshot` | The page as text, every interactive element numbered |
+| `browser_act` | Up to 10 actions in order (click, type, select, navigate, keys, scroll, find, ...), stopping early if the page changes or one fails |
+| `browser_screenshot` | The visible page with each element's number drawn on |
+| `browser_run_task` | Hand a whole task to Genesis's own agent (uses the model set up in Genesis) |
+
+**Security.** The bridge is off until you turn it on. `genesis-mcp` listens on `127.0.0.1` only and refuses connections from web pages. Before any command, the extension and the server prove to each other that they hold the same pairing token (HMAC challenge and response, so the token never travels), which stops another program on the port from taking over the browser. Only `http(s)` URLs can be opened. `npm run eval:mcp` checks the whole chain end to end in CI.
+
 ## 🧰 Maintaining
 
 Repository setup that lives in GitHub settings (secrets, description, branch protection) and how CI is organised: [docs/MAINTAINING.md](docs/MAINTAINING.md).

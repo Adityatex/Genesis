@@ -426,3 +426,11 @@ body {
   background: rgba(245, 158, 11, 0.08);
   color: #f5c16c;
 }
+
+.hint code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 10.5px;
+}

@@ -7,5 +7,6 @@
 - Keys and page content are only ever sent over HTTPS, except to servers on your own machine (localhost).
 - The `debugger` permission is used only while the agent is running a task, to send real mouse and keyboard input to that tab (Chrome shows a banner while it is active). It is not used to read or record your browsing, and can be turned off in the popup.
 - A small helper script runs inside each frame of a page so the agent can work in embedded forms (e.g. payment iframes). It stays idle and reads nothing unless the agent is working on that tab.
+- **AI apps (MCP), off by default.** If you turn on "Let AI apps control this browser" and run the `genesis-mcp` helper, an AI app on your computer (e.g. Claude Code, Claude Desktop, Codex) can read pages and act in your browser through Genesis. Page snapshots and screenshots then go to that app, and on to the AI provider it uses under that provider's policy. The connection stays on your machine (127.0.0.1) and requires the pairing token you set. The `alarms` permission only keeps this connection alive.
 - We never sell, share, or retain your browsing data. Your provider's own privacy policy applies to what you send it.
 - Contact: open a GitHub issue at https://github.com/Adityatex/Genesis/issues

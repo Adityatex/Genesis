@@ -1,0 +1,30 @@
+{
+  "name": "genesis-mcp",
+  "version": "0.1.0",
+  "description": "MCP server that lets Claude Code, Claude Desktop, Codex and other MCP apps drive your browser through the Genesis extension",
+  "type": "module",
+  "bin": {
+    "genesis-mcp": "dist/server.js"
+  },
+  "main": "dist/server.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "genesis-task-automator": "file:..",
+    "ws": "^8.22.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0"
+  }
+}

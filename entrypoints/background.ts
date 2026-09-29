@@ -14,6 +14,14 @@ import { providerPool, modelLabel, type FallbackResult } from '@/lib/api/fallbac
 import { trustedClick, trustedKey, trustedType, releaseTab, watchDetach, debuggerScreenshot } from '@/lib/agent/trustedInput';
 import { annotate, base64ToBlob, type VisualInfo } from '@/lib/agent/screenshot';
 import { PREFS_KEY, DEFAULT_PREFS, type AgentPrefs } from '@/lib/agent/prefs';
+import { BridgeClient, type BridgeStatus } from '@/lib/mcp/bridgeClient';
+import { createHandlers } from '@/lib/mcp/handlers';
+import { DEFAULT_PORT, isValidToken, normalizeToken } from '@/mcp/src/protocol';
+
+/** genesis-mcp bridge settings (chrome.storage.local); only this worker reads the token. */
+const MCP_KEY = 'genesis_mcp';
+interface McpSettings { enabled: boolean; token: string; port: number }
+const MCP_ALARM = 'genesis-mcp';
 
 declare var chrome: any;
 
@@ -91,7 +99,78 @@ export default defineBackground(() => {
 
   // The runner needs to know when a page starts loading (clicks and form submits navigate)
   chrome.tabs.onUpdated.addListener((tabId: number, changeInfo: { status?: string }) => {
-    if (changeInfo.status === 'loading' && isRunning(tabId)) notifyTabLoading(tabId);
+    if (changeInfo.status !== 'loading') return;
+    if (isRunning(tabId)) notifyTabLoading(tabId);
+    tabLoads.set(tabId, (tabLoads.get(tabId) ?? 0) + 1);
+  });
+  chrome.tabs.onRemoved.addListener((tabId: number) => tabLoads.delete(tabId));
+
+  // ---- genesis-mcp bridge: an AI app on this computer (Claude Code, Claude
+  // Desktop, Codex, ...) drives the browser through Genesis (lib/mcp/)
+  /** Page loads per tab, so actions from the bridge can tell when a page changed. */
+  const tabLoads = new Map<number, number>();
+  let mcpStatus: { status: BridgeStatus; detail?: string } = { status: 'off' };
+
+  const bridge = new BridgeClient({
+    WebSocket,
+    handle: createHandlers({
+      ...runnerDeps,
+      listTabs: async () => (await chrome.tabs.query({})).map((t: any) => ({ id: t.id, title: t.title, url: t.url, active: t.active })),
+      activeTabId: async () => (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id,
+      createTab: async (url) => (await chrome.tabs.create({ url, active: true })).id,
+      focusTab: async (tabId) => {
+        const tab = await chrome.tabs.update(tabId, { active: true });
+        await chrome.windows.update(tab.windowId, { focused: true });
+      },
+      loads: (tabId) => tabLoads.get(tabId) ?? 0,
+      screenshot: (tabId, visual) => runnerDeps.screenshot!(tabId, visual),
+      runTask: async (tabId, goal) => {
+        const prefs = await loadPrefs();
+        const settings = await loadSettings();
+        const problem = configProblem(resolveConfig(settings));
+        if (problem) throw new Error(`Genesis's own agent isn't set up: ${problem}`);
+        holdKeepAlive();
+        try {
+          const view = await startRun(runnerDeps, tabId, goal, { checkpoint: 0, split: hasExecutor(settings), screenshots: prefs.screenshots });
+          return view.message;
+        } finally {
+          releaseKeepAlive();
+        }
+      },
+      isBusy: (tabId) => isRunning(tabId),
+      releaseInput: (tabId) => { if (!isRunning(tabId)) releaseTab(tabId); },
+    }),
+    onStatus: (status, detail) => {
+      mcpStatus = { status, detail };
+      // A visible sign that an AI app can control the browser
+      chrome.action.setBadgeText({ text: status === 'connected' ? 'MCP' : '' });
+      chrome.action.setBadgeBackgroundColor({ color: '#7c3aed' });
+    },
+  });
+
+  async function loadMcp(): Promise<McpSettings> {
+    const stored: any = await browser.storage.local.get(MCP_KEY);
+    return { enabled: false, token: '', port: DEFAULT_PORT, ...(stored[MCP_KEY] ?? {}) };
+  }
+
+  /** Connect or disconnect to match the settings; an alarm reconnects after the worker sleeps. */
+  async function applyMcp(): Promise<void> {
+    const mcp = await loadMcp();
+    if (mcp.enabled && isValidToken(mcp.token)) {
+      bridge.start(mcp.port, normalizeToken(mcp.token));
+      chrome.alarms.create(MCP_ALARM, { periodInMinutes: 1 });
+    } else {
+      bridge.stop();
+      chrome.alarms.clear(MCP_ALARM);
+    }
+  }
+  chrome.alarms.onAlarm.addListener((alarm: { name: string }) => {
+    if (alarm.name === MCP_ALARM) bridge.ensureConnected();
+  });
+  applyMcp().catch((err) => console.error('[Genesis] MCP bridge:', err));
+  // Settings can change from elsewhere too (another popup window, tests)
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes[MCP_KEY]) applyMcp().catch((err) => console.error('[Genesis] MCP bridge:', err));
   });
   chrome.tabs.onRemoved.addListener((tabId: number) => forgetRun(tabId));
 
@@ -346,6 +425,32 @@ export default defineBackground(() => {
             ) as any;
             if (!res?.success) throw new Error(res?.error || 'The frame did not respond');
             sendResponse({ success: true, data: res.data });
+            break;
+          }
+
+          case 'GET_MCP': {
+            // The popup sees whether a token is saved, never the token
+            const mcp = await loadMcp();
+            sendResponse({
+              success: true,
+              data: { enabled: mcp.enabled, port: mcp.port, hasToken: isValidToken(mcp.token), ...mcpStatus },
+            });
+            break;
+          }
+
+          case 'SAVE_MCP': {
+            const mcp = await loadMcp();
+            const { enabled, token, port } = payload ?? {};
+            if (typeof token === 'string' && token.trim()) {
+              if (!isValidToken(token)) throw new Error("That isn't a Genesis pairing token: it should be 64 letters and digits. Run \"genesis-mcp token\" to see yours.");
+              mcp.token = normalizeToken(token);
+            }
+            if (typeof port === 'number' && Number.isInteger(port) && port > 1023 && port < 65536) mcp.port = port;
+            if (typeof enabled === 'boolean') mcp.enabled = enabled;
+            if (mcp.enabled && !isValidToken(mcp.token)) throw new Error('Paste the pairing token first (run "genesis-mcp token" to see it)');
+            await browser.storage.local.set({ [MCP_KEY]: mcp });
+            await applyMcp();
+            sendResponse({ success: true, data: { enabled: mcp.enabled, port: mcp.port, hasToken: isValidToken(mcp.token), ...mcpStatus } });
             break;
           }
 

@@ -3,6 +3,16 @@ import { loadStoredProfile, saveStoredProfile, PROFILE_FIELDS, type AutofillProf
 import { PROVIDERS, PROVIDER_IDS, type ProviderId } from '@/lib/api/providers';
 import type { ModelInfo } from '@/lib/api/llmClient';
 import { CHECKPOINT_CHOICES, DEFAULT_PREFS, type ScreenshotMode } from '@/lib/agent/prefs';
+import type { BridgeStatus } from '@/lib/mcp/bridgeClient';
+
+const MCP_STATUS_TEXT: Record<BridgeStatus, string> = {
+  off: 'Off',
+  waiting: 'On. Waiting for genesis-mcp: it starts when your AI app uses Genesis',
+  connected: 'Connected to your AI app',
+  rejected: 'Not connected',
+};
+
+interface McpState { enabled: boolean; hasToken: boolean; status: BridgeStatus; detail?: string }
 
 type Status = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -31,6 +41,9 @@ export default function App() {
   const [stepCheckpoint, setStepCheckpoint] = useState(DEFAULT_PREFS.stepCheckpoint);
   const [screenshots, setScreenshots] = useState<ScreenshotMode>(DEFAULT_PREFS.screenshots);
   const [nativeTools, setNativeTools] = useState(DEFAULT_PREFS.nativeTools);
+  const [mcp, setMcp] = useState<McpState>({ enabled: false, hasToken: false, status: 'off' });
+  const [mcpToken, setMcpToken] = useState('');
+  const [mcpError, setMcpError] = useState('');
   const [profile, setProfile] = useState<AutofillProfile>({ fullname: '', email: '', phone: '', address: '', city: '', state: '', zip: '', country: '' });
   const [profileStatus, setProfileStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [profileMessage, setProfileMessage] = useState('');
@@ -58,12 +71,28 @@ export default function App() {
       setNativeTools(res.data.nativeTools);
     });
     loadStoredProfile().then(setProfile).catch(() => {});
+    // Connection status changes while the popup is open (an AI app starts genesis-mcp)
+    const refreshMcp = () => browser.runtime.sendMessage({ action: 'GET_MCP' }).then((res: any) => { if (res?.success) setMcp(res.data); }).catch(() => {});
+    refreshMcp();
+    const mcpTimer = setInterval(refreshMcp, 2000);
+    return () => clearInterval(mcpTimer);
   }, []);
 
   const handleTrustedInputChange = async (on: boolean) => {
     setTrustedInput(on);
     const res: any = await browser.runtime.sendMessage({ action: 'SAVE_PREFS', payload: { trustedInput: on } });
     if (!res?.success) setTrustedInput(!on);
+  };
+
+  const saveMcp = async (change: { enabled?: boolean; token?: string }) => {
+    setMcpError('');
+    const res: any = await browser.runtime.sendMessage({ action: 'SAVE_MCP', payload: change });
+    if (!res?.success) {
+      setMcpError(res?.error || 'Could not save');
+      return;
+    }
+    setMcp(res.data);
+    if (change.token) setMcpToken('');
   };
 
   const handleNativeToolsChange = async (on: boolean) => {
@@ -436,6 +465,46 @@ export default function App() {
           The model answers through the provider's function-calling feature instead of writing JSON, which some models
           get wrong. Models that don't support it fall back to JSON by themselves.
         </p>
+      </div>
+
+      {/* AI apps (MCP) Section */}
+      <div className="section">
+        <label className="section-label">AI apps (MCP)</label>
+        <label className="toggle-row">
+          <input type="checkbox" checked={mcp.enabled} onChange={(e) => saveMcp({ enabled: e.target.checked })} />
+          <span>Let AI apps control this browser</span>
+        </label>
+        <p className="hint">
+          Claude Code, Claude Desktop, Codex or any MCP app on this computer can then read pages and click, type and
+          navigate through Genesis. The model runs in that app, on your plan with it; Genesis doesn't need its own key.
+        </p>
+        <div className="input-group">
+          <input
+            type="password"
+            placeholder={mcp.hasToken ? 'Pairing token saved. Paste a new one to replace it' : 'Paste the pairing token'}
+            value={mcpToken}
+            onChange={(e) => setMcpToken(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && mcpToken.trim() && saveMcp({ token: mcpToken })}
+            className="api-input"
+            aria-label="Pairing token"
+          />
+          <button onClick={() => saveMcp({ token: mcpToken })} className="secondary-btn" disabled={!mcpToken.trim()}>Save</button>
+        </div>
+        <div className={`message ${mcp.status === 'connected' ? 'saved' : mcp.status === 'rejected' || mcpError ? 'error' : 'idle'}`}>
+          {mcpError || MCP_STATUS_TEXT[mcp.status] + (mcp.detail ? `: ${mcp.detail}` : '')}
+        </div>
+        <p className="hint">
+          Setup, once: build the helper (<code>cd mcp &amp;&amp; npm install &amp;&amp; npm run build</code>), run{' '}
+          <code>node mcp/dist/server.js token</code> for the pairing token and the command that adds Genesis to your AI
+          app, then paste the token here.
+        </p>
+        {mcp.enabled && (
+          <p className="hint advisory">
+            ⚠️ While this is on, a connected AI app can read and act on any page in this browser, including sites you're
+            signed in to. Only connect apps you trust, and turn this off when you're not using it. The toolbar icon shows
+            "MCP" while one is connected.
+          </p>
+        )}
       </div>
 
       {/* Autofill Profile Section */}

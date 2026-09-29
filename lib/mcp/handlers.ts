@@ -1,0 +1,179 @@
+// lib/mcp/handlers.ts
+// What the extension does for genesis-mcp's requests (background only). The
+// AI app on the other end reads pages and acts through the same snapshot and
+// action code as Genesis's own agent. Chrome specifics are injected so this
+// can be unit-tested.
+
+import type { BridgeMethod } from '@/mcp/src/protocol';
+import { runAction, waitForPage, type RunnerDeps } from '@/lib/agent/runner';
+import { parseAgentAction } from '@/lib/agent/parseAction';
+import { describeAction } from '@/lib/agent/history';
+import type { AgentAction } from '@/lib/agent/actionExecutor';
+
+export interface TabSummary {
+  id: number;
+  title?: string;
+  url?: string;
+  active: boolean;
+}
+
+export interface HandlerDeps extends Pick<RunnerDeps, 'getTab' | 'send' | 'sleep' | 'navigate'> {
+  listTabs(): Promise<TabSummary[]>;
+  /** The active tab of the last focused window. */
+  activeTabId(): Promise<number | undefined>;
+  createTab(url: string): Promise<number>;
+  /** Bring a tab (and its window) to the front. */
+  focusTab(tabId: number): Promise<void>;
+  /** Page loads seen in a tab so far. */
+  loads(tabId: number): number;
+  screenshot(tabId: number, visual: unknown): Promise<string | null>;
+  /** Run Genesis's own agent on a goal; resolves with its final message. */
+  runTask(tabId: number, goal: string): Promise<string>;
+  /** Genesis's own agent is running in this tab. */
+  isBusy(tabId: number): boolean;
+  /** Drop the debugger (and Chrome's banner) once the AI app has gone quiet. */
+  releaseInput(tabId: number): void;
+}
+
+/** Actions per browser_act call. */
+const MAX_ACTIONS = 10;
+/** Release trusted input this long after the last action. */
+const RELEASE_AFTER_MS = 60_000;
+const SNAPSHOT_TIMEOUT_MS = 20_000;
+
+function httpUrl(raw: unknown): string {
+  let url: URL;
+  try {
+    url = new URL(String(raw ?? ''));
+  } catch {
+    throw new Error(`Not a full URL: "${raw}"`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error(`Only http(s) URLs can be opened, not ${url.protocol}`);
+  return url.href;
+}
+
+export function createHandlers(deps: HandlerDeps) {
+  /** The tab the AI app is working in: the last one it opened or selected. */
+  let workingTab: number | undefined;
+  const releaseTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+  async function tabFor(params: Record<string, unknown>): Promise<number> {
+    if (typeof params.tabId === 'number') return params.tabId;
+    if (workingTab !== undefined) {
+      try {
+        await deps.getTab(workingTab);
+        return workingTab;
+      } catch { workingTab = undefined; /* closed */ }
+    }
+    const active = await deps.activeTabId();
+    if (active === undefined) throw new Error('No tab to work in: open one with browser_open');
+    return active;
+  }
+
+  async function ready(tabId: number): Promise<{ title?: string; url?: string }> {
+    try {
+      return await waitForPage(deps, tabId);
+    } catch {
+      throw new Error(`Tab ${tabId} isn't ready for Genesis. It may be a browser page (chrome://, the Web Store) where extensions can't run, or it opened before Genesis was installed: reload it.`);
+    }
+  }
+
+  function scheduleRelease(tabId: number): void {
+    clearTimeout(releaseTimers.get(tabId));
+    releaseTimers.set(tabId, setTimeout(() => {
+      releaseTimers.delete(tabId);
+      deps.releaseInput(tabId);
+    }, RELEASE_AFTER_MS));
+  }
+
+  const handlers: Record<BridgeMethod, (params: Record<string, unknown>) => Promise<unknown>> = {
+    async tabs_list() {
+      const tabs = await deps.listTabs();
+      return tabs.map((t) => ({ ...t, working: t.id === workingTab }));
+    },
+
+    async tab_open(params) {
+      const url = httpUrl(params.url);
+      let tabId: number;
+      if (params.newTab === false) {
+        tabId = await tabFor(params);
+        await deps.navigate(tabId, url);
+      } else {
+        tabId = await deps.createTab(url);
+      }
+      workingTab = tabId;
+      await deps.sleep(500);
+      const tab = await ready(tabId);
+      return `Opened "${tab.title || 'untitled page'}" (${tab.url}) in tab ${tabId}.`;
+    },
+
+    async tab_select(params) {
+      const tabId = Number(params.tabId);
+      await deps.focusTab(tabId);
+      workingTab = tabId;
+      const tab = await deps.getTab(tabId);
+      return `Working in tab ${tabId}: "${tab.title || 'untitled page'}" (${tab.url}).`;
+    },
+
+    async page_snapshot(params) {
+      const tabId = await tabFor(params);
+      await ready(tabId);
+      const snapshot = await deps.send(tabId, { action: 'AGENT_SNAPSHOT' }, SNAPSHOT_TIMEOUT_MS);
+      return `Tab ${tabId}\n${String(snapshot?.text ?? '')}`;
+    },
+
+    async page_act(params) {
+      const tabId = await tabFor(params);
+      if (deps.isBusy(tabId)) throw new Error(`Genesis's own agent is working in tab ${tabId}; wait for it to finish or stop it from the sidebar.`);
+      const raw = Array.isArray(params.actions) ? params.actions : [];
+      if (raw.length === 0) throw new Error('No actions given');
+      if (raw.length > MAX_ACTIONS) throw new Error(`At most ${MAX_ACTIONS} actions per call`);
+      const actions: AgentAction[] = raw.map((a, i) => {
+        const parsed = parseAgentAction(JSON.stringify(a));
+        if (!parsed.ok) throw new Error(`Action ${i + 1}: ${parsed.error}`);
+        if (parsed.action.action === 'done') throw new Error(`Action ${i + 1}: "done" is for Genesis's own agent; just stop acting`);
+        return parsed.action;
+      });
+
+      await ready(tabId);
+      const lines: string[] = [];
+      for (const [i, action] of actions.entries()) {
+        const { result, pageChanged } = await runAction(deps, tabId, action, () => deps.loads(tabId));
+        lines.push(`${describeAction(action)} → ${result}`);
+        const left = actions.length - i - 1;
+        if (left > 0 && (pageChanged || result.startsWith('❌'))) {
+          lines.push(`(${left} more action${left === 1 ? '' : 's'} not run: ${pageChanged ? 'the page changed; take a new browser_snapshot, since element IDs change' : 'the action above failed'})`);
+          break;
+        }
+      }
+      scheduleRelease(tabId);
+      return lines.join('\n');
+    },
+
+    async page_screenshot(params) {
+      const tabId = await tabFor(params);
+      await ready(tabId);
+      const snapshot = await deps.send(tabId, { action: 'AGENT_SNAPSHOT', visual: true }, SNAPSHOT_TIMEOUT_MS);
+      if (!snapshot?.visual) throw new Error('Could not measure the page for a screenshot');
+      const image = await deps.screenshot(tabId, snapshot.visual);
+      if (!image) throw new Error(`Tab ${tabId} isn't visible, so it can't be captured. Bring it to the front with browser_select_tab, or turn on "Real mouse & keyboard input" in Genesis, which can capture background tabs.`);
+      scheduleRelease(tabId);
+      return image;
+    },
+
+    async run_task(params) {
+      const goal = String(params.goal ?? '').trim();
+      if (!goal) throw new Error('No goal given');
+      const tabId = await tabFor(params);
+      if (deps.isBusy(tabId)) throw new Error(`Genesis's own agent is already working in tab ${tabId}`);
+      await ready(tabId);
+      return deps.runTask(tabId, goal);
+    },
+  };
+
+  return async (method: BridgeMethod, params: Record<string, unknown>): Promise<unknown> => {
+    const handler = handlers[method];
+    if (!handler) throw new Error(`Unknown request: ${method}`);
+    return handler(params);
+  };
+}

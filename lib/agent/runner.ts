@@ -242,7 +242,7 @@ function publish(deps: RunnerDeps, run: Run, message: string, loading: boolean):
 }
 
 /** Wait until the tab has finished loading and its content script answers. */
-async function waitForPage(deps: RunnerDeps, tabId: number): Promise<TabInfo> {
+export async function waitForPage(deps: Pick<RunnerDeps, 'getTab' | 'send' | 'sleep'>, tabId: number): Promise<TabInfo> {
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const tab = await deps.getTab(tabId);
@@ -287,8 +287,13 @@ export function handoffNote(previous: string, next: string, reason?: string): st
  * Run one action. If it navigates (link click, form submit), the page may
  * unload before it answers; that's expected, not an error.
  */
-async function runAction(deps: RunnerDeps, run: Run, action: AgentAction): Promise<{ result: string; pageChanged: boolean }> {
-  const { tabId } = run;
+export async function runAction(
+  deps: Pick<RunnerDeps, 'getTab' | 'send' | 'sleep' | 'navigate'>,
+  tabId: number,
+  action: AgentAction,
+  /** Page loads seen in the tab so far (see notifyTabLoading). */
+  loads: () => number,
+): Promise<{ result: string; pageChanged: boolean }> {
   if (action.action === 'navigate') {
     await deps.navigate(tabId, action.url!);
     await deps.sleep(SETTLE_MS);
@@ -296,7 +301,7 @@ async function runAction(deps: RunnerDeps, run: Run, action: AgentAction): Promi
     return { result: `✅ now on "${tab.title || 'untitled page'}" (${tab.url})`, pageChanged: true };
   }
 
-  const loadsBefore = run.loads;
+  const loadsBefore = loads();
   const urlBefore = (await deps.getTab(tabId)).url;
   let result: string;
   try {
@@ -307,7 +312,7 @@ async function runAction(deps: RunnerDeps, run: Run, action: AgentAction): Promi
 
   await deps.sleep(QUICK_ACTIONS.has(action.action) ? QUICK_SETTLE_MS : SETTLE_MS);
   const now = await deps.getTab(tabId);
-  if (run.loads > loadsBefore || now.status === 'loading' || now.url !== urlBefore) {
+  if (loads() > loadsBefore || now.status === 'loading' || now.url !== urlBefore) {
     const tab = await waitForPage(deps, tabId);
     return { result: `${result}; page changed, now on "${tab.title || 'untitled page'}" (${tab.url})`, pageChanged: true };
   }
@@ -455,7 +460,7 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
       }
       const desc = descs[i];
       publish(deps, run, progressMessage(run, `*Step ${run.step}: ${desc}*`), true);
-      const { result, pageChanged } = await runAction(deps, run, action);
+      const { result, pageChanged } = await runAction(deps, tabId, action, () => run.loads);
       run.history.push(`${desc} → ${result}${i === 0 ? repeatWarning : ''}`);
 
       // Later actions were planned for the page as it was; stop if that changed
