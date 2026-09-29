@@ -6,6 +6,7 @@ import { withTimeout, formatError } from '@/lib/utils/errorHandler';
 import { PROVIDERS, type LLMConfig } from '@/lib/api/providers';
 import { promptHistory } from '@/lib/agent/history';
 import { MAX_BATCH } from '@/lib/agent/parseAction';
+import { AGENT_TOOLS, NEXT_ACTIONS_TOOL, toolCallsToResponse, type ToolCall, type ToolDef } from '@/lib/agent/tools';
 
 const REQUEST_TIMEOUT = 15000;
 const MODELS_TIMEOUT = 10000;
@@ -32,6 +33,7 @@ interface ChatResponse {
   choices: {
     message: {
       content: string | null;
+      tool_calls?: ToolCall[];
     };
     finish_reason?: string;
   }[];
@@ -53,6 +55,18 @@ export interface CallOptions {
    * retrying: used when another provider can take the request.
    */
   failFast?: boolean;
+  /** Offer these tools (required: the model must call one); jsonMode is ignored then. */
+  tools?: ToolDef[];
+  /** Turns the model's tool calls into the text callLLM returns. */
+  toolsToText?: (calls: ToolCall[]) => string;
+}
+
+/** The provider or model refused tools; the refusal is remembered for this model. */
+export class ToolsUnsupportedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ToolsUnsupportedError';
+  }
 }
 
 /**
@@ -94,6 +108,10 @@ export interface ParamFixes {
   maxTokens?: number;
   /** The model doesn't accept images: send the text parts only. */
   noImages?: boolean;
+  /** The model or provider doesn't support tools. */
+  noTools?: boolean;
+  /** It supports tools but not tool_choice "required". */
+  toolChoiceAuto?: boolean;
 }
 
 /** The response cap is never reduced below this. */
@@ -113,6 +131,11 @@ function textOnly(messages: ChatMessage[]): ChatMessage[] {
     : m));
 }
 
+/** Whether this model takes tools: true until it has refused them. */
+export function acceptsTools(config: LLMConfig): boolean {
+  return !learnedFixes.get(`${config.baseUrl}|${config.model}`)?.noTools;
+}
+
 /** Whether this model takes images: true until it has refused one. */
 export function acceptsImages(config: LLMConfig): boolean {
   return !learnedFixes.get(`${config.baseUrl}|${config.model}`)?.noImages;
@@ -123,7 +146,12 @@ export function buildRequestBody(model: string, messages: ChatMessage[], opts: C
   body[fixes.useMaxCompletionTokens ? 'max_completion_tokens' : 'max_tokens'] = fixes.maxTokens ?? opts.maxTokens ?? 2048;
   if (!fixes.noTemperature) body.temperature = opts.temperature ?? 0.3;
   if (!fixes.noTopP) body.top_p = opts.topP ?? 1;
-  if (opts.jsonMode && !fixes.noJsonMode) body.response_format = { type: 'json_object' };
+  if (opts.tools && !fixes.noTools) {
+    body.tools = opts.tools;
+    body.tool_choice = fixes.toolChoiceAuto ? 'auto' : 'required';
+  } else if (opts.jsonMode && !fixes.noJsonMode) {
+    body.response_format = { type: 'json_object' };
+  }
   return body;
 }
 
@@ -131,8 +159,16 @@ export function buildRequestBody(model: string, messages: ChatMessage[], opts: C
  * Given a 400 error body, the field change that should fix it, or null if the
  * error isn't about a request field we can drop or rename.
  */
-export function adaptParams(errorBody: string, fixes: ParamFixes, requestedMaxTokens = 2048, sentImages = false): ParamFixes | null {
+export function adaptParams(errorBody: string, fixes: ParamFixes, requestedMaxTokens = 2048, sentImages = false, sentTools = false): ParamFixes | null {
   const e = errorBody.toLowerCase();
+  if (sentTools && !fixes.noTools) {
+    // Tools work but "required" doesn't: let the model choose (it's told to call tools)
+    if (!fixes.toolChoiceAuto && /tool_choice/.test(e)) return { ...fixes, toolChoiceAuto: true };
+    // "invalid" is left out: a single malformed tool call must not turn tools off
+    if (/\btools?\b|function.?call|tool.?(use|calling)/.test(e) && /not supported|unsupported|does not support|doesn't support|not available|unknown|unrecognized/.test(e)) {
+      return { ...fixes, noTools: true };
+    }
+  }
   // A text-only model refusing the screenshot (DeepSeek: "unknown variant `image_url`",
   // OpenAI: "image_url is only supported by certain models", others: "does not support images")
   if (sentImages && !fixes.noImages && /image|vision|multimodal|unknown variant|expected `text`/.test(e)) {
@@ -177,9 +213,17 @@ export function recoverFailedGeneration(errorBody: string): string | null {
   if (err.code === 'json_validate_failed') return err.failed_generation;
   if (err.code === 'tool_use_failed') {
     try {
-      const call = JSON.parse(err.failed_generation);
-      const args = typeof call?.arguments === 'string' ? JSON.parse(call.arguments) : call?.arguments;
-      if (args && typeof args === 'object') return JSON.stringify(args);
+      const parsed = JSON.parse(err.failed_generation);
+      const calls: any[] = Array.isArray(parsed) ? parsed : [parsed];
+      const argsOf = (call: any) => (typeof call?.arguments === 'string' ? JSON.parse(call.arguments) : call?.arguments);
+      // A whole action wrapped in a made-up tool ("assistant", "json", ...)
+      const first = argsOf(calls[0]);
+      if (calls.length === 1 && first && typeof first === 'object' && 'action' in first) return JSON.stringify(first);
+      // Calls to Genesis's own tools that the provider couldn't validate
+      if (calls.every((c) => typeof c?.name === 'string')) {
+        return toolCallsToResponse(calls.map((c) => ({ function: { name: c.name, arguments: JSON.stringify(argsOf(c) ?? {}) } })));
+      }
+      if (first && typeof first === 'object') return JSON.stringify(first);
     } catch { /* fall through to raw text */ }
     return err.failed_generation;
   }
@@ -234,7 +278,12 @@ export async function callLLM(messages: ChatMessage[], config: LLMConfig, opts: 
           const recovered = recoverFailedGeneration(errorBody);
           if (recovered !== null) return recovered;
 
-          const adapted = adaptParams(errorBody, fixes, opts.maxTokens, hasImages(messages));
+          const adapted = adaptParams(errorBody, fixes, opts.maxTokens, hasImages(messages), !!opts.tools && !fixes.noTools);
+          if (adapted?.noTools && !fixes.noTools) {
+            // The prompt was written for tools; the caller asks again without them
+            learnedFixes.set(fixKey, adapted);
+            throw new ToolsUnsupportedError(`${config.label} · ${config.model} doesn't support tools: ${errorMessage(errorBody)}`);
+          }
           if (adapted && fixesTried < MAX_PARAM_FIXES) {
             fixes = adapted;
             fixesTried++;
@@ -271,6 +320,8 @@ export async function callLLM(messages: ChatMessage[], config: LLMConfig, opts: 
 
       const data: ChatResponse = await response.json();
       const choice = data.choices?.[0];
+      const calls = choice?.message?.tool_calls;
+      if (calls?.length && opts.toolsToText) return opts.toolsToText(calls);
       const content = choice?.message?.content?.trim();
       if (content) return content;
       // Reasoning models can spend the whole token budget thinking and answer nothing
@@ -278,7 +329,7 @@ export async function callLLM(messages: ChatMessage[], config: LLMConfig, opts: 
         ? '(empty response: the model used its entire token budget before answering)'
         : 'No response received.';
     } catch (error) {
-      if (error instanceof LLMError) throw error; // already classified (and retried where useful)
+      if (error instanceof LLMError || error instanceof ToolsUnsupportedError) throw error; // already classified (and retried where useful)
       const message = formatError(error);
       const isConnection = /timed out|network|failed to fetch/i.test(message);
       if (!isConnection) throw error;
@@ -394,6 +445,38 @@ export async function chatWithPage(message: string, pageContext: string, config:
   ], config);
 }
 
+/** How the agent answers when its reply is a native tool call. */
+const TOOLS_FORMAT = `HOW TO ANSWER: call the ${NEXT_ACTIONS_TOOL} tool, once, with:
+- "plan": your short checklist for the whole goal (at most 8 items, "[x] done" / "[ ] to do"). Send it in your first answer, and again whenever it changes or an item gets done. Leave it out otherwise.
+- "actions": 1 to ${MAX_BATCH} actions, run in order. Each is one of the ACTIONS below.
+
+${actionsList()}`;
+
+/** How the agent answers without tools: one JSON object. */
+const JSON_FORMAT = `RESPONSE FORMAT (one JSON object, nothing else):
+{"plan": ["[x] finished step", "[ ] next step", "[ ] later step"], "actions": [<action>, <action>, ...]}
+- "plan": your short checklist for the whole goal (at most 8 items). Send it in your first response, and again whenever it changes or an item gets done. Leave it out otherwise.
+- "actions": 1 to ${MAX_BATCH} actions, run in order.
+
+${actionsList()}`;
+
+/** The agent's actions, for either answer format. */
+function actionsList(): string {
+  return `ACTIONS:
+- {"action": "click", "elementId": <number>} — Click an interactive element by its ID
+- {"action": "type", "elementId": <number>, "text": "<text>"} — Append text to an input
+- {"action": "clear_and_type", "elementId": <number>, "text": "<text>"} — Clear input then type text
+- {"action": "select", "elementId": <number>, "value": "<option label>"} — Choose an option in a dropdown: a native <select> (use one of its options=[...]) or a custom one (combobox, [popup=listbox], ...), which it opens for you
+- {"action": "navigate", "url": "<full url>"} — Navigate to a URL
+- {"action": "scroll", "direction": "up"|"down"} — Scroll the page
+- {"action": "press_key", "key": "<key name>", "elementId": <optional number>} — Press a keyboard key (Enter, Tab, Escape, etc.)
+- {"action": "read", "elementId": <optional number>} — Read text content
+- {"action": "find", "text": "<words>"} — Search ALL elements on the page, including ones not listed in the snapshot; returns their IDs
+- {"action": "note", "text": "<facts>"} — Write down facts you will need later (prices, specs, amounts, names). Notes stay in your ACTION HISTORY after you leave the page
+- {"action": "wait", "text": "<milliseconds>"} — Wait for content to load
+- {"action": "done", "summary": "<what was accomplished>"} — Task is complete`;
+}
+
 /** The agent's user message: the text, plus the screenshot if there is one. */
 function agentUserContent(text: string, image?: string): string | ContentPart[] {
   if (!image) return text;
@@ -418,7 +501,10 @@ export async function planAgentStep(
   config: LLMConfig,
   /** Screenshot (data URL) with the snapshot's element IDs drawn on it. */
   image?: string,
+  /** Offer the actions as native tools, unless this model has refused them before. */
+  tools = true,
 ): Promise<string> {
+  const useTools = tools && acceptsTools(config);
   const planText = currentPlan.length > 0
     ? `\n\nYOUR PLAN (from your last response):\n${currentPlan.join('\n')}`
     : '';
@@ -426,32 +512,15 @@ export async function planAgentStep(
     ? `\n\nACTION HISTORY (steps already taken):\n${promptHistory(actionHistory).join('\n')}`
     : '';
 
-  return callLLM([
+  const messages: ChatMessage[] = [
     {
       role: 'system',
       content: `You are a browser automation agent called Genesis. You control a web browser to reach the user's goal, quickly and reliably.
 
-RESPONSE FORMAT (one JSON object, nothing else):
-{"plan": ["[x] finished step", "[ ] next step", "[ ] later step"], "actions": [<action>, <action>, ...]}
-- "plan": your short checklist for the whole goal (at most 8 items). Send it in your first response, and again whenever it changes or an item gets done. Leave it out otherwise.
-- "actions": 1 to ${MAX_BATCH} actions, run in order.
-
-ACTIONS:
-- {"action": "click", "elementId": <number>} — Click an interactive element by its ID
-- {"action": "type", "elementId": <number>, "text": "<text>"} — Append text to an input
-- {"action": "clear_and_type", "elementId": <number>, "text": "<text>"} — Clear input then type text
-- {"action": "select", "elementId": <number>, "value": "<option label>"} — Choose an option in a dropdown: a native <select> (use one of its options=[...]) or a custom one (combobox, [popup=listbox], ...), which it opens for you
-- {"action": "navigate", "url": "<full url>"} — Navigate to a URL
-- {"action": "scroll", "direction": "up"|"down"} — Scroll the page
-- {"action": "press_key", "key": "<key name>", "elementId": <optional number>} — Press a keyboard key (Enter, Tab, Escape, etc.)
-- {"action": "read", "elementId": <optional number>} — Read text content
-- {"action": "find", "text": "<words>"} — Search ALL elements on the page, including ones not listed in the snapshot; returns their IDs
-- {"action": "note", "text": "<facts>"} — Write down facts you will need later (prices, specs, amounts, names). Notes stay in your ACTION HISTORY after you leave the page
-- {"action": "wait", "text": "<milliseconds>"} — Wait for content to load
-- {"action": "done", "summary": "<what was accomplished>"} — Task is complete
+${useTools ? TOOLS_FORMAT : JSON_FORMAT}
 
 RULES:
-1. Output ONLY the JSON object. No explanation, no markdown, no extra text.
+1. ${useTools ? `Answer only by calling ${NEXT_ACTIONS_TOOL}, no text.` : 'Output ONLY the JSON object. No explanation, no markdown, no extra text.'}
 2. Use element IDs from the DOM snapshot [0], [1], [2]... to target elements.
 3. Send several actions at once when you can already see everything they need, e.g. fill every field of a form and then click its submit button. Put an action that changes the page (submitting, following a link, opening a menu or dialog) LAST: the rest of the list is skipped if the page changes or an action fails, and you'll get a fresh snapshot.
 4. After typing in a search box, press Enter or click the search button.
@@ -468,11 +537,20 @@ RULES:
         // What changes least comes first: providers that cache prompt prefixes
         // (DeepSeek, OpenAI, Gemini, Groq) then reuse most of the previous
         // call's prompt, which is cheaper and faster. The page changes most.
-        `GOAL: ${goal}${historyText}${planText}\n\nCURRENT PAGE DOM SNAPSHOT:\n${domSnapshot.substring(0, SNAPSHOT_SAFETY_CAP)}\n\nWhat are the NEXT actions? Respond with JSON only.`,
+        `GOAL: ${goal}${historyText}${planText}\n\nCURRENT PAGE DOM SNAPSHOT:\n${domSnapshot.substring(0, SNAPSHOT_SAFETY_CAP)}\n\nWhat are the NEXT actions? ${useTools ? `Call ${NEXT_ACTIONS_TOOL}.` : 'Respond with JSON only.'}`,
         image,
       ),
     },
+  ];
   // Headroom: reasoning models think before answering (deepseek-v4-pro used >1k)
-  ], config, { maxTokens: config.maxOutputTokens ?? 4096, temperature: 0, topP: 1, jsonMode: true });
+  const opts: CallOptions = { maxTokens: config.maxOutputTokens ?? 4096, temperature: 0, topP: 1 };
+  if (!useTools) return callLLM(messages, config, { ...opts, jsonMode: true });
+  try {
+    return await callLLM(messages, config, { ...opts, tools: AGENT_TOOLS, toolsToText: toolCallsToResponse });
+  } catch (error) {
+    // This model or provider won't take tools: ask again, as JSON (remembered)
+    if (!(error instanceof ToolsUnsupportedError)) throw error;
+    return planAgentStep(goal, domSnapshot, actionHistory, currentPlan, config, image, false);
+  }
 }
 

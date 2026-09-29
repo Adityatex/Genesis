@@ -159,7 +159,11 @@ export function parseAgentResponse(raw: string): ResponseParseResult {
     const single = parseAgentAction(json);
     return single.ok ? { ok: true, actions: [single.action], plan, notes: [] } : single;
   }
-  if (obj.actions.length === 0) return { ok: false, error: '"actions" is empty: send at least one action' };
+  if (obj.actions.length === 0) {
+    // A plan on its own is progress (tool callers often start with just set_plan)
+    if (plan?.length) return { ok: true, actions: [], plan, notes: ['plan saved; now send the actions to carry it out'] };
+    return { ok: false, error: '"actions" is empty: send at least one action' };
+  }
 
   const notes: string[] = [];
   const items = obj.actions.slice(0, MAX_BATCH);

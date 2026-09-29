@@ -2,6 +2,19 @@
 
 All runs are live: real model, real extension, real Chromium. A run passes only if the right requests reached the test server **and** the agent finished cleanly.
 
+## Native tool calling, experimental (2026-09-29)
+
+The agent can answer through the provider's function calling instead of writing JSON: one `next_actions` tool whose arguments are the plan and the action list, checked against a schema by the provider. It is off by default and turned on in the popup (`--tools` in the eval). Models that refuse tools fall back to JSON by themselves, and the fallback is remembered.
+
+The first design had one tool per action, plus `set_plan`. On the expert tier, gpt-oss-120b (Groq) scored **1/7**: it made one tool call per reply, always `set_plan`, and never acted, so the stuck detector paused 6 of 7 tasks. Qwen makes several calls per reply, so this depends on the model. A single tool that carries the whole reply works the same for both.
+
+| With one `next_actions` tool (1 trial) | Tasks | Passed | Compared with JSON replies |
+|---|---|---|---|
+| `qwen/qwen3.8-27b` (Groq) | login, signup-checkbox, checkout-flow, username-taken | 4/4 | batching intact: login and signup in 2 calls each |
+| `deepseek-flash` | checkout-flow, username-taken, compare-and-buy | 2/3 | JSON (same prompt order): 3/3; compare-and-buy looped to the 40-step check-in, as deepseek-flash has done with JSON before |
+
+Not tested yet: whether tools stop gpt-oss-120b's malformed JSON on `compare-and-buy`, the reason for building this. gpt-oss had used its daily Groq quota. Tools stay off by default until that run shows a win.
+
 ## What changed, and a cache-friendly prompt (2026-09-29)
 
 Two changes to what the model reads. After acting on a page, it gets a short **"what changed"** section: new text (an error, a confirmation), elements that appeared (with their new IDs) and ones that went away, or "Nothing visible changed on the page". And the prompt now puts what changes least first (instructions, goal, step history, plan, then the page), with old history steps dropped 10 at a time. Providers that cache prompt prefixes can then reuse most of the previous call's prompt, which costs less and answers faster. Every call still sends the whole task, so fallback to another provider works as before.

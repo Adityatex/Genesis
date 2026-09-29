@@ -425,8 +425,8 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
     const stateKey = `${page.url}\n${hashText(snapshotText)}\n${descs.join('\n')}`;
     const seen = (run.repeats.get(stateKey) ?? 0) + 1;
     run.repeats.set(stateKey, seen);
-    if (seen >= REPEAT_PAUSE && actions[0].action !== 'done') {
-      const what = descs.join(', ');
+    if (seen >= REPEAT_PAUSE && actions[0]?.action !== 'done') {
+      const what = descs.join(', ') || 'a plan with no actions';
       const reason = `The agent looks stuck: it chose \`${what}\` ${seen} times on this page, and the page didn't change. Continue to let it try something else, or stop.`;
       if (!await pause(deps, run, reason)) break;
       run.repeats.set(stateKey, REPEAT_WARN); // choosing it once more pauses again

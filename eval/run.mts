@@ -57,6 +57,8 @@ const { values: args } = parseArgs({
     'dump-prompts': { type: 'boolean', default: false },
     // Send screenshots (off | planning | always); each one sent is saved under eval/results/screenshots
     screenshots: { type: 'string', default: 'off' },
+    // Ask for native tool calls instead of JSON replies (to compare the two)
+    tools: { type: 'boolean', default: false },
     tpm: { type: 'string' },
   },
 });
@@ -170,12 +172,26 @@ function dumpPrompt(call: number, body: any): void {
   console.log(`----- prompt #${call}\n${prompt.split('\n\nACTION HISTORY')[0]}\n`);
 }
 
-function chatCompletion(content: string) {
+/**
+ * A chat completion carrying the mock planner's answer: as a next_actions tool
+ * call when the extension offered tools, otherwise as text.
+ */
+function chatCompletion(content: string, asTools = false) {
+  let message: Record<string, unknown> = { role: 'assistant', content };
+  if (asTools) {
+    const parsed = JSON.parse(content);
+    const args = { actions: parsed.actions ?? [parsed] };
+    message = {
+      role: 'assistant',
+      content: null,
+      tool_calls: [{ id: 'call_0', type: 'function', function: { name: 'next_actions', arguments: JSON.stringify(args) } }],
+    };
+  }
   return {
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
-      choices: [{ message: { role: 'assistant', content } }],
+      choices: [{ message }],
       usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
     }),
   };
@@ -246,7 +262,7 @@ async function launch(apiKey: string): Promise<{ context: BrowserContext; userDa
   };
   await worker.evaluate(
     ([key, value, prefsKey, prefs]) => chrome.storage.local.set({ [key]: value, [prefsKey]: prefs }),
-    [SETTINGS_KEY, settings, PREFS_KEY, { trustedInput: !args['scripted-input'], stepCheckpoint: EVAL_CHECKPOINT, screenshots: args.screenshots }] as const,
+    [SETTINGS_KEY, settings, PREFS_KEY, { trustedInput: !args['scripted-input'], stepCheckpoint: EVAL_CHECKPOINT, screenshots: args.screenshots, nativeTools: !!args.tools }] as const,
   );
   return { context, userDataDir };
 }
@@ -279,7 +295,7 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
       const body = route.request().postDataJSON();
       if (args['dump-prompts']) dumpPrompt(result.llmCalls, body);
       saveImages(task.id, result.llmCalls, body);
-      await route.fulfill(chatCompletion(planMock(textOf(body.messages.at(-1).content))));
+      await route.fulfill(chatCompletion(planMock(textOf(body.messages.at(-1).content)), Array.isArray(body.tools)));
       return;
     }
     if (args['dump-prompts']) dumpPrompt(result.llmCalls, route.request().postDataJSON());

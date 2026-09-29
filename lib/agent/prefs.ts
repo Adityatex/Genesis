@@ -18,6 +18,12 @@ export interface AgentPrefs {
    * on planning steps only, or every step. Images cost tokens; off by default.
    */
   screenshots: ScreenshotMode;
+  /**
+   * Ask for the agent's reply as a native tool call (function calling) instead
+   * of JSON text. Models or providers that refuse tools fall back to JSON on
+   * their own. Experimental, so off by default until the benchmark shows a win.
+   */
+  nativeTools: boolean;
 }
 
 export type ScreenshotMode = 'off' | 'planning' | 'always';
@@ -30,4 +36,5 @@ export const DEFAULT_PREFS: AgentPrefs = {
   trustedInput: true,
   stepCheckpoint: 50,
   screenshots: 'off',
+  nativeTools: false,
 };

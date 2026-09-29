@@ -30,6 +30,7 @@ export default function App() {
   const [trustedInput, setTrustedInput] = useState(true);
   const [stepCheckpoint, setStepCheckpoint] = useState(DEFAULT_PREFS.stepCheckpoint);
   const [screenshots, setScreenshots] = useState<ScreenshotMode>(DEFAULT_PREFS.screenshots);
+  const [nativeTools, setNativeTools] = useState(DEFAULT_PREFS.nativeTools);
   const [profile, setProfile] = useState<AutofillProfile>({ fullname: '', email: '', phone: '', address: '', city: '', state: '', zip: '', country: '' });
   const [profileStatus, setProfileStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [profileMessage, setProfileMessage] = useState('');
@@ -54,6 +55,7 @@ export default function App() {
       setTrustedInput(res.data.trustedInput);
       setStepCheckpoint(res.data.stepCheckpoint);
       setScreenshots(res.data.screenshots);
+      setNativeTools(res.data.nativeTools);
     });
     loadStoredProfile().then(setProfile).catch(() => {});
   }, []);
@@ -62,6 +64,12 @@ export default function App() {
     setTrustedInput(on);
     const res: any = await browser.runtime.sendMessage({ action: 'SAVE_PREFS', payload: { trustedInput: on } });
     if (!res?.success) setTrustedInput(!on);
+  };
+
+  const handleNativeToolsChange = async (on: boolean) => {
+    setNativeTools(on);
+    const res: any = await browser.runtime.sendMessage({ action: 'SAVE_PREFS', payload: { nativeTools: on } });
+    if (!res?.success) setNativeTools(!on);
   };
 
   const handleScreenshotsChange = async (mode: ScreenshotMode) => {
@@ -415,6 +423,19 @@ export default function App() {
             {' '}Models that can't read images get text only, and the step log says so.
           </p>
         )}
+
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={nativeTools}
+            onChange={(e) => handleNativeToolsChange(e.target.checked)}
+          />
+          <span>Native tool calling (experimental)</span>
+        </label>
+        <p className="hint">
+          The model answers through the provider's function-calling feature instead of writing JSON, which some models
+          get wrong. Models that don't support it fall back to JSON by themselves.
+        </p>
       </div>
 
       {/* Autofill Profile Section */}

@@ -48,10 +48,11 @@ export default defineBackground(() => {
   // ---- Agent runner: the loop lives here, not in the page (lib/agent/runner.ts)
   const runnerDeps: RunnerDeps = {
     plan: async (goal, snapshot, history, currentPlan, role, image) => {
+      const { nativeTools } = await loadPrefs();
       // Any provider in the chain can answer: the prompt carries the whole task state.
       // Executor calls try the fast model first, then the usual chain.
       const { value, config, skipped } = await ask(
-        (c) => planAgentStep(goal, snapshot, history, currentPlan, c, image),
+        (c) => planAgentStep(goal, snapshot, history, currentPlan, c, image, nativeTools),
         role === 'executor',
       );
       return { text: value, model: modelLabel(config), unavailable: skipped, imageDropped: !!image && !acceptsImages(config) };
