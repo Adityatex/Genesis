@@ -142,6 +142,25 @@ Paste your key, click **Load models** to list the models your key can actually u
 
 Keys are stored per provider in `chrome.storage.local` and read only by the background service worker. They are never exposed to content scripts, never shown back in full, and never committed. Keys and page content are only sent over HTTPS, except to servers on localhost. See [PRIVACY.md](PRIVACY.md).
 
+## 🧠 Skills
+
+A skill is a `SKILL.md` file (the open Agent Skills format) with instructions for a task you repeat:
+
+```markdown
+---
+name: order-status
+description: Check the delivery status of an order on shop.example.com
+sites: [shop.example.com]
+---
+1. Open "My account" (top right), then "Orders".
+2. Find the order by its number; the status is in the right-hand column.
+
+Pitfalls:
+- Accept the cookie banner first: it covers the "Orders" link.
+```
+
+The agent gets the skills that fit the current site and task in full, and can load any other by name. When a task finishes, the sidebar offers **Save as skill**: the model writes one from what just happened, naming buttons by their labels and noting what went wrong and how it was fixed. Anything typed during the task, passwords included, is replaced by a placeholder, and skills record how to do a task, not this time's answer (prices and stock go stale). Skills are listed, edited, pasted in and deleted in the popup. Only add skills you trust: the agent follows them.
+
 ## 🤝 Use it from Claude Code, Claude Desktop or Codex (MCP)
 
 `genesis-mcp` lets an AI app you already use drive your real browser through Genesis. The model runs inside that app, on your plan with it, so Genesis needs no API key for this. Genesis supplies what it's good at: page snapshots with numbered elements (including iframes and Shadow DOM), real mouse and keyboard input, and screenshots with those numbers drawn on.

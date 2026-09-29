@@ -59,6 +59,10 @@ const { values: args } = parseArgs({
     screenshots: { type: 'string', default: 'off' },
     // Ask for native tool calls instead of JSON replies (to compare the two)
     tools: { type: 'boolean', default: false },
+    // After a task's first passing run, press "Save as skill"; later trials start with that skill
+    learn: { type: 'boolean', default: false },
+    // Start every trial with the skills an earlier --learn run saved (e.g. by a stronger model)
+    'use-skills': { type: 'boolean', default: false },
     tpm: { type: 'string' },
   },
 });
@@ -79,7 +83,7 @@ type Outcome = 'done' | 'paused' | 'error' | 'timeout' | 'rate-limited';
 // ---------------------------------------------------------------- rate limiting
 // Groq's free tier allows 8000 tokens/minute per model. Pace live planner calls
 // under that so the benchmark measures the agent, not the quota. Waits are
-// capped below the extension's 15s request timeout; if we still get a 429 the
+// capped well below the extension's 45s request timeout; if we still get a 429 the
 // extension's own retry/backoff handles it.
 // Pacing defaults on only for Groq's free tier; pass --tpm for other providers
 const TPM_BUDGET = Number(args.tpm ?? (PROVIDER === 'groq' ? 7000 : Infinity));
@@ -120,7 +124,17 @@ interface RunResult {
   finalUrl: string;
   summary: string;
   knownIssue?: string;
+  /** --learn: the skill this run saved, or the one it started with. */
+  skill?: string;
+  /** --learn: model calls spent writing the skill (not counted in llmCalls). */
+  skillCalls?: number;
 }
+
+/** --learn: skills saved from each task's first passing run, installed in its later trials. */
+const learnedSkills = new Map<string, unknown[]>();
+
+/** What the mock model answers when asked to write a skill. */
+const MOCK_SKILL = JSON.stringify({ name: 'mock-skill', description: 'A skill written by the mock planner', body: '1. Do what worked last time.' });
 
 // ---------------------------------------------------------------- helpers
 
@@ -244,7 +258,7 @@ function mockPlanner(plan: (MockStep | MockStep[])[]) {
 }
 
 /** The profile dir holds the API key in extension storage; delete it after use. */
-async function launch(apiKey: string): Promise<{ context: BrowserContext; userDataDir: string }> {
+async function launch(apiKey: string, skills: unknown[] = []): Promise<{ context: BrowserContext; userDataDir: string }> {
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'genesis-eval-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chromium',
@@ -264,6 +278,7 @@ async function launch(apiKey: string): Promise<{ context: BrowserContext; userDa
     ([key, value, prefsKey, prefs]) => chrome.storage.local.set({ [key]: value, [prefsKey]: prefs }),
     [SETTINGS_KEY, settings, PREFS_KEY, { trustedInput: !args['scripted-input'], stepCheckpoint: EVAL_CHECKPOINT, screenshots: args.screenshots, nativeTools: !!args.tools }] as const,
   );
+  if (skills.length) await worker.evaluate((list) => chrome.storage.local.set({ genesis_skills: list }), skills);
   return { context, userDataDir };
 }
 
@@ -280,17 +295,29 @@ async function readOutcome(page: Page): Promise<string> {
 // ---------------------------------------------------------------- runner
 
 async function runTask(task: Task, trial: number, server: FixtureServer, apiKey: string): Promise<RunResult> {
-  const { context, userDataDir } = await launch(apiKey);
+  const installed = learnedSkills.get(task.id) ?? [];
+  const { context, userDataDir } = await launch(apiKey, installed);
+  /** Set while the extension writes a skill: those calls are counted apart. */
+  let learning = false;
   const result: RunResult = {
     id: task.id, category: task.category, trial, pass: false, outcome: 'timeout',
     llmCalls: 0, rateLimitHits: 0, promptTokens: 0, cachedTokens: 0, completionTokens: 0, durationMs: 0,
     finalUrl: '', summary: '', knownIssue: task.knownIssue,
+    ...(installed.length ? { skill: String((installed[0] as any)?.name ?? '') } : {}),
   };
 
   const planMock = mockPlanner(task.mockPlan);
   await context.route(`${new URL(LLM.baseUrl).origin}/**`, async (route: Route) => {
-    result.llmCalls++;
-    log(`planner call #${result.llmCalls}`);
+    if (learning) {
+      result.skillCalls = (result.skillCalls ?? 0) + 1;
+      if (MODE === 'mock') {
+        await route.fulfill(chatCompletion(MOCK_SKILL));
+        return;
+      }
+    } else {
+      result.llmCalls++;
+    }
+    log(`${learning ? 'skill-writer' : 'planner'} call #${result.llmCalls}`);
     if (MODE === 'mock') {
       const body = route.request().postDataJSON();
       if (args['dump-prompts']) dumpPrompt(result.llmCalls, body);
@@ -370,6 +397,30 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
       ? finalText.split('Task Complete')[1].split('Steps taken')[0].trim()
       : finalText.slice(0, 500).trim();
     result.finalUrl = page.url();
+
+    // --learn: the first passing run of a task presses "Save as skill", as a user would
+    const passed = result.outcome === 'done'
+      && task.check({ events: [...server.events], summary: result.summary, finalUrl: result.finalUrl });
+    if (args.learn && passed && !learnedSkills.has(task.id)) {
+      learning = true;
+      await page.getByRole('button', { name: 'Save as skill' }).click({ timeout: 10_000 });
+      const saved = page.locator('.markdown-body', { hasText: /Skill saved:|Couldn't save a skill/ });
+      await saved.first().waitFor({ timeout: 120_000 });
+      learning = false;
+      const skills: any[] = await context.serviceWorkers()[0].evaluate(async () => (await chrome.storage.local.get('genesis_skills')).genesis_skills ?? []);
+      if (skills.length) {
+        learnedSkills.set(task.id, skills);
+        result.skill = skills[0].name;
+        const dir = path.join(RESULTS_DIR, 'skills');
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, `${task.id}.json`), JSON.stringify(skills, null, 2));
+      } else {
+        const message = (await saved.first().innerText()).slice(0, 200);
+        log(`no skill saved: ${message}`);
+        // The mock model always writes a valid skill, so this is a bug (fails CI)
+        if (MODE === 'mock') throw new Error(`"Save as skill" saved nothing: ${message}`);
+      }
+    }
   } catch (err) {
     result.outcome = 'error';
     result.summary = `Harness error: ${redact((err as Error).message.split('\n')[0])}`;
@@ -472,6 +523,13 @@ async function main() {
   const results: RunResult[] = [];
   let stoppedEarly = false;
   try {
+    if (args['use-skills']) {
+      for (const task of tasks) {
+        const file = path.join(RESULTS_DIR, 'skills', `${task.id}.json`);
+        if (fs.existsSync(file)) learnedSkills.set(task.id, JSON.parse(fs.readFileSync(file, 'utf8')));
+        else console.log(`(no saved skill for ${task.id}: run it with --learn first)`);
+      }
+    }
     for (const task of tasks) {
       for (let trial = 1; trial <= TRIALS; trial++) {
         if (dailyLimitHit) {
@@ -480,7 +538,7 @@ async function main() {
         }
         const r = await runTask(task, trial, server, apiKey);
         results.push(r);
-        console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${task.id}${TRIALS > 1 ? ` #${trial}` : ''}  ${r.outcome}, ${r.llmCalls} calls${r.rateLimitHits ? ` (${r.rateLimitHits}×429)` : ''}, ${(r.durationMs / 1000).toFixed(1)}s${r.pass ? '' : `  — ${r.summary.slice(0, 100).replace(/\n/g, ' ')}`}`);
+        console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${task.id}${TRIALS > 1 ? ` #${trial}` : ''}  ${r.outcome}, ${r.llmCalls} calls${r.rateLimitHits ? ` (${r.rateLimitHits}×429)` : ''}, ${(r.durationMs / 1000).toFixed(1)}s${r.skill ? (r.skillCalls ? `, saved skill "${r.skill}"` : `, with skill "${r.skill}"`) : ''}${r.pass ? '' : `  — ${r.summary.slice(0, 100).replace(/\n/g, ' ')}`}`);
       }
     }
   } finally {

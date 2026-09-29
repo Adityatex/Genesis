@@ -2,6 +2,33 @@
 
 All runs are live: real model, real extension, real Chromium. A run passes only if the right requests reached the test server **and** the agent finished cleanly.
 
+## Skills (2026-09-29)
+
+A skill is a saved SKILL.md (name, description, optional sites, instructions). The agent gets the ones that fit the current site and goal in full, and can load the others by name. After a task finishes, "Save as skill" has the model write one from the run: steps named by visible labels, pitfalls it hit, placeholders for what varies. Every value typed during the run is replaced by `<value>` whatever the model wrote, so passwords never end up in a skill. `--learn` in the eval presses the button after a task's first passing run; `--use-skills` starts trials with skills saved earlier.
+
+**Skills written by `deepseek-flash`, used by it on the next run** (2 trials: learn, reuse):
+
+| Task | Calls without → with its own skill |
+|---|---|
+| vague-support | 3 → 3 |
+| username-taken | 3 → 3 |
+| vague-notifications | 2 → 4 (it followed the skill's advice to double-check) |
+
+These tasks were already short, so there was nothing to save. The skills were good, though: `username-taken`'s noticed that a failed submit clears the password field too.
+
+**A strong model teaching a cheap one:** `deepseek-v4-pro` did `compare-and-buy` and saved a skill; `deepseek-flash` then ran the task 3 times with it.
+
+| Skill | flash, with the skill | flash, without |
+|---|---|---|
+| First version: it recorded the answer ("Kite 14, $1,049, 16 GB") | 3/3, 4 calls, 8k tokens | 1/3, 33 calls, 101k tokens |
+| How to do it only (where the specs are, the URL pattern, the "cheapest listing isn't 16 GB" trap) | 0/3, 33 calls | (same) |
+
+The big win came entirely from the remembered answer, which would go stale on a real shop, so the writer now records how, not what ("prices, stock, dates and results must not appear as facts"). With procedure only, flash still ping-pongs between product pages: its failure here is reasoning, not missing know-how. Skills' value on repeat tasks with non-obvious navigation is plausible but not yet shown by this benchmark.
+
+Found along the way: the skill writer's 2,048-token cap left reasoning models (v4-pro) no room to answer (now 4,096, like agent steps), and the 15s request timeout cut v4-pro off mid-thought on a hard step (now 45s).
+
+Open question: deepseek-flash on `compare-and-buy` without a skill was 2/3 on 2026-09-27 and 1/3 here. That's small samples, but it may mean a recent prompt change hurts multi-page comparisons. To investigate.
+
 ## Native tool calling, experimental (2026-09-29)
 
 The agent can answer through the provider's function calling instead of writing JSON: one `next_actions` tool whose arguments are the plan and the action list, checked against a schema by the provider. It is off by default and turned on in the popup (`--tools` in the eval). Models that refuse tools fall back to JSON by themselves, and the fallback is remembered.

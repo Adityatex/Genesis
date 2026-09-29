@@ -3,7 +3,7 @@
 
 import { summarizePage, explainText, chatWithPage, planAgentStep, listModels, acceptsImages } from '@/lib/api/llmClient';
 import {
-  startRun, stopRun, resumeRun, forgetRun, getRunView, isRunning, notifyTabLoading, type RunnerDeps, type RunOptions,
+  startRun, stopRun, resumeRun, forgetRun, getRunView, getRunRecord, isRunning, notifyTabLoading, type RunnerDeps, type RunOptions,
 } from '@/lib/agent/runner';
 import {
   PROVIDERS, PROVIDER_IDS, SETTINGS_KEY, LEGACY_KEYS, readSettings, resolveConfig, resolveChain, resolveExecutor, configProblem,
@@ -15,6 +15,15 @@ import { trustedClick, trustedKey, trustedType, releaseTab, watchDetach, debugge
 import { annotate, base64ToBlob, type VisualInfo } from '@/lib/agent/screenshot';
 import { PREFS_KEY, DEFAULT_PREFS, type AgentPrefs } from '@/lib/agent/prefs';
 import { BridgeClient, type BridgeStatus } from '@/lib/mcp/bridgeClient';
+import { parseSkill, formatSkill } from '@/lib/skills/skill';
+import { loadSkills, saveSkill, deleteSkill, type KeyValueStorage } from '@/lib/skills/store';
+import { writeSkillFromRun } from '@/lib/skills/writer';
+
+/** chrome.storage.local, in the shape lib/skills/store expects. */
+const skillStorage: KeyValueStorage = {
+  get: (key) => browser.storage.local.get(key) as Promise<Record<string, unknown>>,
+  set: (items) => browser.storage.local.set(items),
+};
 import { createHandlers } from '@/lib/mcp/handlers';
 import { DEFAULT_PORT, isValidToken, normalizeToken } from '@/mcp/src/protocol';
 
@@ -131,7 +140,9 @@ export default defineBackground(() => {
         if (problem) throw new Error(`Genesis's own agent isn't set up: ${problem}`);
         holdKeepAlive();
         try {
-          const view = await startRun(runnerDeps, tabId, goal, { checkpoint: 0, split: hasExecutor(settings), screenshots: prefs.screenshots });
+          const view = await startRun(runnerDeps, tabId, goal, {
+            checkpoint: 0, split: hasExecutor(settings), screenshots: prefs.screenshots, skills: await loadSkills(skillStorage),
+          });
           return view.message;
         } finally {
           releaseKeepAlive();
@@ -340,7 +351,10 @@ export default defineBackground(() => {
             if (!goal) throw new Error('No goal');
             await requireConfig(); // fail fast on missing key/model, before the run starts
             const prefs = await loadPrefs();
-            runAgent(tabId, goal, { checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots });
+            runAgent(tabId, goal, {
+              checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
+              skills: await loadSkills(skillStorage),
+            });
             sendResponse({ success: true });
             break;
           }
@@ -425,6 +439,36 @@ export default defineBackground(() => {
             ) as any;
             if (!res?.success) throw new Error(res?.error || 'The frame did not respond');
             sendResponse({ success: true, data: res.data });
+            break;
+          }
+
+          case 'LIST_SKILLS': {
+            sendResponse({ success: true, data: await loadSkills(skillStorage) });
+            break;
+          }
+
+          case 'SAVE_SKILL': {
+            // A pasted or edited SKILL.md
+            const parsed = parseSkill(String(payload?.text ?? ''));
+            if (!parsed.ok) throw new Error(parsed.error);
+            sendResponse({ success: true, data: await saveSkill(skillStorage, parsed.skill) });
+            break;
+          }
+
+          case 'DELETE_SKILL': {
+            sendResponse({ success: true, data: await deleteSkill(skillStorage, String(payload?.name ?? '')) });
+            break;
+          }
+
+          case 'SAVE_SKILL_FROM_RUN': {
+            // "Save as skill" in the sidebar, after a task finished
+            const tabId = _sender.tab?.id;
+            const record = tabId === undefined ? null : getRunRecord(tabId);
+            if (!record) throw new Error('There is no finished task in this tab to learn from');
+            if (record.status !== 'done') throw new Error('Only a task that finished can be saved as a skill');
+            const { value: skill } = await ask((c) => writeSkillFromRun(record, c));
+            await saveSkill(skillStorage, skill);
+            sendResponse({ success: true, data: { skill, markdown: formatSkill(skill) } });
             break;
           }
 

@@ -12,6 +12,7 @@
 import type { AgentAction } from '@/lib/agent/actionExecutor';
 import { parseAgentResponse } from '@/lib/agent/parseAction';
 import type { ScreenshotMode } from '@/lib/agent/prefs';
+import { pickSkills, slugify, type Skill } from '@/lib/skills/skill';
 import { MAX_INVALID_RESPONSES, REPEAT_PAUSE, REPEAT_WARN, describeAction, formatHistory } from '@/lib/agent/history';
 
 /** "paused": waiting for the user to continue or stop (checkpoint, or the agent looks stuck). */
@@ -98,6 +99,11 @@ interface Run extends RunView {
   noVision: Set<string>;
   /** The snapshot the model last saw, to tell it what its actions changed. */
   lastSnapshot?: { url?: string; text: string };
+  /** The user's saved skills, and the ones the model loaded with use_skill. */
+  skills: Skill[];
+  loadedSkills: Set<string>;
+  /** The model's summary when it finished. */
+  summary?: string;
   /** The model that last answered for each role, to spot a backup taking over. */
   roleModels: Partial<Record<ModelRole, string>>;
 }
@@ -108,6 +114,32 @@ export interface RunOptions {
   /** A fast executor model takes routine steps (see ModelRole). */
   split?: boolean;
   screenshots?: ScreenshotMode;
+  /** The user's saved skills (lib/skills); relevant ones are shown to the model. */
+  skills?: Skill[];
+}
+
+/** Most skills listed by name for use_skill (the rest are too unlikely to matter). */
+const MAX_LISTED_SKILLS = 20;
+
+/**
+ * The skills part of the prompt, placed under the goal: in full, the ones
+ * that fit this page and goal plus any the model loaded; by name, the others.
+ */
+export function skillsSection(all: Skill[], goal: string, url: string | undefined, loaded: Set<string>): string {
+  if (all.length === 0) return '';
+  const shown = pickSkills(all, goal, url);
+  for (const skill of all) if (loaded.has(skill.name) && !shown.includes(skill)) shown.push(skill);
+  const others = all.filter((skill) => !shown.includes(skill)).slice(0, MAX_LISTED_SKILLS);
+  const parts: string[] = [];
+  if (shown.length) {
+    const full = shown.map((s) => `### ${s.name}: ${s.description}\n${s.body}`).join('\n\n');
+    parts.push(`--- SKILLS (instructions the user saved for tasks like this; follow them where they fit) ---\n${full}`);
+  }
+  if (others.length) {
+    const list = others.map((s) => `- ${s.name}: ${s.description}`).join('\n');
+    parts.push(`--- OTHER SKILLS (load one with use_skill if it fits this task) ---\n${list}`);
+  }
+  return `\n\n${parts.join('\n\n')}`;
 }
 
 /** A planning step (the planner answers, if there's an executor) at least every this many calls. */
@@ -200,6 +232,25 @@ function view(run: Run): RunView {
 export function getRunView(tabId: number): RunView | null {
   const run = runs.get(tabId);
   return run ? view(run) : null;
+}
+
+/** What a run did, for turning it into a skill (lib/skills). */
+export interface RunRecord {
+  goal: string;
+  status: RunStatus;
+  plan: string[];
+  history: string[];
+  /** The model's summary when it finished. */
+  summary?: string;
+  /** Pages it visited, in order. */
+  urls: string[];
+}
+
+export function getRunRecord(tabId: number): RunRecord | null {
+  const run = runs.get(tabId);
+  if (!run) return null;
+  const { goal, status, plan, history, summary } = run;
+  return { goal, status, plan: [...plan], history: [...history], summary, urls: [...run.visited.keys()] };
 }
 
 /** Running or paused: the run's loop is still alive. */
@@ -382,7 +433,9 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
     const last = run.lastSnapshot;
     const changes = last && last.url === page.url && run.history.length ? changesSection(last.text, snapshotText) : '';
     run.lastSnapshot = { url: page.url, text: snapshotText };
-    const reply = await deps.plan(run.goal, snapshotText + changes + memorySection(run.visited, page.url), run.history, run.plan, role, image);
+    // Skills go with the goal: near the start, where they don't break the prompt cache
+    const goal = run.goal + skillsSection(run.skills, run.goal, page.url, run.loadedSkills);
+    const reply = await deps.plan(goal, snapshotText + changes + memorySection(run.visited, page.url), run.history, run.plan, role, image);
     const { text: raw, model, unavailable, imageDropped } = typeof reply === 'string'
       ? { text: reply, model: undefined, unavailable: undefined, imageDropped: false }
       : reply;
@@ -455,10 +508,18 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
       }
       if (action.action === 'done') {
         run.status = 'done';
+        run.summary = action.summary || 'Done';
         publish(deps, run, `## ✅ Task Complete\n\n${action.summary || 'Done'}\n\n---\n**Steps taken:**\n${formatHistory(run.history)}`, false);
         return;
       }
       const desc = descs[i];
+      if (action.action === 'use_skill') {
+        // Handled here, not on the page: the skill joins the prompt from the next call
+        const skill = run.skills.find((sk) => sk.name === slugify(action.text ?? ''));
+        if (skill) run.loadedSkills.add(skill.name);
+        run.history.push(`${desc} → ${skill ? '✅ loaded: its instructions are now under SKILLS' : `❌ there is no skill named "${action.text}"`}`);
+        continue;
+      }
       publish(deps, run, progressMessage(run, `*Step ${run.step}: ${desc}*`), true);
       const { result, pageChanged } = await runAction(deps, tabId, action, () => run.loads);
       run.history.push(`${desc} → ${result}${i === 0 ? repeatWarning : ''}`);
@@ -493,6 +554,7 @@ export async function startRun(deps: RunnerDeps, tabId: number, goal: string, op
     stopRequested: false, loads: 0, visited: new Map(), repeats: new Map(), checkpoint: Math.max(0, options.checkpoint ?? 0),
     split: !!options.split, needPlanner: true, routineCalls: 0, roleModels: {},
     screenshots: options.screenshots ?? 'off', noVision: new Set(),
+    skills: options.skills ?? [], loadedSkills: new Set(),
   };
   runs.set(tabId, run);
   try {

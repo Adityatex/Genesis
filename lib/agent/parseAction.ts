@@ -10,7 +10,7 @@ export type ParseResult =
 
 const ACTIONS: ReadonlySet<AgentAction['action']> = new Set([
   'click', 'type', 'clear_and_type', 'select', 'navigate',
-  'scroll', 'read', 'wait', 'done', 'press_key', 'find', 'note',
+  'scroll', 'read', 'wait', 'done', 'press_key', 'find', 'note', 'use_skill',
 ]);
 
 /**
@@ -116,6 +116,9 @@ export function parseAgentAction(raw: string): ParseResult {
       break;
     case 'find':
       if (!action.text?.trim()) return { ok: false, error: 'find requires text to search for' };
+      break;
+    case 'use_skill':
+      if (!action.text?.trim()) return { ok: false, error: 'use_skill requires the skill name as text' };
       break;
     case 'scroll':
       action.direction = obj.direction === 'up' ? 'up' : 'down';

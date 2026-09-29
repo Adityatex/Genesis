@@ -434,3 +434,46 @@ body {
   font-family: ui-monospace, Consolas, monospace;
   font-size: 10.5px;
 }
+
+/* Skills */
+.skill-list {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.skill-list li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.skill-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.skill-sites {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.skill-actions {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.skill-desc {
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.skill-editor {
+  width: 100%;
+  margin-top: 8px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  resize: vertical;
+}

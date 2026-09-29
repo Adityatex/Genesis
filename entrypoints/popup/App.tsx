@@ -4,6 +4,7 @@ import { PROVIDERS, PROVIDER_IDS, type ProviderId } from '@/lib/api/providers';
 import type { ModelInfo } from '@/lib/api/llmClient';
 import { CHECKPOINT_CHOICES, DEFAULT_PREFS, type ScreenshotMode } from '@/lib/agent/prefs';
 import type { BridgeStatus } from '@/lib/mcp/bridgeClient';
+import { formatSkill, type Skill } from '@/lib/skills/skill';
 
 const MCP_STATUS_TEXT: Record<BridgeStatus, string> = {
   off: 'Off',
@@ -44,6 +45,9 @@ export default function App() {
   const [mcp, setMcp] = useState<McpState>({ enabled: false, hasToken: false, status: 'off' });
   const [mcpToken, setMcpToken] = useState('');
   const [mcpError, setMcpError] = useState('');
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [skillDraft, setSkillDraft] = useState('');
+  const [skillMessage, setSkillMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [profile, setProfile] = useState<AutofillProfile>({ fullname: '', email: '', phone: '', address: '', city: '', state: '', zip: '', country: '' });
   const [profileStatus, setProfileStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [profileMessage, setProfileMessage] = useState('');
@@ -74,6 +78,7 @@ export default function App() {
     // Connection status changes while the popup is open (an AI app starts genesis-mcp)
     const refreshMcp = () => browser.runtime.sendMessage({ action: 'GET_MCP' }).then((res: any) => { if (res?.success) setMcp(res.data); }).catch(() => {});
     refreshMcp();
+    browser.runtime.sendMessage({ action: 'LIST_SKILLS' }).then((res: any) => { if (res?.success) setSkills(res.data); }).catch(() => {});
     const mcpTimer = setInterval(refreshMcp, 2000);
     return () => clearInterval(mcpTimer);
   }, []);
@@ -82,6 +87,22 @@ export default function App() {
     setTrustedInput(on);
     const res: any = await browser.runtime.sendMessage({ action: 'SAVE_PREFS', payload: { trustedInput: on } });
     if (!res?.success) setTrustedInput(!on);
+  };
+
+  const handleSaveSkill = async () => {
+    const res: any = await browser.runtime.sendMessage({ action: 'SAVE_SKILL', payload: { text: skillDraft } });
+    if (!res?.success) {
+      setSkillMessage({ ok: false, text: res?.error || 'Could not save the skill' });
+      return;
+    }
+    setSkills(res.data);
+    setSkillDraft('');
+    setSkillMessage({ ok: true, text: 'Skill saved.' });
+  };
+
+  const handleDeleteSkill = async (name: string) => {
+    const res: any = await browser.runtime.sendMessage({ action: 'DELETE_SKILL', payload: { name } });
+    if (res?.success) setSkills(res.data);
   };
 
   const saveMcp = async (change: { enabled?: boolean; token?: string }) => {
@@ -465,6 +486,53 @@ export default function App() {
           The model answers through the provider's function-calling feature instead of writing JSON, which some models
           get wrong. Models that don't support it fall back to JSON by themselves.
         </p>
+      </div>
+
+      {/* Skills Section */}
+      <div className="section">
+        <label className="section-label">Skills</label>
+        <p className="hint">
+          Saved instructions for tasks you repeat. The agent uses a skill when it fits the site and the task. After a task
+          finishes, the sidebar offers "Save as skill".
+        </p>
+        {skills.length > 0 ? (
+          <ul className="skill-list">
+            {skills.map((s) => (
+              <li key={s.name}>
+                <div className="skill-head">
+                  <strong>{s.name}</strong>
+                  {s.sites.length > 0 && <span className="skill-sites">{s.sites.join(', ')}</span>}
+                  <span className="skill-actions">
+                    <button className="link-btn" onClick={() => setSkillDraft(formatSkill(s))}>Edit</button>
+                    <button className="link-btn" onClick={() => handleDeleteSkill(s.name)}>Delete</button>
+                  </span>
+                </div>
+                <div className="skill-desc">{s.description}</div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="hint">No skills yet.</p>
+        )}
+        <textarea
+          className="api-input skill-editor"
+          rows={skillDraft ? 8 : 2}
+          placeholder={'Paste a SKILL.md to add it:\n---\nname: ...\ndescription: ...\n---\nSteps...'}
+          value={skillDraft}
+          onChange={(e) => setSkillDraft(e.target.value)}
+        />
+        {skillDraft.trim() && (
+          <div className="input-group">
+            <button onClick={handleSaveSkill} className="profile-save-btn">Save skill</button>
+            <button onClick={() => { setSkillDraft(''); setSkillMessage(null); }} className="secondary-btn">Cancel</button>
+          </div>
+        )}
+        {skillMessage && <div className={`message ${skillMessage.ok ? 'saved' : 'error'}`}>{skillMessage.text}</div>}
+        {skillDraft.trim() && (
+          <p className="hint advisory">
+            ⚠️ The agent follows a skill's instructions, so only add skills you wrote or trust.
+          </p>
+        )}
       </div>
 
       {/* AI apps (MCP) Section */}

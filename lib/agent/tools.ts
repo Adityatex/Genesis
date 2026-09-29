@@ -24,7 +24,7 @@ export interface ToolCall {
 export const NEXT_ACTIONS_TOOL = 'next_actions';
 
 const ACTION_NAMES = [
-  'click', 'type', 'clear_and_type', 'select', 'navigate', 'scroll', 'press_key', 'read', 'find', 'note', 'wait', 'done',
+  'click', 'type', 'clear_and_type', 'select', 'navigate', 'scroll', 'press_key', 'read', 'find', 'note', 'wait', 'use_skill', 'done',
 ];
 
 export const AGENT_TOOLS: ToolDef[] = [{
@@ -49,7 +49,7 @@ export const AGENT_TOOLS: ToolDef[] = [{
             properties: {
               action: { type: 'string', enum: ACTION_NAMES },
               elementId: { type: 'integer', description: 'Element ID from the page snapshot, e.g. 12 for [12]' },
-              text: { type: 'string', description: 'Text to type, words to find, a note, or milliseconds to wait' },
+              text: { type: 'string', description: 'Text to type, words to find, a note, milliseconds to wait, or a skill name' },
               value: { type: 'string', description: 'Option label, for select' },
               url: { type: 'string', description: 'Full http(s) URL, for navigate' },
               direction: { type: 'string', enum: ['up', 'down'] },

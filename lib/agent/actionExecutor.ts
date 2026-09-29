@@ -5,7 +5,7 @@ import { getElementById, getRemoteRef, findElements, formatElement, pageText, sh
 import { keyParams, normalizeKey } from '@/lib/agent/keys';
 
 export interface AgentAction {
-  action: 'click' | 'type' | 'clear_and_type' | 'select' | 'navigate' | 'scroll' | 'read' | 'wait' | 'done' | 'press_key' | 'find' | 'note';
+  action: 'click' | 'type' | 'clear_and_type' | 'select' | 'navigate' | 'scroll' | 'read' | 'wait' | 'done' | 'press_key' | 'find' | 'note' | 'use_skill';
   elementId?: number;
   text?: string;
   url?: string;

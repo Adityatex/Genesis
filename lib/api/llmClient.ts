@@ -8,7 +8,8 @@ import { promptHistory } from '@/lib/agent/history';
 import { MAX_BATCH } from '@/lib/agent/parseAction';
 import { AGENT_TOOLS, NEXT_ACTIONS_TOOL, toolCallsToResponse, type ToolCall, type ToolDef } from '@/lib/agent/tools';
 
-const REQUEST_TIMEOUT = 15000;
+// Reasoning models (deepseek-v4-pro, o-series) can think for well over 15s on a hard step
+const REQUEST_TIMEOUT = 45_000;
 const MODELS_TIMEOUT = 10000;
 const MAX_RETRIES = 3;
 /** Parameter fixes (see adaptParams) attempted per request before giving up. */
@@ -474,6 +475,7 @@ function actionsList(): string {
 - {"action": "find", "text": "<words>"} — Search ALL elements on the page, including ones not listed in the snapshot; returns their IDs
 - {"action": "note", "text": "<facts>"} — Write down facts you will need later (prices, specs, amounts, names). Notes stay in your ACTION HISTORY after you leave the page
 - {"action": "wait", "text": "<milliseconds>"} — Wait for content to load
+- {"action": "use_skill", "text": "<skill name>"} — Load one of the OTHER SKILLS listed under the goal, when it fits the task
 - {"action": "done", "summary": "<what was accomplished>"} — Task is complete`;
 }
 

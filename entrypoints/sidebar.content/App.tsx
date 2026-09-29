@@ -18,6 +18,7 @@ import ToolsGrid, { type ToolDef } from './components/ToolsGrid';
 import MessageList from './components/MessageList';
 import ChatInput from './components/ChatInput';
 import AgentControls from './components/AgentControls';
+import SaveSkillBar from './components/SaveSkillBar';
 import type { RunStatus } from '@/lib/agent/runner';
 
 export default function App() {
@@ -94,16 +95,41 @@ export default function App() {
   // in one chat message per run; after a navigation the new page picks it up.
   const agentMessageId = useRef<string | null>(null);
   const [agentStatus, setAgentStatus] = useState<RunStatus | null>(null);
+  // The finished run offered as a skill (by its last update time), and the ones already handled
+  const [skillOffer, setSkillOffer] = useState<number | null>(null);
+  const skillHandled = useRef(new Set<number>());
   const agent = useAgentRun((view) => {
     setSidebarOpen(true);
     setAgentStatus(view.status);
+    setSkillOffer(view.status === 'done' && !skillHandled.current.has(view.updatedAt) ? view.updatedAt : null);
     setStatus(view.status === 'running' ? 'WORKING' : 'ACTIVE');
     const text = view.message || '🤖 **Agent Mode**: starting...';
     if (agentMessageId.current) chat.updateBotMessage(agentMessageId.current, text, view.loading);
     else agentMessageId.current = chat.addBotMessage(text, view.loading);
   });
 
+  const closeSkillOffer = () => {
+    if (skillOffer !== null) skillHandled.current.add(skillOffer);
+    setSkillOffer(null);
+  };
+
+  const saveAsSkill = async () => {
+    const res: any = await browser.runtime.sendMessage({ action: 'SAVE_SKILL_FROM_RUN' }).catch((err: Error) => ({ error: err.message }));
+    closeSkillOffer();
+    if (!res?.success) {
+      chat.addBotMessage(`**Couldn't save a skill:** ${res?.error || 'unknown error'}`);
+      return;
+    }
+    const { skill, markdown } = res.data;
+    const fence = '```';
+    chat.addBotMessage(
+      `## 🧠 Skill saved: ${skill.name}\n\n${skill.description}\n\n`
+      + `The agent will use it for similar tasks. You can edit or delete it in the Genesis popup.\n\n${fence}markdown\n${markdown}${fence}`,
+    );
+  };
+
   const startAgent = async (goal: string) => {
+    setSkillOffer(null);
     agentMessageId.current = chat.addBotMessage('🤖 **Agent Mode**: starting...', true);
     await agent.start(goal);
   };
@@ -171,6 +197,7 @@ export default function App() {
         onDetectElements={toolsApi.handleDetectElements}
         onSummarize={toolsApi.handleSummarize}
       />
+      {skillOffer !== null && <SaveSkillBar onSave={saveAsSkill} onDismiss={closeSkillOffer} />}
       {(agentStatus === 'running' || agentStatus === 'paused') && (
         <AgentControls paused={agentStatus === 'paused'} onContinue={agent.resume} onStop={() => agent.stop()} />
       )}

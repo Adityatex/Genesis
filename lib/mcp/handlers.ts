@@ -131,7 +131,9 @@ export function createHandlers(deps: HandlerDeps) {
       const actions: AgentAction[] = raw.map((a, i) => {
         const parsed = parseAgentAction(JSON.stringify(a));
         if (!parsed.ok) throw new Error(`Action ${i + 1}: ${parsed.error}`);
-        if (parsed.action.action === 'done') throw new Error(`Action ${i + 1}: "done" is for Genesis's own agent; just stop acting`);
+        if (parsed.action.action === 'done' || parsed.action.action === 'use_skill') {
+          throw new Error(`Action ${i + 1}: "${parsed.action.action}" is only for Genesis's own agent`);
+        }
         return parsed.action;
       });
 

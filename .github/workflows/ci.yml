@@ -66,6 +66,9 @@ jobs:
       - name: Mock eval
         run: npm run eval:mock -- --timeout 45
 
+      - name: Save as skill, then reuse it (mock)
+        run: npm run eval:mock -- --task login --trials 2 --learn --timeout 45
+
       - name: genesis-mcp end to end (MCP client, real extension, real Chromium)
         run: |
           npm --prefix mcp ci
