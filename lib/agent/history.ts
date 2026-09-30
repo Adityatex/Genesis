@@ -59,6 +59,12 @@ export function promptHistory(actionHistory: string[]): string[] {
 
 /** One-line description of an action for the history, e.g. `type [3] "Ada"`. */
 export function describeAction(action: AgentAction): string {
+  // Code is long: the log shows its first line, the model its result
+  if (action.action === 'run_code') {
+    const lines = (action.text ?? '').trim().split('\n');
+    const first = lines[0].slice(0, 80);
+    return `run_code "${first}${lines.length > 1 || lines[0].length > 80 ? '…' : ''}" (${lines.length} line${lines.length === 1 ? '' : 's'})`;
+  }
   let desc = action.action;
   if (action.elementId !== undefined) desc += ` [${action.elementId}]`;
   if (action.text) desc += ` "${action.text}"`;

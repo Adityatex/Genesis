@@ -82,6 +82,35 @@ export async function debuggerScreenshot(tabId: number): Promise<string> {
   return result.data;
 }
 
+/**
+ * Evaluate an expression in an isolated world of the tab's top frame: the
+ * page's DOM, but not its JavaScript globals (like a content script), so the
+ * page can't see or tamper with the code, and changes to globals stay put.
+ * Resolves with the value (JSON string) or rejects with the code's error.
+ */
+export async function debuggerEvaluate(tabId: number, expression: string, timeoutMs: number): Promise<string | undefined> {
+  await ensureAttached(tabId);
+  const { frameTree } = await send(tabId, 'Page.getFrameTree', {}) as { frameTree: { frame: { id: string } } };
+  const { executionContextId } = await send(tabId, 'Page.createIsolatedWorld', {
+    frameId: frameTree.frame.id,
+    worldName: 'genesis-run-code',
+    grantUniveralAccess: false,
+  }) as { executionContextId: number };
+  const response = await send(tabId, 'Runtime.evaluate', {
+    expression,
+    contextId: executionContextId,
+    awaitPromise: true,
+    returnByValue: true,
+    timeout: timeoutMs,
+  }) as { result?: { value?: unknown }; exceptionDetails?: { text?: string; exception?: { description?: string } } };
+  if (response.exceptionDetails) {
+    const detail = response.exceptionDetails.exception?.description ?? response.exceptionDetails.text ?? 'error';
+    throw new Error(detail.split('\n')[0]);
+  }
+  const value = response.result?.value;
+  return typeof value === 'string' ? value : value === undefined ? undefined : JSON.stringify(value);
+}
+
 /** Detach at the end of an agent run so Chrome's debugging banner goes away. */
 export async function releaseTab(tabId: number): Promise<void> {
   declined.delete(tabId);

@@ -42,6 +42,7 @@ export default function App() {
   const [stepCheckpoint, setStepCheckpoint] = useState(DEFAULT_PREFS.stepCheckpoint);
   const [screenshots, setScreenshots] = useState<ScreenshotMode>(DEFAULT_PREFS.screenshots);
   const [nativeTools, setNativeTools] = useState(DEFAULT_PREFS.nativeTools);
+  const [customCode, setCustomCode] = useState(DEFAULT_PREFS.customCode);
   const [mcp, setMcp] = useState<McpState>({ enabled: false, hasToken: false, status: 'off' });
   const [mcpToken, setMcpToken] = useState('');
   const [mcpError, setMcpError] = useState('');
@@ -73,6 +74,7 @@ export default function App() {
       setStepCheckpoint(res.data.stepCheckpoint);
       setScreenshots(res.data.screenshots);
       setNativeTools(res.data.nativeTools);
+      setCustomCode(res.data.customCode);
     });
     loadStoredProfile().then(setProfile).catch(() => {});
     // Connection status changes while the popup is open (an AI app starts genesis-mcp)
@@ -114,6 +116,12 @@ export default function App() {
     }
     setMcp(res.data);
     if (change.token) setMcpToken('');
+  };
+
+  const handleCustomCodeChange = async (on: boolean) => {
+    setCustomCode(on);
+    const res: any = await browser.runtime.sendMessage({ action: 'SAVE_PREFS', payload: { customCode: on } });
+    if (!res?.success) setCustomCode(!on);
   };
 
   const handleNativeToolsChange = async (on: boolean) => {
@@ -486,6 +494,28 @@ export default function App() {
           The model answers through the provider's function-calling feature instead of writing JSON, which some models
           get wrong. Models that don't support it fall back to JSON by themselves.
         </p>
+
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={customCode}
+            onChange={(e) => handleCustomCodeChange(e.target.checked)}
+          />
+          <span>Let the agent run its own code (advanced)</span>
+        </label>
+        <p className="hint">
+          For data the built-in extract can't reach, the model may write a short script that reads the page. It runs
+          separately from the page's own scripts, for 10 seconds at most, through the debugger connection (Chrome shows
+          its banner).
+        </p>
+        {customCode && (
+          <p className="hint advisory">
+            ⚠️ The model writes this code, and a page it reads could try to trick it. Genesis refuses code that fetches,
+            loads resources, reads cookies or storage, clicks or changes the page, and removes the network functions
+            before running it. That lowers the risk but can't remove it. Turn this on only when you need it, not while
+            the agent works on sites you're signed in to with sensitive data.
+          </p>
+        )}
       </div>
 
       {/* Skills Section */}

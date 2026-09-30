@@ -65,6 +65,8 @@ const { values: args } = parseArgs({
     'use-skills': { type: 'boolean', default: false },
     // Save each run's full final message (every step) under eval/results/transcripts
     transcripts: { type: 'boolean', default: false },
+    // Turn on run_code (the model's own read-only page code); mock plans then use it too
+    'custom-code': { type: 'boolean', default: false },
     tpm: { type: 'string' },
   },
 });
@@ -218,7 +220,10 @@ function mockPlanner(plan: (MockStep | MockStep[])[]) {
   let step = 0;
   /** The step whose element was missing once already (see below). */
   let retried = -1;
-  return (prompt: string): string => {
+  return (prompt: string, system = ''): string => {
+    // run_code steps only when the extension offers run_code (--custom-code)
+    const offered = system.includes('"action": "run_code"');
+    while (!offered && !Array.isArray(plan[step]) && (plan[step] as MockStep | undefined)?.action === 'run_code') step++;
     const next = plan[step++];
     if (!next) return JSON.stringify({ action: 'done', summary: 'MOCK: plan complete' });
 
@@ -237,7 +242,7 @@ function mockPlanner(plan: (MockStep | MockStep[])[]) {
     };
     /** The action as the model would send it, or a string saying what's missing. */
     const resolve = (s: MockStep): object | string => {
-      if (s.action === 'done' || s.action === 'find' || s.action === 'extract') return s;
+      if (s.action === 'done' || s.action === 'find' || s.action === 'extract' || s.action === 'run_code') return s;
       if (s.action === 'press_key') return { action: 'press_key', key: s.key, elementId: s.target ? findId(s.target) : undefined };
       const elementId = findId(s.target);
       if (elementId === undefined) return `MOCK: no element matching ${s.target} in snapshot`;
@@ -278,7 +283,7 @@ async function launch(apiKey: string, skills: unknown[] = []): Promise<{ context
   };
   await worker.evaluate(
     ([key, value, prefsKey, prefs]) => chrome.storage.local.set({ [key]: value, [prefsKey]: prefs }),
-    [SETTINGS_KEY, settings, PREFS_KEY, { trustedInput: !args['scripted-input'], stepCheckpoint: EVAL_CHECKPOINT, screenshots: args.screenshots, nativeTools: !!args.tools }] as const,
+    [SETTINGS_KEY, settings, PREFS_KEY, { trustedInput: !args['scripted-input'], stepCheckpoint: EVAL_CHECKPOINT, screenshots: args.screenshots, nativeTools: !!args.tools, customCode: !!args['custom-code'] }] as const,
   );
   if (skills.length) await worker.evaluate((list) => chrome.storage.local.set({ genesis_skills: list }), skills);
   return { context, userDataDir };
@@ -324,7 +329,7 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
       const body = route.request().postDataJSON();
       if (args['dump-prompts']) dumpPrompt(result.llmCalls, body);
       saveImages(task.id, result.llmCalls, body);
-      await route.fulfill(chatCompletion(planMock(textOf(body.messages.at(-1).content)), Array.isArray(body.tools)));
+      await route.fulfill(chatCompletion(planMock(textOf(body.messages.at(-1).content), textOf(body.messages[0]?.content)), Array.isArray(body.tools)));
       return;
     }
     if (args['dump-prompts']) dumpPrompt(result.llmCalls, route.request().postDataJSON());
@@ -399,6 +404,18 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
       ? finalText.split('Task Complete')[1].split('Steps taken')[0].trim()
       : finalText.slice(0, 500).trim();
     result.finalUrl = page.url();
+    // --custom-code: a mock plan's run_code must have really run and returned data
+    const codeSteps = task.mockPlan.filter((s) => !Array.isArray(s) && s.action === 'run_code').length;
+    if (MODE === 'mock' && args['custom-code'] && codeSteps) {
+      const returned = finalText.split('The code returned:').length - 1;
+      if (returned < codeSteps) {
+        throw new Error(`run_code returned data ${returned} of ${codeSteps} times: ${finalText.replace(/\s+/g, ' ').slice(0, 300)}`);
+      }
+      // The network probe (tasks.mts) must find fetch, XMLHttpRequest and WebSocket gone
+      if (finalText.includes('"fetch":') && !finalText.includes('{"fetch":"undefined","xhr":"undefined","ws":"undefined"}')) {
+        throw new Error('run_code still had network functions in the real browser');
+      }
+    }
     if (args.transcripts) {
       const dir = path.join(RESULTS_DIR, 'transcripts');
       fs.mkdirSync(dir, { recursive: true });

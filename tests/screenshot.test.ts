@@ -36,7 +36,7 @@ describe('models that refuse images', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     expect(acceptsImages(config)).toBe(true);
-    await expect(planAgentStep('goal', 'PAGE', [], [], config, 'data:image/jpeg;base64,AAAA')).resolves.toBe('{"action":"done"}');
+    await expect(planAgentStep('goal', 'PAGE', [], [], config, { image: 'data:image/jpeg;base64,AAAA' })).resolves.toBe('{"action":"done"}');
     expect(acceptsImages(config)).toBe(false);
 
     const first = JSON.parse(fetchMock.mock.calls[0][1].body);

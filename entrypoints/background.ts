@@ -11,7 +11,8 @@ import {
 } from '@/lib/api/providers';
 import { formatError, withTimeout } from '@/lib/utils/errorHandler';
 import { providerPool, modelLabel, type FallbackResult } from '@/lib/api/fallback';
-import { trustedClick, trustedKey, trustedType, releaseTab, watchDetach, debuggerScreenshot } from '@/lib/agent/trustedInput';
+import { trustedClick, trustedKey, trustedType, releaseTab, watchDetach, debuggerScreenshot, debuggerEvaluate } from '@/lib/agent/trustedInput';
+import { CODE_TIMEOUT_MS } from '@/lib/agent/customCode';
 import { annotate, base64ToBlob, type VisualInfo } from '@/lib/agent/screenshot';
 import { PREFS_KEY, DEFAULT_PREFS, type AgentPrefs } from '@/lib/agent/prefs';
 import { BridgeClient, type BridgeStatus } from '@/lib/mcp/bridgeClient';
@@ -65,15 +66,17 @@ export default defineBackground(() => {
   // ---- Agent runner: the loop lives here, not in the page (lib/agent/runner.ts)
   const runnerDeps: RunnerDeps = {
     plan: async (goal, snapshot, history, currentPlan, role, image) => {
-      const { nativeTools } = await loadPrefs();
+      const { nativeTools, customCode } = await loadPrefs();
       // Any provider in the chain can answer: the prompt carries the whole task state.
       // Executor calls try the fast model first, then the usual chain.
       const { value, config, skipped } = await ask(
-        (c) => planAgentStep(goal, snapshot, history, currentPlan, c, image, nativeTools),
+        (c) => planAgentStep(goal, snapshot, history, currentPlan, c, { image, tools: nativeTools, customCode }),
         role === 'executor',
       );
       return { text: value, model: modelLabel(config), unavailable: skipped, imageDropped: !!image && !acceptsImages(config) };
     },
+    // run_code (opt-in): in an isolated world through the debugger; the runner checked the code first
+    runCode: (tabId, expression) => debuggerEvaluate(tabId, expression, CODE_TIMEOUT_MS),
     screenshot: async (tabId, visual) => {
       // Through the debugger when trusted input is on: that works even if the
       // user is looking at another tab. Otherwise only while the tab is visible.
@@ -142,6 +145,7 @@ export default defineBackground(() => {
         try {
           const view = await startRun(runnerDeps, tabId, goal, {
             checkpoint: 0, split: hasExecutor(settings), screenshots: prefs.screenshots, skills: await loadSkills(skillStorage),
+            customCode: prefs.customCode,
           });
           return view.message;
         } finally {
@@ -353,7 +357,7 @@ export default defineBackground(() => {
             const prefs = await loadPrefs();
             runAgent(tabId, goal, {
               checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
-              skills: await loadSkills(skillStorage),
+              skills: await loadSkills(skillStorage), customCode: prefs.customCode,
             });
             sendResponse({ success: true });
             break;

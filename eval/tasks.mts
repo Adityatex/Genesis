@@ -21,6 +21,8 @@ export type MockStep =
   | { action: 'press_key'; key: string; target?: RegExp }
   | { action: 'find'; text: string }
   | { action: 'extract'; text: string; fields: string[]; follow?: boolean }
+  /** Only used when the extension offers run_code (eval --custom-code). */
+  | { action: 'run_code'; text: string }
   | { action: 'done'; summary: string };
 
 export interface GradeInput {
@@ -403,6 +405,10 @@ export const TASKS: Task[] = [
     // Unpaid invoices span two pages: 120.00 + 89.50 + 310.25 + 45.00
     check: r => /564\.75/.test(r.summary),
     mockPlan: [
+      // The network functions must be gone where the code runs (checked by the harness), even for
+      // code that spells their names in pieces to get past the check for them
+      { action: 'run_code', text: "const g = globalThis; return { fetch: typeof g['fe' + 'tch'], xhr: typeof g['XMLHttp' + 'Request'], ws: typeof g['Web' + 'Socket'] };" },
+      { action: 'run_code', text: "return [...document.querySelectorAll('tbody tr')].filter((r) => r.innerText.includes('Unpaid')).map((r) => r.cells[2].innerText);" },
       { action: 'click', target: /<a> "Next page"/ },
       { action: 'done', summary: 'Your unpaid invoices total $564.75.' },
     ],

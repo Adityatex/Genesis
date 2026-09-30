@@ -24,6 +24,12 @@ export interface AgentPrefs {
    * their own. Experimental, so off by default until the benchmark shows a win.
    */
   nativeTools: boolean;
+  /**
+   * Let the agent run its own JavaScript to read a page (run_code), in an
+   * isolated context with the network functions removed. Off by default:
+   * page content could try to steer the code.
+   */
+  customCode: boolean;
 }
 
 export type ScreenshotMode = 'off' | 'planning' | 'always';
@@ -37,4 +43,5 @@ export const DEFAULT_PREFS: AgentPrefs = {
   stepCheckpoint: 50,
   screenshots: 'off',
   nativeTools: false,
+  customCode: false,
 };

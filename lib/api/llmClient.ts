@@ -447,22 +447,30 @@ export async function chatWithPage(message: string, pageContext: string, config:
 }
 
 /** How the agent answers when its reply is a native tool call. */
-const TOOLS_FORMAT = `HOW TO ANSWER: call the ${NEXT_ACTIONS_TOOL} tool, once, with:
+function toolsFormat(customCode: boolean): string {
+  return `HOW TO ANSWER: call the ${NEXT_ACTIONS_TOOL} tool, once, with:
 - "plan": your short checklist for the whole goal (at most 8 items, "[x] done" / "[ ] to do"). Send it in your first answer, and again whenever it changes or an item gets done. Leave it out otherwise.
 - "actions": 1 to ${MAX_BATCH} actions, run in order. Each is one of the ACTIONS below.
 
-${actionsList()}`;
+${actionsList(customCode)}`;
+}
 
 /** How the agent answers without tools: one JSON object. */
-const JSON_FORMAT = `RESPONSE FORMAT (one JSON object, nothing else):
+function jsonFormat(customCode: boolean): string {
+  return `RESPONSE FORMAT (one JSON object, nothing else):
 {"plan": ["[x] finished step", "[ ] next step", "[ ] later step"], "actions": [<action>, <action>, ...]}
 - "plan": your short checklist for the whole goal (at most 8 items). Send it in your first response, and again whenever it changes or an item gets done. Leave it out otherwise.
 - "actions": 1 to ${MAX_BATCH} actions, run in order.
 
-${actionsList()}`;
+${actionsList(customCode)}`;
+}
+
+/** run_code, offered only when the user turned it on. */
+const RUN_CODE_ACTION = `
+- {"action": "run_code", "text": "<JavaScript function body>"} — Only when extract can't get the data: your own code that READS this page and returns the data, e.g. "return [...document.querySelectorAll('.row')].map(r => r.innerText)". It runs with the page's DOM for 10 seconds at most, and may not fetch, load anything, read cookies or storage, click, submit or change the page: code that tries is refused. Use the other actions to act`;
 
 /** The agent's actions, for either answer format. */
-function actionsList(): string {
+function actionsList(customCode: boolean): string {
   return `ACTIONS:
 - {"action": "click", "elementId": <number>} — Click an interactive element by its ID
 - {"action": "type", "elementId": <number>, "text": "<text>"} — Append text to an input
@@ -477,7 +485,7 @@ function actionsList(): string {
 - {"action": "wait", "text": "<milliseconds>"} — Wait for content to load
 - {"action": "use_skill", "text": "<skill name>"} — Load one of the OTHER SKILLS listed under the goal, when it fits the task
 - {"action": "extract", "text": "<what, e.g. laptops>", "fields": ["name", "price", ...], "follow": <true|false>} — Collect those fields from the list, table or details on this page, in one step. With "follow": true it also reads each listed item's own page for fields the list doesn't show
-- {"action": "done", "summary": "<what was accomplished>"} — Task is complete`;
+- {"action": "done", "summary": "<what was accomplished>"} — Task is complete${customCode ? RUN_CODE_ACTION : ''}`;
 }
 
 /** The agent's user message: the text, plus the screenshot if there is one. */
@@ -492,6 +500,15 @@ function agentUserContent(text: string, image?: string): string | ContentPart[] 
   ];
 }
 
+export interface PlanOptions {
+  /** Screenshot (data URL) with the snapshot's element IDs drawn on it. */
+  image?: string;
+  /** Offer the actions as native tools, unless this model has refused them before. Default true. */
+  tools?: boolean;
+  /** The user turned on run_code (the model's own read-only page code). Default false. */
+  customCode?: boolean;
+}
+
 /**
  * Agent step planner: given a goal, DOM snapshot, action history and the
  * model's own plan so far, returns its next actions as JSON (see the prompt).
@@ -502,11 +519,9 @@ export async function planAgentStep(
   actionHistory: string[],
   currentPlan: string[],
   config: LLMConfig,
-  /** Screenshot (data URL) with the snapshot's element IDs drawn on it. */
-  image?: string,
-  /** Offer the actions as native tools, unless this model has refused them before. */
-  tools = true,
+  options: PlanOptions = {},
 ): Promise<string> {
+  const { image, tools = true, customCode = false } = options;
   const useTools = tools && acceptsTools(config);
   const planText = currentPlan.length > 0
     ? `\n\nYOUR PLAN (from your last response):\n${currentPlan.join('\n')}`
@@ -520,7 +535,7 @@ export async function planAgentStep(
       role: 'system',
       content: `You are a browser automation agent called Genesis. You control a web browser to reach the user's goal, quickly and reliably.
 
-${useTools ? TOOLS_FORMAT : JSON_FORMAT}
+${useTools ? toolsFormat(customCode) : jsonFormat(customCode)}
 
 RULES:
 1. ${useTools ? `Answer only by calling ${NEXT_ACTIONS_TOOL}, no text.` : 'Output ONLY the JSON object. No explanation, no markdown, no extra text.'}
@@ -553,7 +568,7 @@ RULES:
   } catch (error) {
     // This model or provider won't take tools: ask again, as JSON (remembered)
     if (!(error instanceof ToolsUnsupportedError)) throw error;
-    return planAgentStep(goal, domSnapshot, actionHistory, currentPlan, config, image, false);
+    return planAgentStep(goal, domSnapshot, actionHistory, currentPlan, config, { ...options, tools: false });
   }
 }
 

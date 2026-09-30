@@ -13,6 +13,7 @@ import type { AgentAction } from '@/lib/agent/actionExecutor';
 import { parseAgentResponse } from '@/lib/agent/parseAction';
 import type { ScreenshotMode } from '@/lib/agent/prefs';
 import { pickSkills, slugify, type Skill } from '@/lib/skills/skill';
+import { checkCode, wrapCode, formatCodeResult } from '@/lib/agent/customCode';
 import { MAX_INVALID_RESPONSES, REPEAT_PAUSE, REPEAT_WARN, describeAction, formatHistory } from '@/lib/agent/history';
 
 /** "paused": waiting for the user to continue or stop (checkpoint, or the agent looks stuck). */
@@ -63,6 +64,8 @@ export interface RunnerDeps {
   plan(goal: string, snapshot: string, history: string[], currentPlan: string[], role: ModelRole, image?: string): Promise<string | PlanReply>;
   /** Screenshot of the tab with the snapshot's elements numbered (data URL), or null if it can't be taken. */
   screenshot?(tabId: number, visual: unknown): Promise<string | null>;
+  /** Evaluate a wrapped run_code expression in the tab (isolated world); resolves with its JSON result. */
+  runCode?(tabId: number, expression: string): Promise<string | undefined>;
   /** Message the tab's top-frame content script. Rejects if nothing answers (e.g. mid-navigation). */
   send(tabId: number, message: unknown, timeoutMs: number): Promise<any>;
   getTab(tabId: number): Promise<TabInfo>;
@@ -102,6 +105,7 @@ interface Run extends RunView {
   /** The user's saved skills, and the ones the model loaded with use_skill. */
   skills: Skill[];
   loadedSkills: Set<string>;
+  customCode: boolean;
   /** The model's summary when it finished. */
   summary?: string;
   /** The model that last answered for each role, to spot a backup taking over. */
@@ -116,6 +120,8 @@ export interface RunOptions {
   screenshots?: ScreenshotMode;
   /** The user's saved skills (lib/skills); relevant ones are shown to the model. */
   skills?: Skill[];
+  /** The user turned on run_code (lib/agent/customCode.ts). */
+  customCode?: boolean;
 }
 
 /** Most skills listed by name for use_skill (the rest are too unlikely to matter). */
@@ -425,6 +431,20 @@ export async function runAction(
   return { result, pageChanged: false };
 }
 
+/** run_code: check the code, run it if allowed, and say what happened. */
+async function runCodeAction(deps: RunnerDeps, run: Run, code: string): Promise<string> {
+  if (!run.customCode || !deps.runCode) {
+    return '❌ Running your own code is turned off (the user can allow it in the Genesis popup). Use extract, read or find instead.';
+  }
+  const refused = checkCode(code);
+  if (refused) return `❌ Not run: ${refused}. The code may only read this page and return data.`;
+  try {
+    return formatCodeResult(await deps.runCode(run.tabId, wrapCode(code)));
+  } catch (err) {
+    return `❌ The code failed: ${String((err as Error)?.message ?? err).slice(0, 300)}`;
+  }
+}
+
 /** An error page's title: "404", "Page not found", "Not Found", ... */
 export function isNotFound(title: string | undefined): boolean {
   return !!title && /\b404\b|\bnot found\b|page (does not|doesn't) exist/i.test(title);
@@ -581,6 +601,14 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
         return;
       }
       const desc = descs[i];
+      if (action.action === 'run_code') {
+        // Run by the background through the debugger, not by the page's content script
+        publish(deps, run, progressMessage(run, `*Step ${run.step}: ${desc}*`), true);
+        const result = await runCodeAction(deps, run, action.text ?? '');
+        run.history.push(`${desc} → ${result}`);
+        if (result.startsWith('❌')) run.needPlanner = true;
+        continue;
+      }
       if (action.action === 'use_skill') {
         // Handled here, not on the page: the skill joins the prompt from the next call
         const skill = run.skills.find((sk) => sk.name === slugify(action.text ?? ''));
@@ -622,7 +650,7 @@ export async function startRun(deps: RunnerDeps, tabId: number, goal: string, op
     stopRequested: false, loads: 0, visited: new Map(), repeats: new Map(), checkpoint: Math.max(0, options.checkpoint ?? 0),
     split: !!options.split, needPlanner: true, routineCalls: 0, roleModels: {},
     screenshots: options.screenshots ?? 'off', noVision: new Set(),
-    skills: options.skills ?? [], loadedSkills: new Set(),
+    skills: options.skills ?? [], loadedSkills: new Set(), customCode: !!options.customCode,
   };
   runs.set(tabId, run);
   try {

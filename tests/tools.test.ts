@@ -41,7 +41,7 @@ describe('tool calls → response', () => {
     expect(AGENT_TOOLS.map((t) => t.function.name)).toEqual([NEXT_ACTIONS_TOOL]);
     const item = (AGENT_TOOLS[0].function.parameters as any).properties.actions.items;
     expect([...item.properties.action.enum].sort()).toEqual(
-      ['clear_and_type', 'click', 'done', 'extract', 'find', 'navigate', 'note', 'press_key', 'read', 'scroll', 'select', 'type', 'use_skill', 'wait'],
+      ['clear_and_type', 'click', 'done', 'extract', 'find', 'navigate', 'note', 'press_key', 'read', 'run_code', 'scroll', 'select', 'type', 'use_skill', 'wait'],
     );
   });
 
@@ -104,7 +104,7 @@ describe('planAgentStep with native tools', () => {
   it('asks for JSON when tools are turned off', async () => {
     const fetchMock = vi.fn().mockResolvedValue(reply({ content: '{"action":"done","summary":"ok"}' }));
     vi.stubGlobal('fetch', fetchMock);
-    await planAgentStep('Goal', 'PAGE', [], [], cfg('any-model'), undefined, false);
+    await planAgentStep('Goal', 'PAGE', [], [], cfg('any-model'), { tools: false });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).tools).toBeUndefined();
   });
 });

@@ -10,7 +10,7 @@ export type ParseResult =
 
 const ACTIONS: ReadonlySet<AgentAction['action']> = new Set([
   'click', 'type', 'clear_and_type', 'select', 'navigate',
-  'scroll', 'read', 'wait', 'done', 'press_key', 'find', 'note', 'use_skill', 'extract',
+  'scroll', 'read', 'wait', 'done', 'press_key', 'find', 'note', 'use_skill', 'extract', 'run_code',
 ]);
 
 /**
@@ -126,6 +126,9 @@ export function parseAgentAction(raw: string): ParseResult {
       break;
     case 'extract':
       if (!action.fields?.length) return { ok: false, error: 'extract requires fields: the things to collect, e.g. ["name", "price"]' };
+      break;
+    case 'run_code':
+      if (!action.text?.trim()) return { ok: false, error: 'run_code requires the code as text' };
       break;
     case 'use_skill':
       if (!action.text?.trim()) return { ok: false, error: 'use_skill requires the skill name as text' };
