@@ -63,6 +63,8 @@ const { values: args } = parseArgs({
     learn: { type: 'boolean', default: false },
     // Start every trial with the skills an earlier --learn run saved (e.g. by a stronger model)
     'use-skills': { type: 'boolean', default: false },
+    // Save each run's full final message (every step) under eval/results/transcripts
+    transcripts: { type: 'boolean', default: false },
     tpm: { type: 'string' },
   },
 });
@@ -183,7 +185,7 @@ function saveImages(taskId: string, call: number, body: any): void {
 
 function dumpPrompt(call: number, body: any): void {
   const prompt = textOf(body?.messages?.at(-1)?.content);
-  console.log(`----- prompt #${call}\n${prompt.split('\n\nACTION HISTORY')[0]}\n`);
+  console.log(`----- prompt #${call}\n${prompt}\n`);
 }
 
 /**
@@ -397,6 +399,11 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
       ? finalText.split('Task Complete')[1].split('Steps taken')[0].trim()
       : finalText.slice(0, 500).trim();
     result.finalUrl = page.url();
+    if (args.transcripts) {
+      const dir = path.join(RESULTS_DIR, 'transcripts');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `${task.id}-${trial}.md`), redact(finalText || '(no final message)'));
+    }
 
     // --learn: the first passing run of a task presses "Save as skill", as a user would
     const passed = result.outcome === 'done'

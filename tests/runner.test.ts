@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { startRun, stopRun, resumeRun, getRunView, notifyTabLoading, changesSection, PLANNER_EVERY, type RunnerDeps, type RunView, type TabInfo } from '@/lib/agent/runner';
+import { startRun, stopRun, resumeRun, getRunView, notifyTabLoading, changesSection, textChanges, PLANNER_EVERY, type RunnerDeps, type RunView, type TabInfo } from '@/lib/agent/runner';
 import { promptHistory, PROMPT_RECENT_STEPS } from '@/lib/agent/history';
 
 /**
@@ -454,13 +454,31 @@ describe('what changed after the last actions', () => {
   it('says so when nothing changed, and ignores values that were just typed', () => {
     const before = page(['[0] <input> "Email"'], ['Newsletter']);
     const after = page(['[0] <input> "Email" value="a@b.c"'], ['Newsletter']);
-    expect(changesSection(before, after)).toBe('\n\n--- WHAT CHANGED AFTER YOUR LAST ACTIONS ---\nNothing visible changed on the page.');
+    expect(changesSection(before, after)).toBe('\n\n--- WHAT CHANGED AFTER YOUR LAST ACTIONS ---\nNothing visible changed on the page. That is not always a failure (some actions give no feedback): if the history says your action worked, do not repeat it.');
   });
 
   it('lists elements that are gone, e.g. a closed popup', () => {
     const before = page(['[0] <button> "No thanks"', '[1] <button> "Download"'], ['Subscribe?', 'Report']);
     const after = page(['[0] <button> "Download"'], ['Report']);
-    expect(changesSection(before, after)).toBe('\n\n--- WHAT CHANGED AFTER YOUR LAST ACTIONS ---\nGone: <button> "No thanks"');
+    expect(changesSection(before, after)).toBe('\n\n--- WHAT CHANGED AFTER YOUR LAST ACTIONS ---\nText gone: "Subscribe?"\nGone: <button> "No thanks"');
+  });
+
+  it('finds a sentence added to page text that is all one line (the compare-and-buy bug)', () => {
+    // The whole page reported as new text, cut off before the one sentence that was new
+    const specs = 'All laptops Kite 14 Price $1,049 Memory (RAM) 16 GB Storage 512 GB SSD Screen 14" Add to cart';
+    const before = page(['[0] <button> "Add to cart"'], [specs]);
+    const after = page(['[0] <button> "Add to cart"'], [`${specs} Kite 14 added to your cart.`]);
+    expect(changesSection(before, after)).toBe('\n\n--- WHAT CHANGED AFTER YOUR LAST ACTIONS ---\nNew text: "Kite 14 added to your cart."');
+  });
+
+  it('reports separate changes separately, and ignores a ticking number', () => {
+    const w = (s: string) => s.split(' ');
+    expect(textChanges(w('Cart 1 items Welcome back Total due'), w('Cart 2 items Welcome back Payment failed: card declined Total due')))
+      .toEqual({ added: ['2', 'Payment failed: card declined'], removed: ['1'] });
+    const before = page([], ['Session 1:59 left Please sign in']);
+    const after = page([], ['Session 1:58 left Please sign in Wrong password']);
+    // "1:59" → "1:58" is too short to mention; the error is not
+    expect(changesSection(before, after)).toBe('\n\n--- WHAT CHANGED AFTER YOUR LAST ACTIONS ---\nNew text: "Wrong password"');
   });
 
   it('is added on the same page after actions, but not on the first step or a new page', async () => {
@@ -478,5 +496,23 @@ describe('what changed after the last actions', () => {
     expect(snaps[0]).not.toContain('WHAT CHANGED'); // first look at the page
     expect(snaps[1]).toContain('WHAT CHANGED AFTER YOUR LAST ACTIONS ---\nNothing visible changed'); // same page after the click
     expect(snaps[2]).not.toContain('WHAT CHANGED'); // a different page
+  });
+});
+
+describe('missing pages', () => {
+  it('recognises error page titles', async () => {
+    const { isNotFound } = await import('@/lib/agent/runner');
+    for (const t of ['404 Not Found', 'Page not found', 'Not Found - Shop', 'This page does not exist']) expect(isNotFound(t)).toBe(true);
+    for (const t of ['Found it! Best deals', 'Lost and Found Office', 'Kite 14 - Byte Store', undefined]) expect(isNotFound(t)).toBe(false);
+  });
+
+  it('reports landing on one as a failure, which also stops the batch', async () => {
+    const { deps, prompts, tab } = fakeDeps(['{"actions":[{"action":"navigate","url":"https://shop.test/cart"},{"action":"click","elementId":1}]}', '{"action":"done","summary":"ok"}']);
+    (deps.navigate as any).mockImplementation(async (_id: number, url: string) => { tab.url = url; tab.title = 'Page not found'; });
+    await startRun(deps, 95, 'Check out');
+    expect(prompts[1]).toEqual([
+      'navigate https://shop.test/cart → ❌ landed on "Page not found" (https://shop.test/cart): that page doesn\'t exist. Don\'t guess URLs; use links you have seen.',
+      '(note from Genesis) 1 more action not run: the page changed, so they may not fit it any more',
+    ]);
   });
 });

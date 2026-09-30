@@ -174,8 +174,13 @@ export function parseAgentResponse(raw: string): ResponseParseResult {
 
   const actions: AgentAction[] = [];
   for (const [i, item] of items.entries()) {
-    const parsed = parseAgentAction(JSON.stringify(item ?? null));
-    if (!parsed.ok) return { ok: false, error: `Action ${i + 1}: ${parsed.error}` };
+    const json = JSON.stringify(item ?? null);
+    const parsed = parseAgentAction(json);
+    if (!parsed.ok) {
+      // Quote what was sent: without it, models repeat the same mistake
+      const sent = json.length > 150 ? `${json.slice(0, 150)}…` : json;
+      return { ok: false, error: `Action ${i + 1}: ${parsed.error} (you sent ${sent})` };
+    }
     actions.push(parsed.action);
   }
 

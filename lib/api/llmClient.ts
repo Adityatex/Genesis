@@ -528,10 +528,10 @@ RULES:
 4. After typing in a search box, press Enter or click the search button.
 5. If the page doesn't have what you need, navigate to the right URL first.
 6. When the goal is complete, send "done" with a summary, on its own, after you've seen the result of your last actions. Only "note" actions may come before it in the same list.
-7. If you're stuck or the goal is impossible, send "done" with an explanation.
+7. If you're stuck or the goal is impossible, send "done" with an explanation. When the goal's main effect has happened (the item is in the cart, the form was sent) and the site offers no next step, that is as far as it goes: send "done" and say how far you got, rather than searching for pages that may not exist.
 8. On long pages the element list is cut short. If the element you need is not listed, use "find" with a keyword before scrolling or guessing URLs.
 9. You only see the current page. Once you leave it, its content is gone; your ACTION HISTORY is your only memory. Before leaving a page, "note" anything you need from it. The snapshot may also end with PAGES YOU VISITED EARLIER, excerpts of pages you already read. Never revisit a page just to re-read it: use your notes and those excerpts.
-10. Be efficient: take the shortest path to the goal. If an action didn't change anything, don't repeat it; try something else.`,
+10. Be efficient: take the shortest path to the goal. If an action didn't change anything, don't repeat it; try something else. Don't guess paths within a site (like /cart or /checkout): follow its links, or use URLs from the goal, the page, your history or a skill.`,
     },
     {
       role: 'user',

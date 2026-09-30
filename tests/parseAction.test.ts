@@ -105,7 +105,7 @@ describe('parseAgentResponse (plan + several actions)', () => {
 
   it('rejects the whole response when one action is invalid, saying which', () => {
     expect(parseAgentResponse('{"actions":[{"action":"click","elementId":1},{"action":"click"}]}'))
-      .toEqual({ ok: false, error: 'Action 2: click requires a numeric elementId' });
+      .toEqual({ ok: false, error: 'Action 2: click requires a numeric elementId (you sent {"action":"click"})' });
     expect(parseAgentResponse('{"actions":[]}')).toMatchObject({ ok: false });
     expect(parseAgentResponse('{"plan":["[ ] a"]}')).toEqual({ ok: false, error: 'Response has no "actions" list' });
   });

@@ -2,6 +2,23 @@
 
 All runs are live: real model, real extension, real Chromium. A run passes only if the right requests reached the test server **and** the agent finished cleanly.
 
+## Why compare-and-buy dropped, and the fix (2026-10-01)
+
+`deepseek-flash` on `compare-and-buy` went from 2/3 (2026-09-27) to 1/5. Full transcripts (`--transcripts`) showed that in every failure the model had solved the task: it checked the laptops, picked the Kite 14 and clicked "Add to cart". Then it would not stop. The goal says "Buy" and this shop has no checkout, so it guessed URLs (`/cart.html`, `/cart`, `/checkout.html`, `/`), landed on "Page not found", went back, added the laptop again, and repeated until the 40-step check-in. Three things in Genesis made this worse:
+
+1. **A 404 counted as a success.** The model read `navigate /cart.html → ✅ now on "Page not found"`, so nothing told it the guessing was failing. A page titled 404 / "not found" is now a failure: "that page doesn't exist. Don't guess URLs; use links you have seen."
+2. **"What changed" hid the confirmation.** Page text often arrives as one long line, and the diff compared lines, so it reported the whole page as new text and cut it off before the one new sentence, "Kite 14 added to your cart." It is now a word-level diff, so it reports `New text: "Kite 14 added to your cart."` (and text that went away).
+3. **No instruction on when to settle.** Two rules were added: when the goal's main effect has happened and the site offers no next step, finish and say how far you got; and don't guess paths within a site.
+
+Also: an invalid reply now quotes the action that was wrong ("you sent {...}"). One run had failed on three identical broken replies because the model never saw its mistake.
+
+| deepseek-flash, compare-and-buy | Passed | Avg calls | Avg tokens | Avg time |
+|---|---|---|---|---|
+| Before (5 trials) | 1/5 | 39 | 125k | 149s |
+| After (5 trials) | **5/5** | **11** | **26k** | **30s** |
+
+**Full suite afterwards** (deepseek-flash, 1 trial): **26/27**, standard 10/10, hard 8/9, expert 8/8 (the best flash expert result so far, against 21/24 over three trials on 2026-09-27). The one failure, `shadow-dom-closed`, came from the same fix: its banner gives no feedback when clicked, and "Nothing visible changed on the page" made the model think its working click had failed. That line now adds that some actions give no feedback, and not to repeat an action the history says worked. Re-checked: shadow-dom-closed 3/3, compare-and-buy 3/3, flaky-submit 2/2, username-taken 2/2.
+
 ## Skills (2026-09-29)
 
 A skill is a saved SKILL.md (name, description, optional sites, instructions). The agent gets the ones that fit the current site and goal in full, and can load the others by name. After a task finishes, "Save as skill" has the model write one from the run: steps named by visible labels, pitfalls it hit, placeholders for what varies. Every value typed during the run is replaced by `<value>` whatever the model wrote, so passwords never end up in a skill. `--learn` in the eval presses the button after a task's first passing run; `--use-skills` starts trials with skills saved earlier.

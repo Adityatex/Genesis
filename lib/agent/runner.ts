@@ -183,9 +183,58 @@ function elementLines(snapshot: string): Map<string, string> {
   return lines;
 }
 
-function textLines(snapshot: string): Set<string> {
+/** Words of a snapshot's visible text (capped, to bound the diff's cost). */
+function textWords(snapshot: string): string[] {
   const text = snapshot.split('--- VISIBLE TEXT (excerpt) ---')[1] ?? '';
-  return new Set(text.split('\n').map((l) => l.trim()).filter((l) => l.length > 2));
+  return text.split(/\s+/).filter(Boolean).slice(0, 800);
+}
+
+/**
+ * Word-level diff: the runs of words added to and removed from `before` to
+ * make `after` (longest common subsequence). Page text often arrives as one
+ * long line, so comparing lines would report the whole page as new when one
+ * sentence ("Kite 14 added to your cart.") was added to it.
+ */
+export function textChanges(before: string[], after: string[]): { added: string[]; removed: string[] } {
+  const m = before.length;
+  const n = after.length;
+  // lcs[i][j]: common subsequence length of before[i..] and after[j..]
+  const lcs = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      lcs[i][j] = before[i] === after[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+  const added: string[] = [];
+  const removed: string[] = [];
+  let add: string[] = [];
+  let del: string[] = [];
+  const flush = () => {
+    if (add.length) added.push(add.join(' '));
+    if (del.length) removed.push(del.join(' '));
+    add = [];
+    del = [];
+  };
+  let i = 0;
+  let j = 0;
+  while (i < m || j < n) {
+    if (i < m && j < n && before[i] === after[j]) {
+      flush();
+      i++;
+      j++;
+    } else if (j < n && (i === m || lcs[i][j + 1] >= lcs[i + 1][j])) {
+      add.push(after[j++]);
+    } else {
+      del.push(before[i++]);
+    }
+  }
+  flush();
+  return { added, removed };
+}
+
+/** A diff run for the prompt: quoted, and shortened if long. */
+function quoted(run: string): string {
+  return `"${run.length > 160 ? `${run.slice(0, 160)}…` : run}"`;
 }
 
 /**
@@ -198,14 +247,18 @@ export function changesSection(previous: string, current: string): string {
   const after = elementLines(current);
   const added = [...after].filter(([key]) => !before.has(key)).map(([, line]) => line);
   const gone = [...before.keys()].filter((key) => !after.has(key));
-  const oldText = textLines(previous);
-  const newText = [...textLines(current)].filter((line) => !oldText.has(line));
+  // Runs without letters are counters and timers ticking ("1:59" → "1:58"), not news
+  const news = (run: string) => run.length > 2 && /\p{L}/u.test(run);
+  const text = textChanges(textWords(previous), textWords(current));
+  const newText = text.added.filter(news);
+  const goneText = text.removed.filter(news);
 
-  if (!added.length && !gone.length && !newText.length) {
-    return '\n\n--- WHAT CHANGED AFTER YOUR LAST ACTIONS ---\nNothing visible changed on the page.';
+  if (!added.length && !gone.length && !newText.length && !goneText.length) {
+    return '\n\n--- WHAT CHANGED AFTER YOUR LAST ACTIONS ---\nNothing visible changed on the page. That is not always a failure (some actions give no feedback): if the history says your action worked, do not repeat it.';
   }
   const out: string[] = [];
-  if (newText.length) out.push(`New text: ${newText.slice(0, MAX_NEW_TEXT).map((l) => `"${l.length > 120 ? `${l.slice(0, 120)}…` : l}"`).join(' | ')}`);
+  if (newText.length) out.push(`New text: ${newText.slice(0, MAX_NEW_TEXT).map(quoted).join(' | ')}`);
+  if (goneText.length) out.push(`Text gone: ${goneText.slice(0, MAX_NEW_TEXT).map(quoted).join(' | ')}`);
   if (added.length) out.push(`New elements:\n${added.slice(0, MAX_NEW_ELEMENTS).join('\n')}${added.length > MAX_NEW_ELEMENTS ? `\n… and ${added.length - MAX_NEW_ELEMENTS} more` : ''}`);
   if (gone.length) out.push(`Gone: ${gone.slice(0, MAX_GONE_ELEMENTS).join('; ')}${gone.length > MAX_GONE_ELEMENTS ? `; and ${gone.length - MAX_GONE_ELEMENTS} more` : ''}`);
   return `\n\n--- WHAT CHANGED AFTER YOUR LAST ACTIONS ---\n${out.join('\n')}`;
@@ -349,6 +402,7 @@ export async function runAction(
     await deps.navigate(tabId, action.url!);
     await deps.sleep(SETTLE_MS);
     const tab = await waitForPage(deps, tabId);
+    if (isNotFound(tab.title)) return { result: notFoundResult(tab), pageChanged: true };
     return { result: `✅ now on "${tab.title || 'untitled page'}" (${tab.url})`, pageChanged: true };
   }
 
@@ -365,9 +419,23 @@ export async function runAction(
   const now = await deps.getTab(tabId);
   if (loads() > loadsBefore || now.status === 'loading' || now.url !== urlBefore) {
     const tab = await waitForPage(deps, tabId);
+    if (isNotFound(tab.title)) return { result: notFoundResult(tab), pageChanged: true };
     return { result: `${result}; page changed, now on "${tab.title || 'untitled page'}" (${tab.url})`, pageChanged: true };
   }
   return { result, pageChanged: false };
+}
+
+/** An error page's title: "404", "Page not found", "Not Found", ... */
+export function isNotFound(title: string | undefined): boolean {
+  return !!title && /\b404\b|\bnot found\b|page (does not|doesn't) exist/i.test(title);
+}
+
+/**
+ * A missing page is a failure, not "✅ now on Page not found": told it
+ * succeeded, models keep guessing URLs (/cart, /checkout, ...) for dozens of steps.
+ */
+function notFoundResult(tab: TabInfo): string {
+  return `❌ landed on "${tab.title}" (${tab.url}): that page doesn't exist. Don't guess URLs; use links you have seen.`;
 }
 
 /** Short fingerprint of a page snapshot (FNV-1a), so repeats are cheap to spot. */
