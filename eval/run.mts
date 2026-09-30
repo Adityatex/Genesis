@@ -34,7 +34,8 @@ const EXTENSION_DIR = path.join(ROOT, '.output', 'chrome-mv3');
 const RESULTS_DIR = path.join(ROOT, 'eval', 'results');
 // Final and paused messages start with one of these headings. A pause (checkpoint,
 // or the agent looks stuck) ends the task: nobody is there to press Continue.
-const OUTCOME_RE = /^\W*(Task Complete|Paused|Stopped|Agent Error)/;
+// ("Couldn't run it": a /workflow that failed to start)
+const OUTCOME_RE = /^\W*(Task Complete|Paused|Stopped|Agent Error|Couldn't run it)/;
 /** Runs have no step limit; the benchmark caps them with the "keep going?" checkpoint. */
 const EVAL_CHECKPOINT = 40;
 
@@ -61,6 +62,10 @@ const { values: args } = parseArgs({
     tools: { type: 'boolean', default: false },
     // After a task's first passing run, press "Save as skill"; later trials start with that skill
     learn: { type: 'boolean', default: false },
+    // After a task's first passing run, press "Save as workflow"; later trials replay it (/name)
+    replay: { type: 'boolean', default: false },
+    // Replay the workflows an earlier --replay run saved (in eval/results/workflows), from the first trial
+    'use-workflows': { type: 'boolean', default: false },
     // Start every trial with the skills an earlier --learn run saved (e.g. by a stronger model)
     'use-skills': { type: 'boolean', default: false },
     // Save each run's full final message (every step) under eval/results/transcripts
@@ -136,6 +141,9 @@ interface RunResult {
 
 /** --learn: skills saved from each task's first passing run, installed in its later trials. */
 const learnedSkills = new Map<string, unknown[]>();
+
+/** --replay: workflows saved from each task's first passing run, replayed in its later trials. */
+const savedWorkflows = new Map<string, { name: string }[]>();
 
 /** What the mock model answers when asked to write a skill. */
 const MOCK_SKILL = JSON.stringify({ name: 'mock-skill', description: 'A skill written by the mock planner', body: '1. Do what worked last time.' });
@@ -265,7 +273,7 @@ function mockPlanner(plan: (MockStep | MockStep[])[]) {
 }
 
 /** The profile dir holds the API key in extension storage; delete it after use. */
-async function launch(apiKey: string, skills: unknown[] = []): Promise<{ context: BrowserContext; userDataDir: string }> {
+async function launch(apiKey: string, skills: unknown[] = [], workflows: unknown[] = []): Promise<{ context: BrowserContext; userDataDir: string }> {
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'genesis-eval-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chromium',
@@ -286,6 +294,7 @@ async function launch(apiKey: string, skills: unknown[] = []): Promise<{ context
     [SETTINGS_KEY, settings, PREFS_KEY, { trustedInput: !args['scripted-input'], stepCheckpoint: EVAL_CHECKPOINT, screenshots: args.screenshots, nativeTools: !!args.tools, customCode: !!args['custom-code'] }] as const,
   );
   if (skills.length) await worker.evaluate((list) => chrome.storage.local.set({ genesis_skills: list }), skills);
+  if (workflows.length) await worker.evaluate((list) => chrome.storage.local.set({ genesis_workflows: list }), workflows);
   return { context, userDataDir };
 }
 
@@ -303,7 +312,8 @@ async function readOutcome(page: Page): Promise<string> {
 
 async function runTask(task: Task, trial: number, server: FixtureServer, apiKey: string): Promise<RunResult> {
   const installed = learnedSkills.get(task.id) ?? [];
-  const { context, userDataDir } = await launch(apiKey, installed);
+  const workflow = savedWorkflows.get(task.id);
+  const { context, userDataDir } = await launch(apiKey, installed, workflow ?? []);
   /** Set while the extension writes a skill: those calls are counted apart. */
   let learning = false;
   const result: RunResult = {
@@ -384,7 +394,8 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
     const page = await context.newPage();
     await page.goto(server.baseUrl + task.start);
     await page.locator('[title="Open Genesis Copilot"]').click({ timeout: 15_000 });
-    await page.locator('textarea[placeholder^="Describe action"]').fill(task.goal);
+    // --replay: later trials replay the saved workflow, typed as /name like a user would
+    await page.locator('textarea[placeholder^="Describe action"]').fill(workflow ? `/${workflow[0].name}` : task.goal);
     await page.keyboard.press('Enter');
 
     let finalText = '';
@@ -425,6 +436,25 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
     // --learn: the first passing run of a task presses "Save as skill", as a user would
     const passed = result.outcome === 'done'
       && task.check({ events: [...server.events], summary: result.summary, finalUrl: result.finalUrl });
+    // A clean replay makes no model calls; in mock mode anything else is a bug (the page doesn't change)
+    if (MODE === 'mock' && workflow && result.llmCalls > 0) {
+      throw new Error(`the workflow replay called the model ${result.llmCalls} times; it should replay with none`);
+    }
+    if (args.replay && passed && !savedWorkflows.has(task.id)) {
+      await page.getByRole('button', { name: 'Save as workflow' }).click({ timeout: 10_000 });
+      const saved = page.locator('.markdown-body', { hasText: /Workflow saved:|Couldn't save a workflow/ });
+      await saved.first().waitFor({ timeout: 30_000 });
+      const all: any[] = await context.serviceWorkers()[0].evaluate(async () => (await chrome.storage.local.get('genesis_workflows')).genesis_workflows ?? []);
+      if (all.length) {
+        savedWorkflows.set(task.id, all);
+        result.skill = `workflow ${all[0].name} (${all[0].steps.length} steps)`;
+        const dir = path.join(RESULTS_DIR, 'workflows');
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, `${task.id}.json`), redact(JSON.stringify(all, null, 2)));
+      } else {
+        throw new Error(`"Save as workflow" saved nothing: ${(await saved.first().innerText()).slice(0, 200)}`);
+      }
+    }
     if (args.learn && passed && !learnedSkills.has(task.id)) {
       learning = true;
       await page.getByRole('button', { name: 'Save as skill' }).click({ timeout: 10_000 });
@@ -547,6 +577,15 @@ async function main() {
   const results: RunResult[] = [];
   let stoppedEarly = false;
   try {
+    if (args['use-workflows']) {
+      for (const task of tasks) {
+        const file = path.join(RESULTS_DIR, 'workflows', `${task.id}.json`);
+        // Recorded against an earlier run's fixture server: point it at this run's port
+        const origin = new URL(server.baseUrl).origin;
+        if (fs.existsSync(file)) savedWorkflows.set(task.id, JSON.parse(fs.readFileSync(file, 'utf8').replace(/http:\/\/127\.0\.0\.1:(\d+|PORT)/g, origin)));
+        else console.log(`(no saved workflow for ${task.id}: run it with --replay first)`);
+      }
+    }
     if (args['use-skills']) {
       for (const task of tasks) {
         const file = path.join(RESULTS_DIR, 'skills', `${task.id}.json`);

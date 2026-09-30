@@ -2,6 +2,25 @@
 
 All runs are live: real model, real extension, real Chromium. A run passes only if the right requests reached the test server **and** the agent finished cleanly.
 
+## Workflows: record once, replay with no model (2026-10-01)
+
+After a task finishes, "Save as workflow" keeps its exact steps: each action that worked, with its element described (`<button> "Sign in"`, the nth of any look-alikes) rather than by its ID, which changes every page load. `/name` in the sidebar, or Run in the popup, replays them with no model calls. If a step's element is gone or the action fails, the agent takes over from there with a note on what happened, and the sidebar offers to update the workflow. A replay that ends on a different page from the recording says so.
+
+Recorded, then replayed in real Chromium (`--replay`: trial 1 presses "Save as workflow", trial 2 types `/name`):
+
+| Task | Recorded run | Replay |
+|---|---|---|
+| login | 2 calls | **0 calls**, pass |
+| signup-checkbox | 2 calls | **0 calls**, pass |
+| checkout-flow (12 steps) | 6 calls | **0 calls**, pass, 10s |
+| compare-and-buy | 4 calls | **0 calls**, pass |
+| iframe-cross-origin (Stripe-style frame) | 3 calls | **0 calls**, pass |
+| trusted-typing (keystroke-only editor) | 3 calls | **0 calls**, pass |
+
+**Self-healing, live** (deepseek-flash): the saved login workflow was edited so its last step clicks a "Log in" button the page doesn't have, as after a redesign. The replay typed the username and password with no model, couldn't find the button, and handed over; the model clicked "Sign in" and the login reached the server: pass, 2 calls.
+
+Found along the way: names cut from the goal could end in a hyphen and then not be found by `/name`, and "Log in with username demo and password hunter2" produced a name containing the password. Names are now the goal's first words without anything typed into a password field. Replay logs mask saved passwords. CI runs the record-and-replay check and fails if a mock replay calls the model.
+
 ## Structured extraction (2026-10-01)
 
 A new `extract` action: the model names the fields it wants ("laptops: name, price, RAM") and Genesis's own code finds them. No model-written code runs. It reads table rows by column header, repeating items (lists, cards) and label/value pairs (spec tables, `<dl>`, "Label: value"), matching fields by label, synonym ("RAM" = "Memory (RAM)", "price" = "cost"), class name or kind of value. With `follow`, it reads each listed item's own page for fields the list doesn't show: same site only, GET, parsed without running the page's scripts, at most 10 pages, and never links that act (log out, delete, add to cart).

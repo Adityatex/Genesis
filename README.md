@@ -161,6 +161,10 @@ Pitfalls:
 
 The agent gets the skills that fit the current site and task in full, and can load any other by name. When a task finishes, the sidebar offers **Save as skill**: the model writes one from what just happened, naming buttons by their labels and noting what went wrong and how it was fixed. Anything typed during the task, passwords included, is replaced by a placeholder, and skills record how to do a task, not this time's answer (prices and stock go stale). Skills are listed, edited, pasted in and deleted in the popup. Only add skills you trust: the agent follows them.
 
+## 🔁 Workflows: record once, replay for free
+
+When a task finishes, **Save as workflow** keeps its exact steps. Type `/name` in the sidebar (or press Run in the popup) to replay them: no model calls, so it's instant and costs nothing, even on free tiers. Each step remembers its element by what it is (`<button> "Sign in"`), not by position, so small layout changes don't break it. If the site has changed and a step no longer fits, the agent takes over from there and finishes the task, then offers to update the workflow. Workflows are stored on this device only; one that types a password is marked 🔒.
+
 ## 🤝 Use it from Claude Code, Claude Desktop or Codex (MCP)
 
 `genesis-mcp` lets an AI app you already use drive your real browser through Genesis. The model runs inside that app, on your plan with it, so Genesis needs no API key for this. Genesis supplies what it's good at: page snapshots with numbered elements (including iframes and Shadow DOM), real mouse and keyboard input, and screenshots with those numbers drawn on.

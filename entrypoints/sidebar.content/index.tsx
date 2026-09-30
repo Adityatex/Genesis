@@ -6,7 +6,7 @@ import App from './App';
 import './sidebar.css';
 import { createPageSnapshot } from '@/lib/agent/frames';
 import { executeAction } from '@/lib/agent/actionExecutor';
-import { viewportMarks } from '@/lib/agent/domSnapshot';
+import { viewportMarks, describeElement, resolveElement } from '@/lib/agent/domSnapshot';
 
 export default defineContentScript({
   matches: ['<all_urls>'],
@@ -48,6 +48,14 @@ export default defineContentScript({
             .then(result => sendResponse(result))
             .catch(err => sendResponse(`❌ ${err?.message ?? err}`));
           return true;
+        case 'AGENT_DESCRIBE':
+          // Workflows: an element's lasting description, recorded before acting on it
+          sendResponse(describeElement(Number(message.id)));
+          return;
+        case 'AGENT_RESOLVE':
+          // Workflows: find a recorded element again (after AGENT_SNAPSHOT)
+          sendResponse({ id: resolveElement(message.target) });
+          return;
       }
     });
 

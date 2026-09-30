@@ -14,6 +14,8 @@ import { parseAgentResponse } from '@/lib/agent/parseAction';
 import type { ScreenshotMode } from '@/lib/agent/prefs';
 import { pickSkills, slugify, type Skill } from '@/lib/skills/skill';
 import { checkCode, wrapCode, formatCodeResult } from '@/lib/agent/customCode';
+import { isReplayed, describeStep, type Workflow, type WorkflowStep } from '@/lib/workflows/workflow';
+import type { ElementKey } from '@/lib/agent/domSnapshot';
 import { MAX_INVALID_RESPONSES, REPEAT_PAUSE, REPEAT_WARN, describeAction, formatHistory } from '@/lib/agent/history';
 
 /** "paused": waiting for the user to continue or stop (checkpoint, or the agent looks stuck). */
@@ -33,6 +35,12 @@ export interface RunView {
   model?: string;
   /** Last change (ms since epoch): a newly loaded page shows recent results only. */
   updatedAt: number;
+  /** A saved workflow run: "replayed" if every step replayed, "healed" if the agent had to take over. */
+  replay?: 'replaying' | 'replayed' | 'healed';
+  /** The workflow being replayed. */
+  workflowName?: string;
+  /** Why this run can't be saved as a workflow, if it can't. */
+  unrecordable?: string;
 }
 
 export interface TabInfo {
@@ -108,6 +116,14 @@ interface Run extends RunView {
   customCode: boolean;
   /** The model's summary when it finished. */
   summary?: string;
+  /** What this run did, step by step, for saving it as a workflow. */
+  trace: WorkflowStep[];
+  startUrl?: string;
+  /** A saved workflow being replayed, and the next step of it. */
+  workflow?: Workflow;
+  replayIndex: number;
+  /** The page after the last action, for a workflow's final check. */
+  lastPage?: TabInfo;
   /** The model that last answered for each role, to spot a backup taking over. */
   roleModels: Partial<Record<ModelRole, string>>;
 }
@@ -122,6 +138,8 @@ export interface RunOptions {
   skills?: Skill[];
   /** The user turned on run_code (lib/agent/customCode.ts). */
   customCode?: boolean;
+  /** Replay this saved workflow (no model calls), letting the agent take over if a step fails. */
+  workflow?: Workflow;
 }
 
 /** Most skills listed by name for use_skill (the rest are too unlikely to matter). */
@@ -284,8 +302,8 @@ const PAUSE_TIMEOUT_MS = 10 * 60_000;
 const runs = new Map<number, Run>();
 
 function view(run: Run): RunView {
-  const { goal, status, message, loading, step, plan, model, updatedAt } = run;
-  return { goal, status, message, loading, step, plan, model, updatedAt };
+  const { goal, status, message, loading, step, plan, model, updatedAt, replay, unrecordable } = run;
+  return { goal, status, message, loading, step, plan, model, updatedAt, replay, unrecordable, workflowName: run.workflow?.name };
 }
 
 export function getRunView(tabId: number): RunView | null {
@@ -303,13 +321,23 @@ export interface RunRecord {
   summary?: string;
   /** Pages it visited, in order. */
   urls: string[];
+  /** Its steps, for a workflow (see WorkflowStep), and where it started and ended. */
+  trace: WorkflowStep[];
+  startUrl?: string;
+  finalUrl?: string;
+  finalTitle?: string;
+  /** Why it can't be saved as a workflow, if it can't. */
+  unrecordable?: string;
 }
 
 export function getRunRecord(tabId: number): RunRecord | null {
   const run = runs.get(tabId);
   if (!run) return null;
-  const { goal, status, plan, history, summary } = run;
-  return { goal, status, plan: [...plan], history: [...history], summary, urls: [...run.visited.keys()] };
+  const { goal, status, plan, history, summary, startUrl, unrecordable } = run;
+  return {
+    goal, status, plan: [...plan], history: [...history], summary, urls: [...run.visited.keys()],
+    trace: [...run.trace], startUrl, finalUrl: run.lastPage?.url, finalTitle: run.lastPage?.title, unrecordable,
+  };
 }
 
 /** Running or paused: the run's loop is still alive. */
@@ -431,6 +459,92 @@ export async function runAction(
   return { result, pageChanged: false };
 }
 
+/**
+ * Replay a workflow's next step: find its element by description, act, check
+ * the result. If the element is gone or the action fails, the agent takes
+ * over from there with a note on what happened ("healed").
+ */
+async function replayNext(deps: RunnerDeps, run: Run): Promise<'next' | 'finished'> {
+  const workflow = run.workflow!;
+  const { tabId } = run;
+  if (run.replayIndex >= workflow.steps.length) return 'finished';
+  // Start where the recorded run started
+  if (run.replayIndex === 0 && workflow.startUrl && (await deps.getTab(tabId)).url !== workflow.startUrl) {
+    await deps.navigate(tabId, workflow.startUrl);
+    await deps.sleep(SETTLE_MS);
+  }
+  const step = workflow.steps[run.replayIndex];
+  const n = run.replayIndex + 1;
+  publish(deps, run, progressMessage(run, `*Replaying step ${n} of ${workflow.steps.length}: ${describeStep(step)}*`), true);
+  const page = await waitForPage(deps, tabId);
+  run.startUrl ??= page.url;
+
+  const action: AgentAction = { ...step.action };
+  if (step.target) {
+    await deps.send(tabId, { action: 'AGENT_SNAPSHOT' }, SNAPSHOT_TIMEOUT_MS); // fresh element IDs
+    const found = await deps.send(tabId, { action: 'AGENT_RESOLVE', target: step.target }, 5_000).catch(() => null);
+    if (typeof found?.id !== 'number') return heal(run, n, step, `its element (${step.target.key}) isn't on the page any more`);
+    action.elementId = found.id;
+  }
+  const { result } = await runAction(deps, tabId, action, () => run.loads);
+  // The executor echoes typed text; never a saved password
+  const password = /type="password"/.test(step.target?.key ?? '') ? step.action.text : undefined;
+  run.history.push(`↻ ${describeStep(step)} → ${password ? result.split(password).join('••••') : result}`);
+  if (result.startsWith('❌')) return heal(run, n, step, result);
+  record(run, action, step.target, page.url);
+  run.lastPage = await deps.getTab(tabId).catch(() => run.lastPage);
+  run.replayIndex++;
+  return run.replayIndex >= workflow.steps.length ? 'finished' : 'next';
+}
+
+/** A replayed step didn't fit: hand the task to the agent from here. */
+function heal(run: Run, n: number, step: WorkflowStep, why: string): 'next' {
+  run.replay = 'healed';
+  run.needPlanner = true;
+  const done = n > 1 ? `steps 1-${n - 1} worked, but step ${n}` : 'its first step';
+  run.history.push(`(note from Genesis) Replaying the saved workflow "${run.workflow!.name}": ${done} (${describeStep(step)}) didn't: ${why}. The page may have changed. Carry on with the task from here yourself.`);
+  return 'next';
+}
+
+/** Same page, ignoring the query and fragment (search terms, session IDs). */
+function samePage(a: string | undefined, b: string | undefined): boolean {
+  try {
+    const x = new URL(a ?? '');
+    const y = new URL(b ?? '');
+    return x.origin === y.origin && x.pathname === y.pathname;
+  } catch {
+    return a === b;
+  }
+}
+
+/** Every step replayed: finish without asking a model, noting if it ended somewhere unexpected. */
+function finishReplay(deps: RunnerDeps, run: Run): void {
+  const workflow = run.workflow!;
+  const now = run.lastPage;
+  run.status = 'done';
+  run.replay = 'replayed';
+  const where = now ? ` Now on "${now.title || 'untitled page'}" (${now.url}).` : '';
+  const check = workflow.finalUrl && now && !samePage(now.url, workflow.finalUrl)
+    ? ` ⚠️ The recorded run ended on ${workflow.finalUrl}, so check this worked.`
+    : '';
+  run.summary = `Replayed the workflow "${workflow.name}": ${workflow.steps.length} steps, no model calls.${where}${check}`;
+  publish(deps, run, `## ✅ Task Complete\n\n${run.summary}\n\n---\n**Steps taken:**\n${formatHistory(run.history)}`, false);
+}
+
+/** An element's lasting description for a workflow step, or undefined (and the run can't be saved as one). */
+async function describeTarget(deps: RunnerDeps, run: Run, elementId: number): Promise<ElementKey | undefined> {
+  const target = await deps.send(run.tabId, { action: 'AGENT_DESCRIBE', id: elementId }, 2_000).catch(() => null) as ElementKey | null;
+  if (!target?.key) run.unrecordable ??= `element [${elementId}] couldn't be described (it may be in a cross-origin frame)`;
+  return target?.key ? target : undefined;
+}
+
+/** Add a successful action to the run's workflow trace. */
+function record(run: Run, action: AgentAction, target: ElementKey | undefined, url: string | undefined): void {
+  if (action.elementId !== undefined && !target) return; // already marked unrecordable
+  const { elementId: _id, ...rest } = action;
+  run.trace.push({ action: rest, ...(target ? { target } : {}), ...(url ? { url } : {}) });
+}
+
 /** run_code: check the code, run it if allowed, and say what happened. */
 async function runCodeAction(deps: RunnerDeps, run: Run, code: string): Promise<string> {
   if (!run.customCode || !deps.runCode) {
@@ -499,6 +613,14 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
       nextCheckpoint = run.step + run.checkpoint;
     }
     run.step++;
+    // A saved workflow: its steps first, with no model calls
+    if (run.replay === 'replaying') {
+      if (await replayNext(deps, run) === 'finished') {
+        finishReplay(deps, run);
+        return;
+      }
+      continue;
+    }
     publish(deps, run, run.history.length ? progressMessage(run, `*Step ${run.step}: scanning the page...*`) : `🔍 **Step ${run.step}**: scanning the page...`, true);
 
     // Planning steps: the first, any after trouble, and a regular re-check
@@ -507,6 +629,7 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
     const wantImage = run.screenshots === 'always' || (run.screenshots === 'planning' && planning);
 
     const page = await waitForPage(deps, tabId);
+    run.startUrl ??= page.url; // where a workflow of this run starts
     const snapshot = await deps.send(tabId, { action: 'AGENT_SNAPSHOT', visual: wantImage }, SNAPSHOT_TIMEOUT_MS);
     if (run.stopRequested) break;
     const snapshotText = String(snapshot?.text ?? '');
@@ -617,8 +740,12 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
         continue;
       }
       publish(deps, run, progressMessage(run, `*Step ${run.step}: ${desc}*`), true);
+      // Workflows: describe the element before acting, while its ID is still valid
+      const target = isReplayed(action) && action.elementId !== undefined ? await describeTarget(deps, run, action.elementId) : undefined;
       const { result, pageChanged } = await runAction(deps, tabId, action, () => run.loads);
       run.history.push(`${desc} → ${result}${i === 0 ? repeatWarning : ''}`);
+      if (isReplayed(action) && !result.startsWith('❌')) record(run, action, target, page.url);
+      run.lastPage = await deps.getTab(tabId).catch(() => run.lastPage);
 
       // Later actions were planned for the page as it was; stop if that changed
       const left = actions.length - i - 1;
@@ -651,6 +778,7 @@ export async function startRun(deps: RunnerDeps, tabId: number, goal: string, op
     split: !!options.split, needPlanner: true, routineCalls: 0, roleModels: {},
     screenshots: options.screenshots ?? 'off', noVision: new Set(),
     skills: options.skills ?? [], loadedSkills: new Set(), customCode: !!options.customCode,
+    trace: [], workflow: options.workflow, replayIndex: 0, ...(options.workflow ? { replay: 'replaying' as const } : {}),
   };
   runs.set(tabId, run);
   try {

@@ -19,7 +19,7 @@ import MessageList from './components/MessageList';
 import ChatInput from './components/ChatInput';
 import AgentControls from './components/AgentControls';
 import SaveSkillBar from './components/SaveSkillBar';
-import type { RunStatus } from '@/lib/agent/runner';
+import type { RunStatus, RunView } from '@/lib/agent/runner';
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -95,13 +95,15 @@ export default function App() {
   // in one chat message per run; after a navigation the new page picks it up.
   const agentMessageId = useRef<string | null>(null);
   const [agentStatus, setAgentStatus] = useState<RunStatus | null>(null);
-  // The finished run offered as a skill (by its last update time), and the ones already handled
-  const [skillOffer, setSkillOffer] = useState<number | null>(null);
+  // The finished run offered to keep (as a skill or workflow), and the ones already handled (by update time)
+  const [skillOffer, setSkillOffer] = useState<RunView | null>(null);
   const skillHandled = useRef(new Set<number>());
   const agent = useAgentRun((view) => {
     setSidebarOpen(true);
     setAgentStatus(view.status);
-    setSkillOffer(view.status === 'done' && !skillHandled.current.has(view.updatedAt) ? view.updatedAt : null);
+    // A workflow that replayed cleanly is already saved: nothing to offer
+    const offer = view.status === 'done' && view.replay !== 'replayed' && !skillHandled.current.has(view.updatedAt);
+    setSkillOffer(offer ? view : null);
     setStatus(view.status === 'running' ? 'WORKING' : 'ACTIVE');
     const text = view.message || '🤖 **Agent Mode**: starting...';
     if (agentMessageId.current) chat.updateBotMessage(agentMessageId.current, text, view.loading);
@@ -109,8 +111,26 @@ export default function App() {
   });
 
   const closeSkillOffer = () => {
-    if (skillOffer !== null) skillHandled.current.add(skillOffer);
+    if (skillOffer !== null) skillHandled.current.add(skillOffer.updatedAt);
     setSkillOffer(null);
+  };
+
+  const saveAsWorkflow = async () => {
+    // After a rescued replay, update that workflow rather than making a new one
+    const name = skillOffer?.replay === 'healed' ? skillOffer.workflowName : undefined;
+    const res: any = await browser.runtime.sendMessage({ action: 'SAVE_WORKFLOW_FROM_RUN', payload: { name } })
+      .catch((err: Error) => ({ error: err.message }));
+    closeSkillOffer();
+    if (!res?.success) {
+      chat.addBotMessage(`**Couldn't save a workflow:** ${res?.error || 'unknown error'}`);
+      return;
+    }
+    const w = res.data;
+    chat.addBotMessage(
+      `## 🔁 Workflow ${name ? 'updated' : 'saved'}: ${w.name}\n\n${w.steps.length} steps. Run it again any time with **/${w.name}** here, `
+      + 'or from the Genesis popup: it replays these exact steps with no model calls, and the agent takes over if the site has changed.'
+      + (w.hasPassword ? '\n\n🔒 It includes a password you typed, saved on this device only, like your API keys.' : ''),
+    );
   };
 
   const saveAsSkill = async () => {
@@ -134,6 +154,14 @@ export default function App() {
     await agent.start(goal);
   };
 
+  /** Replay a saved workflow in this tab (typed as /name). */
+  const runWorkflow = async (name: string) => {
+    setSkillOffer(null);
+    agentMessageId.current = chat.addBotMessage(`🔁 **Workflow** ${name}: starting...`, true);
+    const res: any = await browser.runtime.sendMessage({ action: 'RUN_WORKFLOW', payload: { name } }).catch((err: Error) => ({ error: err.message }));
+    if (!res?.success) throw new Error(res?.error || 'Could not run the workflow');
+  };
+
   const toolsApi = useWorkspaceTools({
     pageText: chat.pageText,
     setPageText: chat.setPageText,
@@ -145,6 +173,7 @@ export default function App() {
     chatInput,
     setChatInput,
     startAgent,
+    runWorkflow,
     stopAgent: (forget) => {
       agent.stop(forget);
       if (forget) {
@@ -197,7 +226,16 @@ export default function App() {
         onDetectElements={toolsApi.handleDetectElements}
         onSummarize={toolsApi.handleSummarize}
       />
-      {skillOffer !== null && <SaveSkillBar onSave={saveAsSkill} onDismiss={closeSkillOffer} />}
+      {skillOffer !== null && (
+        <SaveSkillBar
+          skill={skillOffer.replay !== 'healed'}
+          workflow={skillOffer.unrecordable ? null : skillOffer.replay === 'healed' ? 'update' : 'save'}
+          unrecordable={skillOffer.unrecordable}
+          onSaveSkill={saveAsSkill}
+          onSaveWorkflow={saveAsWorkflow}
+          onDismiss={closeSkillOffer}
+        />
+      )}
       {(agentStatus === 'running' || agentStatus === 'paused') && (
         <AgentControls paused={agentStatus === 'paused'} onContinue={agent.resume} onStop={() => agent.stop()} />
       )}

@@ -5,6 +5,7 @@ import type { ModelInfo } from '@/lib/api/llmClient';
 import { CHECKPOINT_CHOICES, DEFAULT_PREFS, type ScreenshotMode } from '@/lib/agent/prefs';
 import type { BridgeStatus } from '@/lib/mcp/bridgeClient';
 import { formatSkill, type Skill } from '@/lib/skills/skill';
+import type { Workflow } from '@/lib/workflows/workflow';
 
 const MCP_STATUS_TEXT: Record<BridgeStatus, string> = {
   off: 'Off',
@@ -47,6 +48,8 @@ export default function App() {
   const [mcpToken, setMcpToken] = useState('');
   const [mcpError, setMcpError] = useState('');
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const [workflowMessage, setWorkflowMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [skillDraft, setSkillDraft] = useState('');
   const [skillMessage, setSkillMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [profile, setProfile] = useState<AutofillProfile>({ fullname: '', email: '', phone: '', address: '', city: '', state: '', zip: '', country: '' });
@@ -80,6 +83,7 @@ export default function App() {
     // Connection status changes while the popup is open (an AI app starts genesis-mcp)
     const refreshMcp = () => browser.runtime.sendMessage({ action: 'GET_MCP' }).then((res: any) => { if (res?.success) setMcp(res.data); }).catch(() => {});
     refreshMcp();
+    browser.runtime.sendMessage({ action: 'LIST_WORKFLOWS' }).then((res: any) => { if (res?.success) setWorkflows(res.data); }).catch(() => {});
     browser.runtime.sendMessage({ action: 'LIST_SKILLS' }).then((res: any) => { if (res?.success) setSkills(res.data); }).catch(() => {});
     const mcpTimer = setInterval(refreshMcp, 2000);
     return () => clearInterval(mcpTimer);
@@ -100,6 +104,20 @@ export default function App() {
     setSkills(res.data);
     setSkillDraft('');
     setSkillMessage({ ok: true, text: 'Skill saved.' });
+  };
+
+  const handleRunWorkflow = async (name: string) => {
+    const res: any = await browser.runtime.sendMessage({ action: 'RUN_WORKFLOW', payload: { name } });
+    if (!res?.success) {
+      setWorkflowMessage({ ok: false, text: res?.error || 'Could not run it' });
+      return;
+    }
+    window.close(); // the page's sidebar shows the replay
+  };
+
+  const handleDeleteWorkflow = async (name: string) => {
+    const res: any = await browser.runtime.sendMessage({ action: 'DELETE_WORKFLOW', payload: { name } });
+    if (res?.success) setWorkflows(res.data);
   };
 
   const handleDeleteSkill = async (name: string) => {
@@ -563,6 +581,36 @@ export default function App() {
             ⚠️ The agent follows a skill's instructions, so only add skills you wrote or trust.
           </p>
         )}
+      </div>
+
+      {/* Workflows Section */}
+      <div className="section">
+        <label className="section-label">Workflows</label>
+        <p className="hint">
+          A task's exact steps, replayed with no model calls: instant and free. If the site has changed, the agent takes
+          over from where the steps stopped fitting. Save one from the sidebar after a task finishes; run it here or by
+          typing /name in the sidebar.
+        </p>
+        {workflows.length > 0 ? (
+          <ul className="skill-list">
+            {workflows.map((w) => (
+              <li key={w.name}>
+                <div className="skill-head">
+                  <strong>{w.name}</strong>
+                  <span className="skill-sites">{w.steps.length} steps{w.hasPassword ? ' · 🔒 password' : ''}</span>
+                  <span className="skill-actions">
+                    <button className="link-btn" onClick={() => handleRunWorkflow(w.name)}>Run</button>
+                    <button className="link-btn" onClick={() => handleDeleteWorkflow(w.name)}>Delete</button>
+                  </span>
+                </div>
+                <div className="skill-desc">{w.goal}</div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="hint">No workflows yet.</p>
+        )}
+        {workflowMessage && <div className={`message ${workflowMessage.ok ? 'saved' : 'error'}`}>{workflowMessage.text}</div>}
       </div>
 
       {/* AI apps (MCP) Section */}

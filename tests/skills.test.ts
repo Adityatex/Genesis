@@ -103,6 +103,7 @@ describe('Save as skill', () => {
     ],
     summary: 'Order 1042 has shipped',
     urls: ['https://shop.test/login', 'https://www.shop.test/orders', 'not a url'],
+    trace: [],
   };
   const config: LLMConfig = { provider: 'groq', label: 'Groq', baseUrl: 'https://groq.test/v1', apiKey: 'k', model: 'm' };
 

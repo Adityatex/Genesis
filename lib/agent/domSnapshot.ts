@@ -435,6 +435,47 @@ export function findElements(query: string, limit = 10): SnapshotElement[] {
     .slice(0, limit);
 }
 
+// ---------------------------------------------------------------- workflows
+// A recorded step names its element by description, not ID (IDs change on
+// every snapshot): what formatElement says, minus what changes as the page is
+// used (typed values, checked, expanded). `nth` tells same-looking elements
+// apart, e.g. the third "Add to cart" button.
+
+export interface ElementKey {
+  key: string;
+  nth: number;
+}
+
+/** An element's description without its ID or changing state. */
+export function elementKey(el: SnapshotElement): string {
+  return formatElement({ ...el, value: undefined, checked: undefined, states: undefined }).replace(/^\[\d+\] /, '');
+}
+
+/** Describe the latest snapshot's element `id` for a workflow step. */
+export function describeElement(id: number): ElementKey | null {
+  const target = lastElements.find((el) => el.id === id);
+  if (!target) return null;
+  const key = elementKey(target);
+  const same = lastElements.filter((el) => elementKey(el) === key);
+  return { key, nth: same.indexOf(target) };
+}
+
+/**
+ * Find a described element in the latest snapshot: the same description (the
+ * nth of them, or the only one), else a unique element with the same tag and
+ * label (its type, link or placeholder may have changed). Null if it's gone
+ * or ambiguous.
+ */
+export function resolveElement({ key, nth }: ElementKey): number | null {
+  const same = lastElements.filter((el) => elementKey(el) === key);
+  if (same.length > 0) return (same[nth] ?? (same.length === 1 ? same[0] : null))?.id ?? null;
+  const m = /^<(\w+)>(?:.*?) "((?:[^"\\]|\\.)*)"/.exec(key);
+  if (!m) return null;
+  const [, tag, label] = m;
+  const loose = lastElements.filter((el) => el.tag === tag && el.label === label);
+  return loose.length === 1 ? loose[0].id : null;
+}
+
 /** A snapshot being assembled: local elements first, then any from cross-origin frames. */
 export interface SnapshotParts {
   elements: SnapshotElement[];

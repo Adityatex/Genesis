@@ -19,6 +19,8 @@ interface Deps {
   setChatInput: (s: string) => void;
   /** Start a background agent run; progress arrives through useAgentRun. */
   startAgent: (goal: string) => Promise<void>;
+  /** Replay a saved workflow (/name). */
+  runWorkflow: (name: string) => Promise<void>;
   stopAgent: (forget?: boolean) => void;
 }
 
@@ -143,7 +145,15 @@ export function useWorkspaceTools(d: Deps) {
     d.setChatInput('');
     d.setStatus('WORKING');
 
-    if (isAgentCommand(message)) {
+    if (message.startsWith('/')) {
+      // /name: replay a saved workflow
+      try {
+        await d.runWorkflow(message.slice(1).trim());
+      } catch (err: any) {
+        d.addBotMessage(`**Couldn't run it:** ${err.message}`);
+        d.setStatus('ACTIVE');
+      }
+    } else if (isAgentCommand(message)) {
       // Runs in the background; status and messages follow its updates
       try {
         await d.startAgent(message);

@@ -16,7 +16,8 @@ import { CODE_TIMEOUT_MS } from '@/lib/agent/customCode';
 import { annotate, base64ToBlob, type VisualInfo } from '@/lib/agent/screenshot';
 import { PREFS_KEY, DEFAULT_PREFS, type AgentPrefs } from '@/lib/agent/prefs';
 import { BridgeClient, type BridgeStatus } from '@/lib/mcp/bridgeClient';
-import { parseSkill, formatSkill } from '@/lib/skills/skill';
+import { parseSkill, formatSkill, slugify } from '@/lib/skills/skill';
+import { loadWorkflows, saveWorkflow, deleteWorkflow, workflowName, type Workflow } from '@/lib/workflows/workflow';
 import { loadSkills, saveSkill, deleteSkill, type KeyValueStorage } from '@/lib/skills/store';
 import { writeSkillFromRun } from '@/lib/skills/writer';
 
@@ -461,6 +462,54 @@ export default defineBackground(() => {
 
           case 'DELETE_SKILL': {
             sendResponse({ success: true, data: await deleteSkill(skillStorage, String(payload?.name ?? '')) });
+            break;
+          }
+
+          case 'LIST_WORKFLOWS': {
+            sendResponse({ success: true, data: await loadWorkflows(skillStorage) });
+            break;
+          }
+
+          case 'DELETE_WORKFLOW': {
+            sendResponse({ success: true, data: await deleteWorkflow(skillStorage, String(payload?.name ?? '')) });
+            break;
+          }
+
+          case 'SAVE_WORKFLOW_FROM_RUN': {
+            // "Save as workflow" in the sidebar; with a name, updates that workflow (after the agent healed it)
+            const tabId = _sender.tab?.id;
+            const record = tabId === undefined ? null : getRunRecord(tabId);
+            if (!record) throw new Error('There is no finished task in this tab to save');
+            if (record.status !== 'done') throw new Error('Only a task that finished can be saved as a workflow');
+            if (record.unrecordable) throw new Error(`This task can't be replayed: ${record.unrecordable}`);
+            if (record.trace.length === 0) throw new Error('This task had no steps to replay');
+            const workflow: Workflow = {
+              name: slugify(String(payload?.name ?? '')) || workflowName(record.goal, record.trace),
+              goal: record.goal,
+              startUrl: record.startUrl,
+              steps: record.trace,
+              finalUrl: record.finalUrl,
+              finalTitle: record.finalTitle,
+              hasPassword: record.trace.some((s) => /type="password"/.test(s.target?.key ?? '') && !!s.action.text),
+            };
+            await saveWorkflow(skillStorage, workflow);
+            sendResponse({ success: true, data: workflow });
+            break;
+          }
+
+          case 'RUN_WORKFLOW': {
+            // From the sidebar (/name) or the popup (in the active tab). Replay needs no model
+            // unless a step fails and the agent has to take over.
+            const workflow = (await loadWorkflows(skillStorage)).find((w) => w.name === slugify(String(payload?.name ?? '')));
+            if (!workflow) throw new Error(`There is no workflow named "${payload?.name}"`);
+            const tabId = _sender.tab?.id ?? (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id;
+            if (tabId === undefined) throw new Error('No tab to run it in');
+            const prefs = await loadPrefs();
+            runAgent(tabId, workflow.goal, {
+              checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
+              skills: await loadSkills(skillStorage), customCode: prefs.customCode, workflow,
+            });
+            sendResponse({ success: true, data: { name: workflow.name, steps: workflow.steps.length } });
             break;
           }
 

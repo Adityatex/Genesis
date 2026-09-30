@@ -69,6 +69,9 @@ jobs:
       - name: Custom code runs isolated, without network functions (mock)
         run: npm run eval:mock -- --task invoice-total --custom-code --timeout 45
 
+      - name: Save as workflow, then replay it with no model calls (mock)
+        run: npm run eval:mock -- --task login,checkout-flow,iframe-cross-origin --trials 2 --replay --timeout 45
+
       - name: Save as skill, then reuse it (mock)
         run: npm run eval:mock -- --task login --trials 2 --learn --timeout 45
 
