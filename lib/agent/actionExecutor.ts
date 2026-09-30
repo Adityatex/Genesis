@@ -3,9 +3,10 @@
 
 import { getElementById, getRemoteRef, findElements, formatElement, pageText, shadowRootOf, type RemoteRef } from '@/lib/agent/domSnapshot';
 import { keyParams, normalizeKey } from '@/lib/agent/keys';
+import { extract, formatExtraction } from '@/lib/agent/extract';
 
 export interface AgentAction {
-  action: 'click' | 'type' | 'clear_and_type' | 'select' | 'navigate' | 'scroll' | 'read' | 'wait' | 'done' | 'press_key' | 'find' | 'note' | 'use_skill';
+  action: 'click' | 'type' | 'clear_and_type' | 'select' | 'navigate' | 'scroll' | 'read' | 'wait' | 'done' | 'press_key' | 'find' | 'note' | 'use_skill' | 'extract';
   elementId?: number;
   text?: string;
   url?: string;
@@ -13,6 +14,10 @@ export interface AgentAction {
   key?: string;
   summary?: string;
   value?: string;
+  /** extract: the fields to collect, e.g. ["name", "price", "RAM"]. */
+  fields?: string[];
+  /** extract: also read each item's own page for fields the list doesn't show. */
+  follow?: boolean;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -559,6 +564,14 @@ export async function executeAction(action: AgentAction): Promise<string> {
       const matches = findElements(query);
       if (matches.length === 0) return `🔎 No elements matching "${query}". Try other words, or scroll to load more of the page.`;
       return `🔎 Found ${matches.length} element(s) matching "${query}": ${matches.map(formatElement).join(' | ')}`;
+    }
+
+    case 'extract': {
+      // Structured data from lists, tables and detail pages, without model-written code (lib/agent/extract.ts)
+      const fields = action.fields ?? [];
+      if (fields.length === 0) return '❌ extract needs the fields to collect.';
+      const result = await extract(fields, { follow: action.follow });
+      return formatExtraction(fields, result, action.text?.trim() || 'items');
     }
 
     case 'wait': {

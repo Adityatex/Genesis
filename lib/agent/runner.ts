@@ -268,7 +268,7 @@ export function changesSection(previous: string, current: string): string {
 const SETTLE_MS = 700;
 /** Actions that can't navigate or open anything need only a short pause. */
 const QUICK_SETTLE_MS = 100;
-const QUICK_ACTIONS: ReadonlySet<AgentAction['action']> = new Set(['type', 'clear_and_type', 'note', 'find', 'read', 'scroll', 'wait']);
+const QUICK_ACTIONS: ReadonlySet<AgentAction['action']> = new Set(['type', 'clear_and_type', 'note', 'find', 'read', 'scroll', 'wait', 'extract']);
 const READY_TIMEOUT_MS = 20_000;
 const SNAPSHOT_TIMEOUT_MS = 20_000;
 const EXECUTE_TIMEOUT_MS = 60_000;

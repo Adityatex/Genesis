@@ -10,7 +10,7 @@ export type ParseResult =
 
 const ACTIONS: ReadonlySet<AgentAction['action']> = new Set([
   'click', 'type', 'clear_and_type', 'select', 'navigate',
-  'scroll', 'read', 'wait', 'done', 'press_key', 'find', 'note', 'use_skill',
+  'scroll', 'read', 'wait', 'done', 'press_key', 'find', 'note', 'use_skill', 'extract',
 ]);
 
 /**
@@ -82,6 +82,13 @@ export function parseAgentAction(raw: string): ParseResult {
   if (key !== undefined) action.key = key;
   const summary = optionalString(obj.summary);
   if (summary !== undefined) action.summary = summary;
+  if (name === 'extract') {
+    // A list, or a comma-separated string
+    const raw = Array.isArray(obj.fields) ? obj.fields : typeof obj.fields === 'string' ? obj.fields.split(',') : [];
+    const fields = raw.map((f) => String(f).trim()).filter(Boolean).slice(0, 10);
+    if (fields.length) action.fields = fields;
+    if (obj.follow === true || obj.follow === 'true') action.follow = true;
+  }
 
   switch (name) {
     case 'click':
@@ -116,6 +123,9 @@ export function parseAgentAction(raw: string): ParseResult {
       break;
     case 'find':
       if (!action.text?.trim()) return { ok: false, error: 'find requires text to search for' };
+      break;
+    case 'extract':
+      if (!action.fields?.length) return { ok: false, error: 'extract requires fields: the things to collect, e.g. ["name", "price"]' };
       break;
     case 'use_skill':
       if (!action.text?.trim()) return { ok: false, error: 'use_skill requires the skill name as text' };

@@ -2,6 +2,19 @@
 
 All runs are live: real model, real extension, real Chromium. A run passes only if the right requests reached the test server **and** the agent finished cleanly.
 
+## Structured extraction (2026-10-01)
+
+A new `extract` action: the model names the fields it wants ("laptops: name, price, RAM") and Genesis's own code finds them. No model-written code runs. It reads table rows by column header, repeating items (lists, cards) and label/value pairs (spec tables, `<dl>`, "Label: value"), matching fields by label, synonym ("RAM" = "Memory (RAM)", "price" = "cost"), class name or kind of value. With `follow`, it reads each listed item's own page for fields the list doesn't show: same site only, GET, parsed without running the page's scripts, at most 10 pages, and never links that act (log out, delete, add to cart).
+
+On `compare-and-buy` one step returns every laptop's price and RAM, which took five page visits before. CI runs this in real Chromium: the mock plan now starts with the extract.
+
+| compare-and-buy (live) | Passed | Calls |
+|---|---|---|
+| `qwen/qwen3.8-27b` (Groq free tier), 2 trials | 2/2 | 4, 4 |
+| `deepseek-flash`, 3 trials | 3/3 | 10, 16, 13 |
+
+Both models used `extract` first and picked the Kite 14 right away. deepseek-flash still spends extra calls afterwards looking for a checkout this shop doesn't have, a habit of that model (the previous section); Qwen, without it, finishes in 4. `invoice-total` passed 5/5 in 2 calls with both models, without needing extract.
+
 ## Why compare-and-buy dropped, and the fix (2026-10-01)
 
 `deepseek-flash` on `compare-and-buy` went from 2/3 (2026-09-27) to 1/5. Full transcripts (`--transcripts`) showed that in every failure the model had solved the task: it checked the laptops, picked the Kite 14 and clicked "Add to cart". Then it would not stop. The goal says "Buy" and this shop has no checkout, so it guessed URLs (`/cart.html`, `/cart`, `/checkout.html`, `/`), landed on "Page not found", went back, added the laptop again, and repeated until the 40-step check-in. Three things in Genesis made this worse:

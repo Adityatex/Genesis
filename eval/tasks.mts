@@ -20,6 +20,7 @@ export type MockStep =
   | { action: 'select'; target: RegExp; value: string }
   | { action: 'press_key'; key: string; target?: RegExp }
   | { action: 'find'; text: string }
+  | { action: 'extract'; text: string; fields: string[]; follow?: boolean }
   | { action: 'done'; summary: string };
 
 export interface GradeInput {
@@ -311,6 +312,8 @@ export const TASKS: Task[] = [
       return adds.length > 0 && adds.every(e => e.data.item === 'kite-14');
     },
     mockPlan: [
+      // One step for every laptop's price and RAM, read from each laptop's own page
+      { action: 'extract', text: 'laptops', fields: ['name', 'price', 'RAM'], follow: true },
       { action: 'click', target: /<a> "Kite 14"/ },
       { action: 'click', target: /"Add to cart"/ },
     ],

@@ -65,5 +65,6 @@ export function describeAction(action: AgentAction): string {
   if (action.value) desc += ` "${action.value}"`;
   if (action.key) desc += ` key=${action.key}`;
   if (action.url) desc += ` ${action.url}`;
+  if (action.fields) desc += ` fields=${action.fields.join(',')}${action.follow ? ' +follow' : ''}`;
   return desc;
 }

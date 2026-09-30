@@ -42,13 +42,15 @@ const failure = (err: unknown) => ({ content: [{ type: 'text' as const, text: `E
 const tabId = z.number().int().optional().describe('Tab to use; defaults to the tab Genesis is working in (the last one opened or selected, else the active tab)');
 
 const action = z.object({
-  action: z.enum(['click', 'type', 'clear_and_type', 'select', 'navigate', 'scroll', 'press_key', 'read', 'find', 'note', 'wait']),
+  action: z.enum(['click', 'type', 'clear_and_type', 'select', 'navigate', 'scroll', 'press_key', 'read', 'find', 'extract', 'note', 'wait']),
   elementId: z.number().int().optional().describe('Element ID from the latest browser_snapshot, e.g. 12 for [12]'),
   text: z.string().optional().describe('Text to type, words to find, or milliseconds to wait'),
   value: z.string().optional().describe('Option label, for select'),
   url: z.string().optional().describe('Full http(s) URL, for navigate'),
   direction: z.enum(['up', 'down']).optional(),
   key: z.string().optional().describe('Key for press_key: Enter, Tab, Escape, ArrowDown, ...'),
+  fields: z.array(z.string()).optional().describe('For extract: fields to collect from the list, table or details on the page, e.g. ["name", "price"]'),
+  follow: z.boolean().optional().describe('For extract: also read the page of each listed item (same site, read-only) for missing fields'),
 });
 
 /** The MCP tools, answered by the extension over `bridge`. */
