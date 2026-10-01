@@ -169,6 +169,10 @@ When a task finishes, **Save as workflow** keeps its exact steps. Type `/name` i
 
 Type `/` in the sidebar for a picker of your workflows (🔁, replayed with no model) and shortcuts (⚡, saved prompts the agent runs). Arrow keys and Enter run one, Tab completes its name. A shortcut can have blanks in braces: save "Find the price of {product} on this site" as `price-check`, then type `/price-check running shoes`. Save one with **Save as shortcut** after a task, or write them in the popup.
 
+## ⏰ Schedules
+
+In the popup, schedule any workflow or shortcut to run every hour, day or week. It runs in a background tab and you get a notification with the result; the tab closes if it worked and stays open if it didn't. A scheduled workflow uses no model at all; a shortcut uses your model each run. Chrome has to be running: a run missed while it was closed happens once when it starts again.
+
 ## 🤝 Use it from Claude Code, Claude Desktop or Codex (MCP)
 
 `genesis-mcp` lets an AI app you already use drive your real browser through Genesis. The model runs inside that app, on your plan with it, so Genesis needs no API key for this. Genesis supplies what it's good at: page snapshots with numbered elements (including iframes and Shadow DOM), real mouse and keyboard input, and screenshots with those numbers drawn on.

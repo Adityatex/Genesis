@@ -6,7 +6,8 @@ import { CHECKPOINT_CHOICES, DEFAULT_PREFS, type ScreenshotMode } from '@/lib/ag
 import type { BridgeStatus } from '@/lib/mcp/bridgeClient';
 import { formatSkill, type Skill } from '@/lib/skills/skill';
 import type { Workflow } from '@/lib/workflows/workflow';
-import type { Shortcut } from '@/lib/shortcuts/shortcut';
+import { blanks, type Shortcut } from '@/lib/shortcuts/shortcut';
+import { describeFrequency, type Frequency, type Schedule } from '@/lib/schedules/schedule';
 
 const MCP_STATUS_TEXT: Record<BridgeStatus, string> = {
   off: 'Off',
@@ -54,6 +55,12 @@ export default function App() {
   // original: the name of the shortcut being edited, so a rename replaces it
   const [shortcutDraft, setShortcutDraft] = useState<{ name: string; prompt: string; original?: string }>({ name: '', prompt: '' });
   const [shortcutMessage, setShortcutMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [scheduleDraft, setScheduleDraft] = useState({ target: '', url: '', args: '', frequency: 'daily' as Frequency, time: '09:00', weekday: 1 });
+  const [scheduleMessage, setScheduleMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  // Blanks of the shortcut picked for a schedule, which need words
+  const draftShortcut = shortcuts.find((sc) => `shortcut:${sc.name}` === scheduleDraft.target);
+  const draftBlanks = draftShortcut ? blanks(draftShortcut.prompt) : [];
   const [workflowMessage, setWorkflowMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [skillDraft, setSkillDraft] = useState('');
   const [skillMessage, setSkillMessage] = useState<{ ok: boolean; text: string } | null>(null);
@@ -88,6 +95,7 @@ export default function App() {
     // Connection status changes while the popup is open (an AI app starts genesis-mcp)
     const refreshMcp = () => browser.runtime.sendMessage({ action: 'GET_MCP' }).then((res: any) => { if (res?.success) setMcp(res.data); }).catch(() => {});
     refreshMcp();
+    browser.runtime.sendMessage({ action: 'LIST_SCHEDULES' }).then((res: any) => { if (res?.success) setSchedules(res.data); }).catch(() => {});
     browser.runtime.sendMessage({ action: 'LIST_SHORTCUTS' }).then((res: any) => { if (res?.success) setShortcuts(res.data); }).catch(() => {});
     browser.runtime.sendMessage({ action: 'LIST_WORKFLOWS' }).then((res: any) => { if (res?.success) setWorkflows(res.data); }).catch(() => {});
     browser.runtime.sendMessage({ action: 'LIST_SKILLS' }).then((res: any) => { if (res?.success) setSkills(res.data); }).catch(() => {});
@@ -110,6 +118,39 @@ export default function App() {
     setSkills(res.data);
     setSkillDraft('');
     setSkillMessage({ ok: true, text: 'Skill saved.' });
+  };
+
+  const handleSaveSchedule = async () => {
+    const [kind, ...rest] = scheduleDraft.target.split(':');
+    const { url, args, frequency, time, weekday } = scheduleDraft;
+    const res: any = await browser.runtime.sendMessage({
+      action: 'SAVE_SCHEDULE',
+      payload: { kind, name: rest.join(':'), url, args, frequency, time, weekday },
+    });
+    if (!res?.success) {
+      setScheduleMessage({ ok: false, text: res?.error || 'Could not save it' });
+      return;
+    }
+    setSchedules(res.data);
+    setScheduleDraft((d) => ({ ...d, target: '', url: '', args: '' }));
+    setScheduleMessage({ ok: true, text: 'Scheduled.' });
+  };
+
+  const handleToggleSchedule = async (id: string, enabled: boolean) => {
+    const res: any = await browser.runtime.sendMessage({ action: 'TOGGLE_SCHEDULE', payload: { id, enabled } });
+    if (res?.success) setSchedules(res.data);
+  };
+
+  const handleRunScheduleNow = async (id: string) => {
+    const res: any = await browser.runtime.sendMessage({ action: 'RUN_SCHEDULE_NOW', payload: { id } });
+    setScheduleMessage(res?.success
+      ? { ok: true, text: 'Running in a background tab; a notification will say how it went.' }
+      : { ok: false, text: res?.error || 'Could not run it' });
+  };
+
+  const handleDeleteSchedule = async (id: string) => {
+    const res: any = await browser.runtime.sendMessage({ action: 'DELETE_SCHEDULE', payload: { id } });
+    if (res?.success) setSchedules(res.data);
   };
 
   const handleSaveShortcut = async () => {
@@ -684,6 +725,110 @@ export default function App() {
           <button onClick={handleSaveShortcut} className="profile-save-btn">Save shortcut</button>
         )}
         {shortcutMessage && <div className={`message ${shortcutMessage.ok ? 'saved' : 'error'}`}>{shortcutMessage.text}</div>}
+      </div>
+
+      {/* Schedules Section */}
+      <div className="section">
+        <label className="section-label">Schedules</label>
+        <p className="hint">
+          Run a workflow or shortcut automatically, in a background tab. You get a notification with the result; the tab
+          closes if it worked and stays open if it didn't.
+        </p>
+        {schedules.length > 0 && (
+          <ul className="skill-list">
+            {schedules.map((s) => (
+              <li key={s.id}>
+                <div className="skill-head">
+                  <input type="checkbox" checked={s.enabled} onChange={(e) => handleToggleSchedule(s.id, e.target.checked)} aria-label="On" />
+                  <strong>/{s.name}</strong>
+                  <span className="skill-sites">{describeFrequency(s)}</span>
+                  <span className="skill-actions">
+                    <button className="link-btn" onClick={() => handleRunScheduleNow(s.id)}>Run now</button>
+                    <button className="link-btn" onClick={() => handleDeleteSchedule(s.id)}>Delete</button>
+                  </span>
+                </div>
+                <div className="skill-desc">
+                  {s.enabled && s.nextRun ? `Next: ${new Date(s.nextRun).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}` : 'Off'}
+                  {s.lastRun && ` · Last: ${s.lastRun.status === 'done' ? '✅' : '⚠️'} ${new Date(s.lastRun.at).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}: ${s.lastRun.summary}`}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        {workflows.length + shortcuts.length === 0 ? (
+          <p className="hint">Save a workflow or shortcut first; then it can be scheduled here.</p>
+        ) : (
+          <>
+            <select
+              className="api-input"
+              style={{ marginTop: 8 }}
+              value={scheduleDraft.target}
+              onChange={(e) => setScheduleDraft((d) => ({ ...d, target: e.target.value }))}
+              aria-label="What to run"
+            >
+              <option value="">What to run…</option>
+              {workflows.map((w) => <option key={`w:${w.name}`} value={`workflow:${w.name}`}>🔁 /{w.name} (workflow, no model)</option>)}
+              {shortcuts.map((sc) => <option key={`s:${sc.name}`} value={`shortcut:${sc.name}`}>⚡ /{sc.name} (shortcut, uses your model)</option>)}
+            </select>
+            {scheduleDraft.target.startsWith('shortcut:') && (
+              <>
+                <input
+                  className="api-input"
+                  style={{ marginTop: 6 }}
+                  placeholder="Page to start on, e.g. https://example.com"
+                  value={scheduleDraft.url}
+                  onChange={(e) => setScheduleDraft((d) => ({ ...d, url: e.target.value }))}
+                  aria-label="Start page"
+                />
+                {draftBlanks.length > 0 && (
+                  <input
+                    className="api-input"
+                    style={{ marginTop: 6 }}
+                    placeholder={`Words for ${draftBlanks.map((b) => `{${b}}`).join(', ')}${draftBlanks.length > 1 ? ' (comma-separated)' : ''}`}
+                    value={scheduleDraft.args}
+                    onChange={(e) => setScheduleDraft((d) => ({ ...d, args: e.target.value }))}
+                    aria-label="Words for the blanks"
+                  />
+                )}
+              </>
+            )}
+            <div className="input-group" style={{ marginTop: 6 }}>
+              <select
+                className="api-input"
+                value={scheduleDraft.frequency}
+                onChange={(e) => setScheduleDraft((d) => ({ ...d, frequency: e.target.value as Frequency }))}
+                aria-label="How often"
+              >
+                <option value="hourly">Every hour</option>
+                <option value="daily">Every day</option>
+                <option value="weekly">Every week</option>
+              </select>
+              {scheduleDraft.frequency === 'weekly' && (
+                <select
+                  className="api-input"
+                  value={scheduleDraft.weekday}
+                  onChange={(e) => setScheduleDraft((d) => ({ ...d, weekday: Number(e.target.value) }))}
+                  aria-label="Day"
+                >
+                  {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day, i) => <option key={day} value={i}>{day}</option>)}
+                </select>
+              )}
+              <input
+                type="time"
+                className="api-input"
+                value={scheduleDraft.time}
+                onChange={(e) => setScheduleDraft((d) => ({ ...d, time: e.target.value }))}
+                aria-label="Time"
+              />
+            </div>
+            {scheduleDraft.target && <button onClick={handleSaveSchedule} className="profile-save-btn">Add schedule</button>}
+            {scheduleMessage && <div className={`message ${scheduleMessage.ok ? 'saved' : 'error'}`}>{scheduleMessage.text}</div>}
+            <p className="hint">
+              Chrome has to be running at the time; if it was closed or asleep, a missed run happens once when it starts
+              again. A scheduled shortcut uses your model's quota every time it runs; a workflow doesn't.
+            </p>
+          </>
+        )}
       </div>
 
       {/* AI apps (MCP) Section */}

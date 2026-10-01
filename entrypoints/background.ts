@@ -18,7 +18,11 @@ import { PREFS_KEY, DEFAULT_PREFS, type AgentPrefs } from '@/lib/agent/prefs';
 import { BridgeClient, type BridgeStatus } from '@/lib/mcp/bridgeClient';
 import { parseSkill, formatSkill, slugify } from '@/lib/skills/skill';
 import { loadWorkflows, saveWorkflow, deleteWorkflow, workflowName, type Workflow } from '@/lib/workflows/workflow';
-import { loadShortcuts, saveShortcut, deleteShortcut } from '@/lib/shortcuts/shortcut';
+import { loadShortcuts, saveShortcut, deleteShortcut, fillPrompt, blanks } from '@/lib/shortcuts/shortcut';
+import { loadSchedules } from '@/lib/schedules/schedule';
+import {
+  saveSchedule, deleteSchedule, setEnabled, runSchedule, onScheduleAlarm, syncSchedules, type SchedulerDeps,
+} from '@/lib/schedules/scheduler';
 import { loadSkills, saveSkill, deleteSkill, type KeyValueStorage } from '@/lib/skills/store';
 import { writeSkillFromRun } from '@/lib/skills/writer';
 
@@ -183,8 +187,60 @@ export default defineBackground(() => {
   }
   chrome.alarms.onAlarm.addListener((alarm: { name: string }) => {
     if (alarm.name === MCP_ALARM) bridge.ensureConnected();
+    else onScheduleAlarm(schedulerDeps, alarm.name).catch((err) => console.error('[Genesis] Schedule:', err));
   });
   applyMcp().catch((err) => console.error('[Genesis] MCP bridge:', err));
+  // ---- Schedules: run a workflow or shortcut automatically (lib/schedules/)
+  /** The first line of a run's final message after its heading, for a notification. */
+  const resultLine = (message: string) =>
+    message.split('\n').map((l) => l.trim()).find((l) => l && !l.startsWith('#') && !l.startsWith('---')) ?? '';
+
+  const schedulerDeps: SchedulerDeps = {
+    storage: skillStorage,
+    now: () => Date.now(),
+    setAlarm: (name, when) => chrome.alarms.create(name, { when }),
+    clearAlarm: (name) => { chrome.alarms.clear(name); },
+    notify: (title, message) => {
+      chrome.notifications.create({ type: 'basic', iconUrl: browser.runtime.getURL('/icons/icon128.png'), title, message });
+    },
+    run: async (schedule) => {
+      // What to run: a workflow replays (no model); a shortcut's prompt goes to the agent
+      let goal: string;
+      let workflow: Workflow | undefined;
+      let startUrl: string | undefined;
+      if (schedule.kind === 'workflow') {
+        workflow = (await loadWorkflows(skillStorage)).find((w) => w.name === schedule.name);
+        if (!workflow) throw new Error(`The workflow /${schedule.name} no longer exists`);
+        goal = workflow.goal;
+        startUrl = workflow.startUrl;
+      } else {
+        const shortcut = (await loadShortcuts(skillStorage)).find((s) => s.name === schedule.name);
+        if (!shortcut) throw new Error(`The shortcut /${schedule.name} no longer exists`);
+        const filled = fillPrompt(shortcut.prompt, schedule.args ?? '');
+        if (!filled.complete) throw new Error(`/${schedule.name} has blanks the schedule doesn't fill: ${blanks(filled.text).join(', ')}`);
+        goal = filled.text;
+        startUrl = schedule.url;
+        await requireConfig(); // a shortcut needs the model
+      }
+      // In a background tab, so it never gets in the user's way
+      const tab = await chrome.tabs.create({ url: startUrl ?? 'about:blank', active: false });
+      const prefs = await loadPrefs();
+      holdKeepAlive();
+      try {
+        const view = await startRun(runnerDeps, tab.id, goal, {
+          checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
+          skills: await loadSkills(skillStorage), customCode: prefs.customCode, workflow,
+        });
+        // Close it if it worked; keep it open to look at if it didn't
+        if (view.status === 'done') chrome.tabs.remove(tab.id).catch(() => {});
+        return { status: view.status, summary: resultLine(view.message) };
+      } finally {
+        releaseKeepAlive();
+      }
+    },
+  };
+  syncSchedules(schedulerDeps).catch((err) => console.error('[Genesis] Schedules:', err));
+
   // Settings can change from elsewhere too (another popup window, tests)
   browser.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes[MCP_KEY]) applyMcp().catch((err) => console.error('[Genesis] MCP bridge:', err));
@@ -463,6 +519,33 @@ export default defineBackground(() => {
 
           case 'DELETE_SKILL': {
             sendResponse({ success: true, data: await deleteSkill(skillStorage, String(payload?.name ?? '')) });
+            break;
+          }
+
+          case 'LIST_SCHEDULES': {
+            sendResponse({ success: true, data: await loadSchedules(skillStorage) });
+            break;
+          }
+
+          case 'SAVE_SCHEDULE': {
+            sendResponse({ success: true, data: await saveSchedule(schedulerDeps, payload ?? {}) });
+            break;
+          }
+
+          case 'DELETE_SCHEDULE': {
+            sendResponse({ success: true, data: await deleteSchedule(schedulerDeps, String(payload?.id ?? '')) });
+            break;
+          }
+
+          case 'TOGGLE_SCHEDULE': {
+            sendResponse({ success: true, data: await setEnabled(schedulerDeps, String(payload?.id ?? ''), !!payload?.enabled) });
+            break;
+          }
+
+          case 'RUN_SCHEDULE_NOW': {
+            // Runs in the background like a scheduled run; a notification says how it went
+            runSchedule(schedulerDeps, String(payload?.id ?? '')).catch((err) => console.error('[Genesis] Schedule:', err));
+            sendResponse({ success: true });
             break;
           }
 
