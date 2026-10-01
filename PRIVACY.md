@@ -9,5 +9,6 @@
 - A small helper script runs inside each frame of a page so the agent can work in embedded forms (e.g. payment iframes). It stays idle and reads nothing unless the agent is working on that tab.
 - **AI apps (MCP), off by default.** If you turn on "Let AI apps control this browser" and run the `genesis-mcp` helper, an AI app on your computer (e.g. Claude Code, Claude Desktop, Codex) can read pages and act in your browser through Genesis. Page snapshots and screenshots then go to that app, and on to the AI provider it uses under that provider's policy. The connection stays on your machine (127.0.0.1) and requires the pairing token you set. The `alarms` permission keeps this connection alive, and runs your schedules.
 - **Schedules**, only ones you create: a workflow or shortcut runs at the times you choose, in a background tab of your browser, and the `notifications` permission shows you how it went. A scheduled shortcut sends that page to your AI provider like any other task.
+- **Background tasks**: the `tabGroups` permission puts the tabs of tasks you run in the background into a group named Genesis. It doesn't read your other tabs or groups.
 - We never sell, share, or retain your browsing data. Your provider's own privacy policy applies to what you send it.
 - Contact: open a GitHub issue at https://github.com/Adityatex/Genesis/issues

@@ -3,7 +3,8 @@
 
 import { summarizePage, explainText, chatWithPage, planAgentStep, listModels, acceptsImages } from '@/lib/api/llmClient';
 import {
-  startRun, stopRun, resumeRun, forgetRun, getRunView, getRunRecord, isRunning, notifyTabLoading, type RunnerDeps, type RunOptions,
+  startRun, stopRun, resumeRun, forgetRun, getRunView, getRunRecord, listRuns, isRunning, notifyTabLoading,
+  type RunnerDeps, type RunOptions, type RunView,
 } from '@/lib/agent/runner';
 import {
   PROVIDERS, PROVIDER_IDS, SETTINGS_KEY, LEGACY_KEYS, readSettings, resolveConfig, resolveChain, resolveExecutor, configProblem,
@@ -13,6 +14,7 @@ import { formatError, withTimeout } from '@/lib/utils/errorHandler';
 import { providerPool, modelLabel, type FallbackResult } from '@/lib/api/fallback';
 import { trustedClick, trustedKey, trustedType, releaseTab, watchDetach, debuggerScreenshot, debuggerEvaluate } from '@/lib/agent/trustedInput';
 import { CODE_TIMEOUT_MS } from '@/lib/agent/customCode';
+import { TaskQueue, TaskCancelled } from '@/lib/agent/taskQueue';
 import { annotate, base64ToBlob, type VisualInfo } from '@/lib/agent/screenshot';
 import { PREFS_KEY, DEFAULT_PREFS, type AgentPrefs } from '@/lib/agent/prefs';
 import { BridgeClient, type BridgeStatus } from '@/lib/mcp/bridgeClient';
@@ -108,11 +110,109 @@ export default defineBackground(() => {
     sleep: wait,
   };
 
+  // ---- Parallel tasks: at most N runs use the model at once (lib/agent/taskQueue.ts)
+  /** What each waiting tab shows, by tab. */
+  const queuedViews = new Map<number, RunView>();
+  /** The goal each tab is waiting to run. */
+  const pendingGoals = new Map<number, string>();
+  /** Tabs started with "Run in background": a notification says when they finish. */
+  const backgroundTabs = new Set<number>();
+
+  const taskQueue = new TaskQueue(
+    async () => (await loadPrefs()).maxParallel,
+    async (tabId, position) => {
+      if (position === 0) {
+        queuedViews.delete(tabId);
+        return;
+      }
+      const limit = (await loadPrefs()).maxParallel;
+      const view: RunView = {
+        goal: pendingGoals.get(tabId) ?? '',
+        status: 'queued',
+        message: `⏳ **Waiting to start** (${position === 1 ? 'next' : `#${position}`} in line)\n\n`
+          + `${taskQueue.active} task${taskQueue.active === 1 ? ' is' : 's are'} running, and Genesis runs at most ${limit} at a time `
+          + '(Genesis popup → Agent) so free-tier rate limits hold. This one starts when a slot frees up.',
+        loading: true,
+        step: 0,
+        plan: [],
+        updatedAt: Date.now(),
+      };
+      queuedViews.set(tabId, view);
+      chrome.tabs.sendMessage(tabId, { action: 'AGENT_UPDATE', payload: view }, { frameId: 0 }).catch(() => {});
+    },
+  );
+
+  /**
+   * Run the agent in a tab; resolves with how it ended, or null if it was
+   * stopped before it got a slot. Runs that call the model wait their turn;
+   * a workflow replay doesn't call one, so it starts at once.
+   */
+  async function executeRun(tabId: number, goal: string, options: RunOptions): Promise<RunView | null> {
+    const run = async () => {
+      holdKeepAlive();
+      try {
+        return await startRun(runnerDeps, tabId, goal, options);
+      } finally {
+        releaseKeepAlive();
+      }
+    };
+    let view: RunView | null;
+    if (options.workflow) {
+      view = await run();
+    } else {
+      pendingGoals.set(tabId, goal);
+      try {
+        view = await taskQueue.run(tabId, run);
+      } catch (err) {
+        if (!(err instanceof TaskCancelled)) throw err;
+        view = null;
+      } finally {
+        pendingGoals.delete(tabId);
+      }
+    }
+    if (backgroundTabs.has(tabId)) {
+      backgroundTabs.delete(tabId);
+      const icon = view?.status === 'done' ? '✅' : view?.status === 'paused' ? '⏸️' : '⚠️';
+      const line = view ? view.message.split('\n').map((l) => l.trim()).find((l) => l && !l.startsWith('#')) ?? view.status : 'Stopped before it started';
+      chrome.notifications.create(`genesis-task:${tabId}`, {
+        type: 'basic', iconUrl: browser.runtime.getURL('/icons/icon128.png'),
+        title: `${icon} Genesis: ${goal.slice(0, 60)}`, message: `${line.slice(0, 200)}\nClick to open the tab.`,
+      });
+    }
+    return view;
+  }
+
+  /** "Genesis" tab group per window, for background tasks. */
+  const taskGroups = new Map<number, number>();
+  async function groupTab(tabId: number, windowId: number): Promise<void> {
+    const existing = taskGroups.get(windowId);
+    try {
+      const groupId = await chrome.tabs.group({ tabIds: [tabId], ...(existing !== undefined ? { groupId: existing } : { createProperties: { windowId } }) });
+      taskGroups.set(windowId, groupId);
+      if (existing === undefined) await chrome.tabGroups.update(groupId, { title: 'Genesis', color: 'purple', collapsed: false });
+    } catch {
+      // The group was closed: start a new one
+      if (existing === undefined) return;
+      taskGroups.delete(windowId);
+      await groupTab(tabId, windowId).catch(() => {});
+    }
+  }
+
+  chrome.notifications.onClicked.addListener(async (id: string) => {
+    if (!id.startsWith('genesis-task:')) return;
+    const tabId = Number(id.slice('genesis-task:'.length));
+    chrome.notifications.clear(id);
+    const tab = await chrome.tabs.update(tabId, { active: true }).catch(() => null);
+    if (tab) chrome.windows.update(tab.windowId, { focused: true });
+  });
+  chrome.tabs.onRemoved.addListener((tabId: number) => {
+    taskQueue.cancel(tabId);
+    queuedViews.delete(tabId);
+    backgroundTabs.delete(tabId);
+  });
+
   function runAgent(tabId: number, goal: string, options: RunOptions): void {
-    holdKeepAlive();
-    startRun(runnerDeps, tabId, goal, options)
-      .catch((err) => console.error('[Genesis] Agent run failed:', err))
-      .finally(releaseKeepAlive);
+    executeRun(tabId, goal, options).catch((err) => console.error('[Genesis] Agent run failed:', err));
   }
 
   // The runner needs to know when a page starts loading (clicks and form submits navigate)
@@ -147,16 +247,11 @@ export default defineBackground(() => {
         const settings = await loadSettings();
         const problem = configProblem(resolveConfig(settings));
         if (problem) throw new Error(`Genesis's own agent isn't set up: ${problem}`);
-        holdKeepAlive();
-        try {
-          const view = await startRun(runnerDeps, tabId, goal, {
-            checkpoint: 0, split: hasExecutor(settings), screenshots: prefs.screenshots, skills: await loadSkills(skillStorage),
-            customCode: prefs.customCode,
-          });
-          return view.message;
-        } finally {
-          releaseKeepAlive();
-        }
+        const view = await executeRun(tabId, goal, {
+          checkpoint: 0, split: hasExecutor(settings), screenshots: prefs.screenshots, skills: await loadSkills(skillStorage),
+          customCode: prefs.customCode,
+        });
+        return view?.message ?? 'Stopped before it started';
       },
       isBusy: (tabId) => isRunning(tabId),
       releaseInput: (tabId) => { if (!isRunning(tabId)) releaseTab(tabId); },
@@ -225,18 +320,15 @@ export default defineBackground(() => {
       // In a background tab, so it never gets in the user's way
       const tab = await chrome.tabs.create({ url: startUrl ?? 'about:blank', active: false });
       const prefs = await loadPrefs();
-      holdKeepAlive();
-      try {
-        const view = await startRun(runnerDeps, tab.id, goal, {
-          checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
-          skills: await loadSkills(skillStorage), customCode: prefs.customCode, workflow,
-        });
-        // Close it if it worked; keep it open to look at if it didn't
-        if (view.status === 'done') chrome.tabs.remove(tab.id).catch(() => {});
-        return { status: view.status, summary: resultLine(view.message) };
-      } finally {
-        releaseKeepAlive();
-      }
+      // Waits its turn like any task that calls the model (a workflow doesn't)
+      const view = await executeRun(tab.id, goal, {
+        checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
+        skills: await loadSkills(skillStorage), customCode: prefs.customCode, workflow,
+      });
+      if (!view) return { status: 'stopped', summary: 'Stopped before it started' };
+      // Close it if it worked; keep it open to look at if it didn't
+      if (view.status === 'done') chrome.tabs.remove(tab.id).catch(() => {});
+      return { status: view.status, summary: resultLine(view.message) };
     },
   };
   syncSchedules(schedulerDeps).catch((err) => console.error('[Genesis] Schedules:', err));
@@ -421,10 +513,75 @@ export default defineBackground(() => {
             break;
           }
 
+          case 'START_BACKGROUND_TASK': {
+            // "Run in background": a new tab beside this one, in the Genesis group, from this page
+            // (or payload.url). payload.workflow replays one; otherwise payload.goal goes to the agent.
+            const from = _sender.tab;
+            const url = String(payload?.url ?? from?.url ?? '');
+            if (!/^https?:\/\//.test(url)) throw new Error('Background tasks start from a web page (http or https)');
+            let workflow: Workflow | undefined;
+            let goal = String(payload?.goal ?? '').trim();
+            if (payload?.workflow) {
+              workflow = (await loadWorkflows(skillStorage)).find((w) => w.name === slugify(String(payload.workflow)));
+              if (!workflow) throw new Error(`There is no workflow named "${payload.workflow}"`);
+              goal = workflow.goal;
+            } else {
+              if (!goal) throw new Error('No task to run');
+              await requireConfig();
+            }
+            const tab = await chrome.tabs.create({
+              url: workflow?.startUrl ?? url, active: false,
+              ...(from ? { windowId: from.windowId, index: from.index + 1 } : {}),
+            });
+            await groupTab(tab.id, tab.windowId);
+            backgroundTabs.add(tab.id);
+            const prefs = await loadPrefs();
+            runAgent(tab.id, goal, {
+              checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
+              skills: await loadSkills(skillStorage), customCode: prefs.customCode, workflow,
+            });
+            sendResponse({ success: true, data: { tabId: tab.id } });
+            break;
+          }
+
+          case 'LIST_TASKS': {
+            // Every tab's task, waiting ones included, for the task lists
+            const runs = [...listRuns(), ...[...queuedViews].map(([tabId, view]) => ({ ...view, tabId }))];
+            const tasks = await Promise.all(runs.map(async (r) => {
+              const tab = await chrome.tabs.get(r.tabId).catch(() => null);
+              return tab ? { tabId: r.tabId, goal: r.goal, status: r.status, step: r.step, model: r.model, updatedAt: r.updatedAt, title: tab.title, background: backgroundTabs.has(r.tabId), here: r.tabId === _sender.tab?.id } : null;
+            }));
+            const order = ['running', 'paused', 'queued', 'done', 'error', 'stopped'];
+            sendResponse({
+              success: true,
+              data: tasks.filter(Boolean).sort((a: any, b: any) => order.indexOf(a.status) - order.indexOf(b.status) || b.updatedAt - a.updatedAt),
+            });
+            break;
+          }
+
+          case 'TASK_CONTROL': {
+            // From a task list: open, stop or continue another tab's task
+            const tabId = Number(payload?.tabId);
+            if (payload?.op === 'open') {
+              const tab = await chrome.tabs.update(tabId, { active: true });
+              await chrome.windows.update(tab.windowId, { focused: true });
+            } else if (payload?.op === 'stop') {
+              if (!taskQueue.cancel(tabId)) stopRun(tabId);
+            } else if (payload?.op === 'continue') {
+              resumeRun(tabId);
+            }
+            sendResponse({ success: true });
+            break;
+          }
+
           case 'STOP_AGENT': {
             const tabId = _sender.tab?.id;
             if (tabId !== undefined) {
-              if (payload?.forget) forgetRun(tabId);
+              // A task still waiting for a slot is just taken out of the line
+              if (taskQueue.cancel(tabId)) {
+                const stopped: RunView = { goal: '', status: 'stopped', message: "## ⏹️ Stopped\n\nIt hadn't started yet.", loading: false, step: 0, plan: [], updatedAt: Date.now() };
+                chrome.tabs.sendMessage(tabId, { action: 'AGENT_UPDATE', payload: stopped }, { frameId: 0 }).catch(() => {});
+              } else if (payload?.forget) forgetRun(tabId);
               else stopRun(tabId);
             }
             sendResponse({ success: true });
@@ -442,7 +599,7 @@ export default defineBackground(() => {
           case 'GET_AGENT_STATE': {
             // A freshly loaded page asks what the agent is doing in its tab
             const tabId = _sender.tab?.id;
-            sendResponse({ success: true, data: tabId === undefined ? null : getRunView(tabId) });
+            sendResponse({ success: true, data: tabId === undefined ? null : queuedViews.get(tabId) ?? getRunView(tabId) });
             break;
           }
 

@@ -19,7 +19,7 @@ import type { ElementKey } from '@/lib/agent/domSnapshot';
 import { MAX_INVALID_RESPONSES, REPEAT_PAUSE, REPEAT_WARN, describeAction, formatHistory } from '@/lib/agent/history';
 
 /** "paused": waiting for the user to continue or stop (checkpoint, or the agent looks stuck). */
-export type RunStatus = 'running' | 'paused' | 'done' | 'error' | 'stopped';
+export type RunStatus = 'queued' | 'running' | 'paused' | 'done' | 'error' | 'stopped';
 
 /** What the sidebar shows; pushed on every change and fetched on page load. */
 export interface RunView {
@@ -309,6 +309,11 @@ function view(run: Run): RunView {
 export function getRunView(tabId: number): RunView | null {
   const run = runs.get(tabId);
   return run ? view(run) : null;
+}
+
+/** Every tab's run (running, paused or finished), for the task list. */
+export function listRuns(): (RunView & { tabId: number })[] {
+  return [...runs.values()].map((run) => ({ ...view(run), tabId: run.tabId }));
 }
 
 /** What a run did, for turning it into a skill (lib/skills). */

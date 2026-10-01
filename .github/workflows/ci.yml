@@ -78,6 +78,9 @@ jobs:
       - name: A scheduled workflow runs on its alarm (real Chrome alarm, background tab, notification)
         run: npm run eval:schedule
 
+      - name: Parallel background tasks respect the limit (tab group, queue, notifications)
+        run: npm run eval:parallel
+
       - name: Save as skill, then reuse it (mock)
         run: npm run eval:mock -- --task login --trials 2 --learn --timeout 45
 

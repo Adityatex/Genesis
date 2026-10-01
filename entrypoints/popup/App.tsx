@@ -2,7 +2,11 @@ import { useState, useEffect } from 'react';
 import { loadStoredProfile, saveStoredProfile, PROFILE_FIELDS, type AutofillProfile } from '@/lib/automation/profile';
 import { PROVIDERS, PROVIDER_IDS, type ProviderId } from '@/lib/api/providers';
 import type { ModelInfo } from '@/lib/api/llmClient';
-import { CHECKPOINT_CHOICES, DEFAULT_PREFS, type ScreenshotMode } from '@/lib/agent/prefs';
+import { CHECKPOINT_CHOICES, PARALLEL_CHOICES, DEFAULT_PREFS, type ScreenshotMode } from '@/lib/agent/prefs';
+
+const TASK_ICON: Record<string, string> = { running: '⏳', queued: '🕒', paused: '⏸️', done: '✅', error: '❌', stopped: '⏹️' };
+
+interface TaskRow { tabId: number; goal: string; status: string; step: number; title?: string; model?: string; background?: boolean }
 import type { BridgeStatus } from '@/lib/mcp/bridgeClient';
 import { formatSkill, type Skill } from '@/lib/skills/skill';
 import type { Workflow } from '@/lib/workflows/workflow';
@@ -46,6 +50,8 @@ export default function App() {
   const [screenshots, setScreenshots] = useState<ScreenshotMode>(DEFAULT_PREFS.screenshots);
   const [nativeTools, setNativeTools] = useState(DEFAULT_PREFS.nativeTools);
   const [customCode, setCustomCode] = useState(DEFAULT_PREFS.customCode);
+  const [maxParallel, setMaxParallel] = useState(DEFAULT_PREFS.maxParallel);
+  const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [mcp, setMcp] = useState<McpState>({ enabled: false, hasToken: false, status: 'off' });
   const [mcpToken, setMcpToken] = useState('');
   const [mcpError, setMcpError] = useState('');
@@ -90,17 +96,22 @@ export default function App() {
       setScreenshots(res.data.screenshots);
       setNativeTools(res.data.nativeTools);
       setCustomCode(res.data.customCode);
+      setMaxParallel(res.data.maxParallel);
     });
     loadStoredProfile().then(setProfile).catch(() => {});
     // Connection status changes while the popup is open (an AI app starts genesis-mcp)
     const refreshMcp = () => browser.runtime.sendMessage({ action: 'GET_MCP' }).then((res: any) => { if (res?.success) setMcp(res.data); }).catch(() => {});
     refreshMcp();
+    // The task list follows what the agent is doing while the popup is open
+    const refreshTasks = () => browser.runtime.sendMessage({ action: 'LIST_TASKS' }).then((res: any) => { if (res?.success) setTasks(res.data); }).catch(() => {});
+    refreshTasks();
+    const tasksTimer = setInterval(refreshTasks, 2000);
     browser.runtime.sendMessage({ action: 'LIST_SCHEDULES' }).then((res: any) => { if (res?.success) setSchedules(res.data); }).catch(() => {});
     browser.runtime.sendMessage({ action: 'LIST_SHORTCUTS' }).then((res: any) => { if (res?.success) setShortcuts(res.data); }).catch(() => {});
     browser.runtime.sendMessage({ action: 'LIST_WORKFLOWS' }).then((res: any) => { if (res?.success) setWorkflows(res.data); }).catch(() => {});
     browser.runtime.sendMessage({ action: 'LIST_SKILLS' }).then((res: any) => { if (res?.success) setSkills(res.data); }).catch(() => {});
     const mcpTimer = setInterval(refreshMcp, 2000);
-    return () => clearInterval(mcpTimer);
+    return () => { clearInterval(mcpTimer); clearInterval(tasksTimer); };
   }, []);
 
   const handleTrustedInputChange = async (on: boolean) => {
@@ -203,6 +214,18 @@ export default function App() {
     }
     setMcp(res.data);
     if (change.token) setMcpToken('');
+  };
+
+  const handleTask = async (tabId: number, op: 'open' | 'stop' | 'continue') => {
+    await browser.runtime.sendMessage({ action: 'TASK_CONTROL', payload: { tabId, op } }).catch(() => {});
+    if (op === 'open') window.close();
+  };
+
+  const handleMaxParallelChange = async (n: number) => {
+    const previous = maxParallel;
+    setMaxParallel(n);
+    const res: any = await browser.runtime.sendMessage({ action: 'SAVE_PREFS', payload: { maxParallel: n } });
+    if (!res?.success) setMaxParallel(previous);
   };
 
   const handleCustomCodeChange = async (on: boolean) => {
@@ -356,6 +379,34 @@ export default function App() {
         <div className="status-dot"></div>
         <span>Active on all pages</span>
       </div>
+
+      {/* Tasks Section: the agent's tasks in every tab */}
+      {tasks.length > 0 && (
+        <div className="section">
+          <label className="section-label">Tasks</label>
+          <ul className="skill-list">
+            {tasks.map((t) => (
+              <li key={t.tabId}>
+                <div className="skill-head">
+                  <span>{TASK_ICON[t.status] ?? '•'}</span>
+                  <strong className="task-goal" title={t.goal}>{t.goal || t.title}</strong>
+                  <span className="skill-actions">
+                    <button className="link-btn" onClick={() => handleTask(t.tabId, 'open')}>Open</button>
+                    {t.status === 'paused' && <button className="link-btn" onClick={() => handleTask(t.tabId, 'continue')}>Continue</button>}
+                    {['running', 'queued', 'paused'].includes(t.status) && (
+                      <button className="link-btn" onClick={() => handleTask(t.tabId, 'stop')}>Stop</button>
+                    )}
+                  </span>
+                </div>
+                <div className="skill-desc">
+                  {t.status === 'running' ? `Step ${t.step}` : t.status === 'queued' ? 'Waiting for a free slot' : t.status}
+                  {t.background ? ' · background tab' : ''}{t.model ? ` · ${t.model}` : ''}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* AI Provider Section */}
       <div className="section">
@@ -580,6 +631,24 @@ export default function App() {
         <p className="hint">
           The model answers through the provider's function-calling feature instead of writing JSON, which some models
           get wrong. Models that don't support it fall back to JSON by themselves.
+        </p>
+
+        <label className="toggle-row" htmlFor="max-parallel">
+          <span>Tasks at once</span>
+          <select
+            id="max-parallel"
+            className="api-input"
+            style={{ width: 'auto', marginLeft: 'auto' }}
+            value={maxParallel}
+            onChange={(e) => handleMaxParallelChange(Number(e.target.value))}
+          >
+            {PARALLEL_CHOICES.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </label>
+        <p className="hint">
+          How many tasks may use the model at the same time, in different tabs (the "Run in background" button starts one
+          without leaving your page). More wait in line: each running task sends requests, and free tiers limit requests
+          per minute. Workflow replays don't count, since they don't use the model.
         </p>
 
         <label className="toggle-row">

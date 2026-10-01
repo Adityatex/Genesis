@@ -5,11 +5,13 @@ import { Play, Square } from 'lucide-react';
 
 interface Props {
   paused: boolean;
+  /** Waiting for a free slot (too many tasks running at once). */
+  queued?: boolean;
   onContinue: () => void;
   onStop: () => void;
 }
 
-export default function AgentControls({ paused, onContinue, onStop }: Props) {
+export default function AgentControls({ paused, queued, onContinue, onStop }: Props) {
   // A running agent stops after its current step, which can take a few seconds
   const [stopping, setStopping] = useState(false);
   useEffect(() => setStopping(false), [paused]);
@@ -22,7 +24,7 @@ export default function AgentControls({ paused, onContinue, onStop }: Props) {
   return (
     <div className="px-3 py-2 bg-[#161920] border-t border-[#242933] flex items-center gap-2">
       <span className="flex-1 text-[11px] text-slate-400">
-        {paused ? 'Agent paused. Keep going?' : stopping ? 'Stopping after this step...' : 'Agent is working...'}
+        {paused ? 'Agent paused. Keep going?' : queued ? 'Waiting for a free slot...' : stopping ? 'Stopping after this step...' : 'Agent is working...'}
       </span>
       {paused && (
         <button

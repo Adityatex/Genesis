@@ -477,3 +477,10 @@ body {
   font-size: 11px;
   resize: vertical;
 }
+
+.task-goal {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}

@@ -30,6 +30,11 @@ export interface AgentPrefs {
    * page content could try to steer the code.
    */
   customCode: boolean;
+  /**
+   * Most agent tasks using the model at once (in different tabs). More wait in
+   * line: free tiers limit requests per minute. Workflow replays don't count.
+   */
+  maxParallel: number;
 }
 
 export type ScreenshotMode = 'off' | 'planning' | 'always';
@@ -44,4 +49,7 @@ export const DEFAULT_PREFS: AgentPrefs = {
   screenshots: 'off',
   nativeTools: false,
   customCode: false,
+  maxParallel: 3,
 };
+
+export const PARALLEL_CHOICES = [1, 2, 3, 5] as const;

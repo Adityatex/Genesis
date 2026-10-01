@@ -1,6 +1,6 @@
 // entrypoints/sidebar.content/components/ChatInput.tsx
 import { useEffect, useRef, useState } from 'react';
-import { Send, Repeat, Zap } from 'lucide-react';
+import { Send, Repeat, Zap, SquareStack } from 'lucide-react';
 import { matchItems, type PickerItem } from '@/lib/shortcuts/shortcut';
 
 interface Props {
@@ -12,9 +12,11 @@ interface Props {
   pickerItems: PickerItem[];
   /** Reload them (typing / starts a fresh look). */
   onRefreshPicker: () => void;
+  /** Run what's typed in a new background tab instead of this one. */
+  onBackground: () => void;
 }
 
-export default function ChatInput({ value, onChange, onSubmit, disabled, pickerItems, onRefreshPicker }: Props) {
+export default function ChatInput({ value, onChange, onSubmit, disabled, pickerItems, onRefreshPicker, onBackground }: Props) {
   // The / picker shows while the name is being typed ("/pri"), not its words ("/price-check shoes")
   const typingName = /^\/\S*$/.test(value);
   const matches = typingName ? matchItems(value.slice(1), pickerItems) : [];
@@ -108,12 +110,22 @@ export default function ChatInput({ value, onChange, onSubmit, disabled, pickerI
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
           placeholder="Describe action or ask question... (/ for workflows and shortcuts)"
-          className="w-full bg-transparent p-3 pr-10 text-xs text-slate-200 outline-none placeholder:text-slate-600 resize-none min-h-[44px] disabled:opacity-50"
+          className="w-full bg-transparent p-3 pr-20 text-xs text-slate-200 outline-none placeholder:text-slate-600 resize-none min-h-[44px] disabled:opacity-50"
           onKeyDown={onKeyDown}
           aria-autocomplete="list"
           aria-expanded={open}
         />
         <div className="absolute right-2 bottom-2 flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onBackground}
+            title="Run in a new background tab (you stay here)"
+            aria-label="Run in background"
+            className="p-1.5 rounded border border-[#242933] text-slate-400 hover:text-violet-300 hover:border-violet-500/50 transition-colors disabled:opacity-30"
+            disabled={!value.trim()}
+          >
+            <SquareStack size={14} />
+          </button>
           <button
             type="submit"
             className="p-1.5 rounded bg-blue-600 text-white hover:bg-blue-500 transition-colors disabled:opacity-30 disabled:grayscale"

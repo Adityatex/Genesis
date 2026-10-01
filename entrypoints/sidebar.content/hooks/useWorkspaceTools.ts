@@ -195,5 +195,37 @@ export function useWorkspaceTools(d: Deps) {
     }
   }, [d]);
 
-  return { handleExtractText, handleDetectElements, handleAutoFill, handleSummarize, handleExplainSelection, handleClear, handleSendMessage };
+  /** Run what's typed in a new background tab (Genesis group), leaving this page alone. */
+  const handleBackground = useCallback(async () => {
+    const message = d.chatInput.trim();
+    if (!message) return;
+    // Clear the box now, not when the background answers: by then the user may be
+    // typing the next task, and clearing late would wipe it
+    d.setChatInput('');
+    let payload: { goal?: string; workflow?: string };
+    try {
+      if (message.startsWith('/')) {
+        const [, name = '', args = ''] = /^\/(\S*)\s*([\s\S]*)$/.exec(message) ?? [];
+        const item = await d.findPickerItem(name);
+        if (!item) throw new Error(`There is no workflow or shortcut named "/${name}". Type / to see them.`);
+        if (item.kind === 'workflow') payload = { workflow: item.name };
+        else {
+          const { text, complete } = fillPrompt(item.detail, args);
+          if (!complete) throw new Error(`Fill in ${blanks(text).map((b) => `{${b}}`).join(', ')} first: type /${item.name} followed by the words`);
+          payload = { goal: text };
+        }
+      } else {
+        payload = { goal: message };
+      }
+      const res: any = await browser.runtime.sendMessage({ action: 'START_BACKGROUND_TASK', payload });
+      if (!res?.success) throw new Error(res?.error || 'Could not start it');
+      d.pushUserMessage(`⧉ ${message}`);
+      d.addBotMessage('Started in a **background tab** (in the purple *Genesis* group). Carry on here; you\'ll get a notification when it\'s done, and the task list above shows how it\'s going.');
+    } catch (err: any) {
+      d.setChatInput(message); // give it back to fix and retry
+      d.addBotMessage(`**Couldn't start it:** ${err.message}`);
+    }
+  }, [d]);
+
+  return { handleBackground, handleExtractText, handleDetectElements, handleAutoFill, handleSummarize, handleExplainSelection, handleClear, handleSendMessage };
 }

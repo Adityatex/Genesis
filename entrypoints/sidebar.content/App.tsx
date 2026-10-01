@@ -19,6 +19,7 @@ import MessageList from './components/MessageList';
 import ChatInput from './components/ChatInput';
 import AgentControls from './components/AgentControls';
 import SaveSkillBar from './components/SaveSkillBar';
+import TasksChip from './components/TasksChip';
 import type { RunStatus, RunView } from '@/lib/agent/runner';
 import type { PickerItem } from '@/lib/shortcuts/shortcut';
 
@@ -270,8 +271,9 @@ Type **/${saved?.name}** to ask for this again. To make part of it fill-in, edit
           onDismiss={closeSkillOffer}
         />
       )}
-      {(agentStatus === 'running' || agentStatus === 'paused') && (
-        <AgentControls paused={agentStatus === 'paused'} onContinue={agent.resume} onStop={() => agent.stop()} />
+      <TasksChip />
+      {(agentStatus === 'running' || agentStatus === 'paused' || agentStatus === 'queued') && (
+        <AgentControls paused={agentStatus === 'paused'} queued={agentStatus === 'queued'} onContinue={agent.resume} onStop={() => agent.stop()} />
       )}
       <ChatInput
         value={chatInput}
@@ -280,6 +282,7 @@ Type **/${saved?.name}** to ask for this again. To make part of it fill-in, edit
         disabled={status === 'WORKING'}
         pickerItems={pickerItems}
         onRefreshPicker={refreshPicker}
+        onBackground={toolsApi.handleBackground}
       />
 
       <style>{`
