@@ -165,6 +165,10 @@ The agent gets the skills that fit the current site and task in full, and can lo
 
 When a task finishes, **Save as workflow** keeps its exact steps. Type `/name` in the sidebar (or press Run in the popup) to replay them: no model calls, so it's instant and costs nothing, even on free tiers. Each step remembers its element by what it is (`<button> "Sign in"`), not by position, so small layout changes don't break it. If the site has changed and a step no longer fits, the agent takes over from there and finishes the task, then offers to update the workflow. Workflows are stored on this device only; one that types a password is marked 🔒.
 
+## ⚡ Shortcuts
+
+Type `/` in the sidebar for a picker of your workflows (🔁, replayed with no model) and shortcuts (⚡, saved prompts the agent runs). Arrow keys and Enter run one, Tab completes its name. A shortcut can have blanks in braces: save "Find the price of {product} on this site" as `price-check`, then type `/price-check running shoes`. Save one with **Save as shortcut** after a task, or write them in the popup.
+
 ## 🤝 Use it from Claude Code, Claude Desktop or Codex (MCP)
 
 `genesis-mcp` lets an AI app you already use drive your real browser through Genesis. The model runs inside that app, on your plan with it, so Genesis needs no API key for this. Genesis supplies what it's good at: page snapshots with numbered elements (including iframes and Shadow DOM), real mouse and keyboard input, and screenshots with those numbers drawn on.

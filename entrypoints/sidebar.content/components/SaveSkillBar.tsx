@@ -3,7 +3,7 @@
 // follows next time) and/or a workflow (its exact steps, replayed without a
 // model). After a replay the agent had to rescue: offer to update the workflow.
 import { useState } from 'react';
-import { BookmarkPlus, Repeat } from 'lucide-react';
+import { BookmarkPlus, Repeat, Zap } from 'lucide-react';
 
 interface Props {
   /** Offer "Save as skill" (not after a replay). */
@@ -14,10 +14,12 @@ interface Props {
   unrecordable?: string;
   onSaveSkill: () => Promise<void>;
   onSaveWorkflow: () => Promise<void>;
+  /** Save the task's wording as a /shortcut. */
+  onSaveShortcut: () => Promise<void>;
   onDismiss: () => void;
 }
 
-export default function SaveSkillBar({ skill, workflow, unrecordable, onSaveSkill, onSaveWorkflow, onDismiss }: Props) {
+export default function SaveSkillBar({ skill, workflow, unrecordable, onSaveSkill, onSaveWorkflow, onSaveShortcut, onDismiss }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
 
   const run = async (label: string, fn: () => Promise<void>) => {
@@ -56,6 +58,16 @@ export default function SaveSkillBar({ skill, workflow, unrecordable, onSaveSkil
           className="flex items-center gap-1 px-2.5 py-1 rounded bg-violet-600 text-white text-[11px] hover:bg-violet-500 transition-colors disabled:opacity-50"
         >
           <Repeat size={12} /> {workflow === 'update' ? 'Update workflow' : 'Save as workflow'}
+        </button>
+      )}
+      {skill && (
+        <button
+          onClick={() => run('Saving the shortcut', onSaveShortcut)}
+          disabled={!!busy}
+          title="Save how you asked for this, to run again with /name"
+          className="flex items-center gap-1 px-2.5 py-1 rounded border border-[#242933] text-slate-300 text-[11px] hover:border-amber-500/50 hover:text-amber-300 transition-colors disabled:opacity-50"
+        >
+          <Zap size={12} /> Save as shortcut
         </button>
       )}
       {!busy && (

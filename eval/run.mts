@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { startFixtureServer, type FixtureServer } from './server.mts';
 import { redact } from './redact.mts';
+import { shortcutName } from '../lib/shortcuts/shortcut.ts';
 import { TASKS, type Task, type MockStep } from './tasks.mts';
 import { isAgentCommand } from '../lib/agent/history.ts';
 import {
@@ -66,6 +67,8 @@ const { values: args } = parseArgs({
     replay: { type: 'boolean', default: false },
     // Replay the workflows an earlier --replay run saved (in eval/results/workflows), from the first trial
     'use-workflows': { type: 'boolean', default: false },
+    // Save each task's goal as a shortcut and run it by typing the first letters of /name + Enter (the / picker)
+    shortcuts: { type: 'boolean', default: false },
     // Start every trial with the skills an earlier --learn run saved (e.g. by a stronger model)
     'use-skills': { type: 'boolean', default: false },
     // Save each run's full final message (every step) under eval/results/transcripts
@@ -273,7 +276,7 @@ function mockPlanner(plan: (MockStep | MockStep[])[]) {
 }
 
 /** The profile dir holds the API key in extension storage; delete it after use. */
-async function launch(apiKey: string, skills: unknown[] = [], workflows: unknown[] = []): Promise<{ context: BrowserContext; userDataDir: string }> {
+async function launch(apiKey: string, skills: unknown[] = [], workflows: unknown[] = [], shortcuts: unknown[] = []): Promise<{ context: BrowserContext; userDataDir: string }> {
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'genesis-eval-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chromium',
@@ -294,6 +297,7 @@ async function launch(apiKey: string, skills: unknown[] = [], workflows: unknown
     [SETTINGS_KEY, settings, PREFS_KEY, { trustedInput: !args['scripted-input'], stepCheckpoint: EVAL_CHECKPOINT, screenshots: args.screenshots, nativeTools: !!args.tools, customCode: !!args['custom-code'] }] as const,
   );
   if (skills.length) await worker.evaluate((list) => chrome.storage.local.set({ genesis_skills: list }), skills);
+  if (shortcuts.length) await worker.evaluate((list) => chrome.storage.local.set({ genesis_shortcuts: list }), shortcuts);
   if (workflows.length) await worker.evaluate((list) => chrome.storage.local.set({ genesis_workflows: list }), workflows);
   return { context, userDataDir };
 }
@@ -313,7 +317,8 @@ async function readOutcome(page: Page): Promise<string> {
 async function runTask(task: Task, trial: number, server: FixtureServer, apiKey: string): Promise<RunResult> {
   const installed = learnedSkills.get(task.id) ?? [];
   const workflow = savedWorkflows.get(task.id);
-  const { context, userDataDir } = await launch(apiKey, installed, workflow ?? []);
+  const shortcut = args.shortcuts ? { name: shortcutName(task.goal), prompt: task.goal } : undefined;
+  const { context, userDataDir } = await launch(apiKey, installed, workflow ?? [], shortcut ? [shortcut] : []);
   /** Set while the extension writes a skill: those calls are counted apart. */
   let learning = false;
   const result: RunResult = {
@@ -395,7 +400,7 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
     await page.goto(server.baseUrl + task.start);
     await page.locator('[title="Open Genesis Copilot"]').click({ timeout: 15_000 });
     // --replay: later trials replay the saved workflow, typed as /name like a user would
-    await page.locator('textarea[placeholder^="Describe action"]').fill(workflow ? `/${workflow[0].name}` : task.goal);
+    await page.locator('textarea[placeholder^="Describe action"]').fill(workflow ? `/${workflow[0].name}` : shortcut ? `/${shortcut.name.slice(0, 5)}` : task.goal);
     await page.keyboard.press('Enter');
 
     let finalText = '';

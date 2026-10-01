@@ -5,6 +5,7 @@ import { detectInteractiveElements } from '@/lib/dom/detectInteractiveElements';
 import { fillForm, fillDropdowns } from '@/lib/automation/formAutofill';
 import { loadStoredProfile, isProfileEmpty } from '@/lib/automation/profile';
 import { isAgentCommand } from '@/lib/agent/history';
+import { fillPrompt, blanks, type PickerItem } from '@/lib/shortcuts/shortcut';
 import type { Message } from './useChatMessages';
 
 interface Deps {
@@ -21,6 +22,8 @@ interface Deps {
   startAgent: (goal: string) => Promise<void>;
   /** Replay a saved workflow (/name). */
   runWorkflow: (name: string) => Promise<void>;
+  /** A workflow or shortcut by its /name. */
+  findPickerItem: (name: string) => Promise<PickerItem | undefined>;
   stopAgent: (forget?: boolean) => void;
 }
 
@@ -146,9 +149,24 @@ export function useWorkspaceTools(d: Deps) {
     d.setStatus('WORKING');
 
     if (message.startsWith('/')) {
-      // /name: replay a saved workflow
+      // /name [words]: replay a workflow, or run a shortcut's prompt with its blanks filled
+      const [, name = '', args = ''] = /^\/(\S*)\s*([\s\S]*)$/.exec(message) ?? [];
+      const item = await d.findPickerItem(name);
       try {
-        await d.runWorkflow(message.slice(1).trim());
+        if (!item) throw new Error(`There is no workflow or shortcut named "/${name}". Type / to see them.`);
+        if (item.kind === 'workflow') {
+          await d.runWorkflow(item.name);
+        } else {
+          const { text, complete } = fillPrompt(item.detail, args);
+          if (complete) {
+            await d.startAgent(text);
+          } else {
+            // Blanks left: put the prompt in the box to finish
+            d.setChatInput(text);
+            d.addBotMessage(`⚡ **/${item.name}**: fill in the ${blanks(text).map((b) => `{${b}}`).join(', ')} in the box, then press Enter.`);
+            d.setStatus('ACTIVE');
+          }
+        }
       } catch (err: any) {
         d.addBotMessage(`**Couldn't run it:** ${err.message}`);
         d.setStatus('ACTIVE');

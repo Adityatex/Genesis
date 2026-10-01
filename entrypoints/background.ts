@@ -18,6 +18,7 @@ import { PREFS_KEY, DEFAULT_PREFS, type AgentPrefs } from '@/lib/agent/prefs';
 import { BridgeClient, type BridgeStatus } from '@/lib/mcp/bridgeClient';
 import { parseSkill, formatSkill, slugify } from '@/lib/skills/skill';
 import { loadWorkflows, saveWorkflow, deleteWorkflow, workflowName, type Workflow } from '@/lib/workflows/workflow';
+import { loadShortcuts, saveShortcut, deleteShortcut } from '@/lib/shortcuts/shortcut';
 import { loadSkills, saveSkill, deleteSkill, type KeyValueStorage } from '@/lib/skills/store';
 import { writeSkillFromRun } from '@/lib/skills/writer';
 
@@ -462,6 +463,35 @@ export default defineBackground(() => {
 
           case 'DELETE_SKILL': {
             sendResponse({ success: true, data: await deleteSkill(skillStorage, String(payload?.name ?? '')) });
+            break;
+          }
+
+          case 'LIST_SHORTCUTS': {
+            sendResponse({ success: true, data: await loadShortcuts(skillStorage) });
+            break;
+          }
+
+          case 'SAVE_SHORTCUT': {
+            const shortcuts = await saveShortcut(skillStorage, { name: String(payload?.name ?? ''), prompt: String(payload?.prompt ?? '') });
+            sendResponse({ success: true, data: shortcuts });
+            break;
+          }
+
+          case 'DELETE_SHORTCUT': {
+            sendResponse({ success: true, data: await deleteShortcut(skillStorage, String(payload?.name ?? '')) });
+            break;
+          }
+
+          case 'PICKER_ITEMS': {
+            // The sidebar's / picker: workflows (replayed) and shortcuts (saved prompts)
+            const [workflows, shortcuts] = await Promise.all([loadWorkflows(skillStorage), loadShortcuts(skillStorage)]);
+            sendResponse({
+              success: true,
+              data: [
+                ...workflows.map((w) => ({ kind: 'workflow', name: w.name, detail: w.goal })),
+                ...shortcuts.map((s) => ({ kind: 'shortcut', name: s.name, detail: s.prompt })),
+              ],
+            });
             break;
           }
 

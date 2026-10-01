@@ -6,6 +6,7 @@ import { CHECKPOINT_CHOICES, DEFAULT_PREFS, type ScreenshotMode } from '@/lib/ag
 import type { BridgeStatus } from '@/lib/mcp/bridgeClient';
 import { formatSkill, type Skill } from '@/lib/skills/skill';
 import type { Workflow } from '@/lib/workflows/workflow';
+import type { Shortcut } from '@/lib/shortcuts/shortcut';
 
 const MCP_STATUS_TEXT: Record<BridgeStatus, string> = {
   off: 'Off',
@@ -49,6 +50,10 @@ export default function App() {
   const [mcpError, setMcpError] = useState('');
   const [skills, setSkills] = useState<Skill[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const [shortcuts, setShortcuts] = useState<Shortcut[]>([]);
+  // original: the name of the shortcut being edited, so a rename replaces it
+  const [shortcutDraft, setShortcutDraft] = useState<{ name: string; prompt: string; original?: string }>({ name: '', prompt: '' });
+  const [shortcutMessage, setShortcutMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [workflowMessage, setWorkflowMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [skillDraft, setSkillDraft] = useState('');
   const [skillMessage, setSkillMessage] = useState<{ ok: boolean; text: string } | null>(null);
@@ -83,6 +88,7 @@ export default function App() {
     // Connection status changes while the popup is open (an AI app starts genesis-mcp)
     const refreshMcp = () => browser.runtime.sendMessage({ action: 'GET_MCP' }).then((res: any) => { if (res?.success) setMcp(res.data); }).catch(() => {});
     refreshMcp();
+    browser.runtime.sendMessage({ action: 'LIST_SHORTCUTS' }).then((res: any) => { if (res?.success) setShortcuts(res.data); }).catch(() => {});
     browser.runtime.sendMessage({ action: 'LIST_WORKFLOWS' }).then((res: any) => { if (res?.success) setWorkflows(res.data); }).catch(() => {});
     browser.runtime.sendMessage({ action: 'LIST_SKILLS' }).then((res: any) => { if (res?.success) setSkills(res.data); }).catch(() => {});
     const mcpTimer = setInterval(refreshMcp, 2000);
@@ -104,6 +110,28 @@ export default function App() {
     setSkills(res.data);
     setSkillDraft('');
     setSkillMessage({ ok: true, text: 'Skill saved.' });
+  };
+
+  const handleSaveShortcut = async () => {
+    const { original, ...draft } = shortcutDraft;
+    let res: any = await browser.runtime.sendMessage({ action: 'SAVE_SHORTCUT', payload: draft });
+    if (!res?.success) {
+      setShortcutMessage({ ok: false, text: res?.error || 'Could not save it' });
+      return;
+    }
+    // Renamed while editing: drop the old one
+    if (original && !res.data.some((sc: Shortcut) => sc.name === original && sc.prompt === draft.prompt.trim())) {
+      const renamed = res.data.find((sc: Shortcut) => sc.prompt === draft.prompt.trim() && sc.name !== original);
+      if (renamed) res = await browser.runtime.sendMessage({ action: 'DELETE_SHORTCUT', payload: { name: original } });
+    }
+    setShortcuts(res.data);
+    setShortcutDraft({ name: '', prompt: '' });
+    setShortcutMessage({ ok: true, text: 'Saved. Type / in the sidebar to use it.' });
+  };
+
+  const handleDeleteShortcut = async (name: string) => {
+    const res: any = await browser.runtime.sendMessage({ action: 'DELETE_SHORTCUT', payload: { name } });
+    if (res?.success) setShortcuts(res.data);
   };
 
   const handleRunWorkflow = async (name: string) => {
@@ -611,6 +639,51 @@ export default function App() {
           <p className="hint">No workflows yet.</p>
         )}
         {workflowMessage && <div className={`message ${workflowMessage.ok ? 'saved' : 'error'}`}>{workflowMessage.text}</div>}
+      </div>
+
+      {/* Shortcuts Section */}
+      <div className="section">
+        <label className="section-label">Shortcuts</label>
+        <p className="hint">
+          Saved prompts: type /name in the sidebar to run one. Write a part that changes as a blank in braces, e.g.
+          "Find the price of {'{product}'} on this site", then type /name running shoes.
+        </p>
+        {shortcuts.length > 0 && (
+          <ul className="skill-list">
+            {shortcuts.map((s) => (
+              <li key={s.name}>
+                <div className="skill-head">
+                  <strong>/{s.name}</strong>
+                  <span className="skill-actions">
+                    <button className="link-btn" onClick={() => setShortcutDraft({ name: s.name, prompt: s.prompt, original: s.name })}>Edit</button>
+                    <button className="link-btn" onClick={() => handleDeleteShortcut(s.name)}>Delete</button>
+                  </span>
+                </div>
+                <div className="skill-desc">{s.prompt}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <input
+          className="api-input"
+          style={{ marginTop: 8 }}
+          placeholder="Name (optional), e.g. price-check"
+          value={shortcutDraft.name}
+          onChange={(e) => setShortcutDraft((d) => ({ ...d, name: e.target.value }))}
+          aria-label="Shortcut name"
+        />
+        <textarea
+          className="api-input skill-editor"
+          rows={2}
+          placeholder="Prompt, e.g. Find the price of {product} on this site"
+          value={shortcutDraft.prompt}
+          onChange={(e) => setShortcutDraft((d) => ({ ...d, prompt: e.target.value }))}
+          aria-label="Shortcut prompt"
+        />
+        {shortcutDraft.prompt.trim() && (
+          <button onClick={handleSaveShortcut} className="profile-save-btn">Save shortcut</button>
+        )}
+        {shortcutMessage && <div className={`message ${shortcutMessage.ok ? 'saved' : 'error'}`}>{shortcutMessage.text}</div>}
       </div>
 
       {/* AI apps (MCP) Section */}

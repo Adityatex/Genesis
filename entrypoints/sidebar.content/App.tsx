@@ -20,6 +20,7 @@ import ChatInput from './components/ChatInput';
 import AgentControls from './components/AgentControls';
 import SaveSkillBar from './components/SaveSkillBar';
 import type { RunStatus, RunView } from '@/lib/agent/runner';
+import type { PickerItem } from '@/lib/shortcuts/shortcut';
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -115,6 +116,21 @@ export default function App() {
     setSkillOffer(null);
   };
 
+  const saveAsShortcut = async () => {
+    const goal = skillOffer?.goal ?? '';
+    const res: any = await browser.runtime.sendMessage({ action: 'SAVE_SHORTCUT', payload: { prompt: goal } }).catch((err: Error) => ({ error: err.message }));
+    closeSkillOffer();
+    if (!res?.success) {
+      chat.addBotMessage(`**Couldn't save a shortcut:** ${res?.error || 'unknown error'}`);
+      return;
+    }
+    const saved = (res.data as { name: string; prompt: string }[]).find((s) => s.prompt === goal.trim());
+    refreshPicker();
+    chat.addBotMessage(`## ⚡ Shortcut saved: /${saved?.name}
+
+Type **/${saved?.name}** to ask for this again. To make part of it fill-in, edit it in the Genesis popup and write that part as a blank in braces, like {product}.`);
+  };
+
   const saveAsWorkflow = async () => {
     // After a rescued replay, update that workflow rather than making a new one
     const name = skillOffer?.replay === 'healed' ? skillOffer.workflowName : undefined;
@@ -154,6 +170,17 @@ export default function App() {
     await agent.start(goal);
   };
 
+  // Workflows and shortcuts for the / picker, loaded when the sidebar opens and when / is typed
+  const [pickerItems, setPickerItems] = useState<PickerItem[]>([]);
+  const loadPicker = useCallback(async (): Promise<PickerItem[]> => {
+    const res: any = await browser.runtime.sendMessage({ action: 'PICKER_ITEMS' }).catch(() => null);
+    const items: PickerItem[] = res?.success ? res.data : [];
+    setPickerItems(items);
+    return items;
+  }, []);
+  const refreshPicker = useCallback(() => { loadPicker(); }, [loadPicker]);
+  useEffect(() => { if (sidebarOpen) refreshPicker(); }, [sidebarOpen, refreshPicker]);
+
   /** Replay a saved workflow in this tab (typed as /name). */
   const runWorkflow = async (name: string) => {
     setSkillOffer(null);
@@ -174,6 +201,12 @@ export default function App() {
     setChatInput,
     startAgent,
     runWorkflow,
+    // Workflows first: a workflow and a shortcut can share a name
+    findPickerItem: async (name: string) => {
+      const find = (items: PickerItem[]) => items.find((i) => i.kind === 'workflow' && i.name === name) ?? items.find((i) => i.name === name);
+      // Not in the list yet (it loads as the sidebar opens): ask again before giving up
+      return find(pickerItems) ?? find(await loadPicker());
+    },
     stopAgent: (forget) => {
       agent.stop(forget);
       if (forget) {
@@ -233,6 +266,7 @@ export default function App() {
           unrecordable={skillOffer.unrecordable}
           onSaveSkill={saveAsSkill}
           onSaveWorkflow={saveAsWorkflow}
+          onSaveShortcut={saveAsShortcut}
           onDismiss={closeSkillOffer}
         />
       )}
@@ -244,6 +278,8 @@ export default function App() {
         onChange={setChatInput}
         onSubmit={toolsApi.handleSendMessage}
         disabled={status === 'WORKING'}
+        pickerItems={pickerItems}
+        onRefreshPicker={refreshPicker}
       />
 
       <style>{`
