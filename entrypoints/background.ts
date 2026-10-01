@@ -3,7 +3,7 @@
 
 import { summarizePage, explainText, chatWithPage, planAgentStep, listModels, acceptsImages } from '@/lib/api/llmClient';
 import {
-  startRun, stopRun, resumeRun, forgetRun, getRunView, getRunRecord, listRuns, isRunning, notifyTabLoading,
+  startRun, stopRun, resumeRun, answerRun, forgetRun, getRunView, getRunRecord, listRuns, isRunning, notifyTabLoading,
   type RunnerDeps, type RunOptions, type RunView,
 } from '@/lib/agent/runner';
 import {
@@ -106,6 +106,18 @@ export default defineBackground(() => {
       return { status: tab.status, url: tab.url, title: tab.title };
     },
     navigate: async (tabId, url) => { await chrome.tabs.update(tabId, { url }); },
+    onAsk: async (tabId, view) => {
+      // The tab's sidebar asks; if the user can't see that tab (a background or
+      // scheduled task), a notification tells them. Clicking it opens the tab.
+      const tab = await chrome.tabs.get(tabId).catch(() => null);
+      const focused = tab?.active && (await chrome.windows.get(tab.windowId).catch(() => null))?.focused;
+      if (!tab || focused) return;
+      chrome.notifications.create(`genesis-task:${tabId}`, {
+        type: 'basic', iconUrl: browser.runtime.getURL('/icons/icon128.png'), requireInteraction: true,
+        title: `✋ Genesis needs your OK: ${view.goal.slice(0, 50)}`,
+        message: `It wants to ${view.asking?.action}, which can't be undone.\nClick to open the tab and answer.`,
+      });
+    },
     onRunEnded: (tabId) => releaseTab(tabId), // drop the debugger (and its banner)
     sleep: wait,
   };
@@ -249,7 +261,7 @@ export default defineBackground(() => {
         if (problem) throw new Error(`Genesis's own agent isn't set up: ${problem}`);
         const view = await executeRun(tabId, goal, {
           checkpoint: 0, split: hasExecutor(settings), screenshots: prefs.screenshots, skills: await loadSkills(skillStorage),
-          customCode: prefs.customCode,
+          customCode: prefs.customCode, confirm: prefs.confirmRisky,
         });
         return view?.message ?? 'Stopped before it started';
       },
@@ -323,7 +335,7 @@ export default defineBackground(() => {
       // Waits its turn like any task that calls the model (a workflow doesn't)
       const view = await executeRun(tab.id, goal, {
         checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
-        skills: await loadSkills(skillStorage), customCode: prefs.customCode, workflow,
+        skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, workflow,
       });
       if (!view) return { status: 'stopped', summary: 'Stopped before it started' };
       // Close it if it worked; keep it open to look at if it didn't
@@ -507,7 +519,7 @@ export default defineBackground(() => {
             const prefs = await loadPrefs();
             runAgent(tabId, goal, {
               checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
-              skills: await loadSkills(skillStorage), customCode: prefs.customCode,
+              skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky,
             });
             sendResponse({ success: true });
             break;
@@ -538,7 +550,7 @@ export default defineBackground(() => {
             const prefs = await loadPrefs();
             runAgent(tab.id, goal, {
               checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
-              skills: await loadSkills(skillStorage), customCode: prefs.customCode, workflow,
+              skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, workflow,
             });
             sendResponse({ success: true, data: { tabId: tab.id } });
             break;
@@ -549,7 +561,7 @@ export default defineBackground(() => {
             const runs = [...listRuns(), ...[...queuedViews].map(([tabId, view]) => ({ ...view, tabId }))];
             const tasks = await Promise.all(runs.map(async (r) => {
               const tab = await chrome.tabs.get(r.tabId).catch(() => null);
-              return tab ? { tabId: r.tabId, goal: r.goal, status: r.status, step: r.step, model: r.model, updatedAt: r.updatedAt, title: tab.title, background: backgroundTabs.has(r.tabId), here: r.tabId === _sender.tab?.id } : null;
+              return tab ? { tabId: r.tabId, goal: r.goal, status: r.status, step: r.step, model: r.model, updatedAt: r.updatedAt, asking: r.asking, title: tab.title, background: backgroundTabs.has(r.tabId), here: r.tabId === _sender.tab?.id } : null;
             }));
             const order = ['running', 'paused', 'queued', 'done', 'error', 'stopped'];
             sendResponse({
@@ -569,6 +581,8 @@ export default defineBackground(() => {
               if (!taskQueue.cancel(tabId)) stopRun(tabId);
             } else if (payload?.op === 'continue') {
               resumeRun(tabId);
+            } else if (payload?.op === 'allow' || payload?.op === 'deny') {
+              answerRun(tabId, payload.op === 'allow');
             }
             sendResponse({ success: true });
             break;
@@ -592,6 +606,14 @@ export default defineBackground(() => {
             // Continue a run paused at a checkpoint or because it looked stuck
             const tabId = _sender.tab?.id;
             if (tabId !== undefined) resumeRun(tabId);
+            sendResponse({ success: true });
+            break;
+          }
+
+          case 'ANSWER_AGENT': {
+            // "Allow this?": the user allows the action, or doesn't
+            const tabId = _sender.tab?.id;
+            if (tabId !== undefined) answerRun(tabId, !!payload?.allow);
             sendResponse({ success: true });
             break;
           }
@@ -777,7 +799,7 @@ export default defineBackground(() => {
             const prefs = await loadPrefs();
             runAgent(tabId, workflow.goal, {
               checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
-              skills: await loadSkills(skillStorage), customCode: prefs.customCode, workflow,
+              skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, workflow,
             });
             sendResponse({ success: true, data: { name: workflow.name, steps: workflow.steps.length } });
             break;

@@ -35,6 +35,11 @@ export interface AgentPrefs {
    * line: free tiers limit requests per minute. Workflow replays don't count.
    */
   maxParallel: number;
+  /**
+   * Stop and ask before an action that can't be undone: buying, paying,
+   * sending, deleting, moving money, booking (lib/agent/confirm.ts). On by default.
+   */
+  confirmRisky: boolean;
 }
 
 export type ScreenshotMode = 'off' | 'planning' | 'always';
@@ -50,6 +55,7 @@ export const DEFAULT_PREFS: AgentPrefs = {
   nativeTools: false,
   customCode: false,
   maxParallel: 3,
+  confirmRisky: true,
 };
 
 export const PARALLEL_CHOICES = [1, 2, 3, 5] as const;

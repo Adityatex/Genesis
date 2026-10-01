@@ -45,6 +45,12 @@ export interface Task {
   /** Scripted responses, in order. An array is several actions in one response. */
   mockPlan: (MockStep | MockStep[])[];
   knownIssue?: string;
+  /**
+   * What the agent should ask the user to allow (buying, sending, ...), in
+   * order, as the sidebar words it: 'click "Place order"'. Mock runs must ask
+   * exactly these, and nothing for a task without them.
+   */
+  asks?: string[];
 }
 
 const norm = (v: unknown) => String(v ?? '').trim().toLowerCase();
@@ -120,6 +126,7 @@ export const TASKS: Task[] = [
     category: 'forms',
     start: '/feedback.html',
     goal: 'Fill the feedback form with a rating of 4 and the comment Fast delivery, then submit it',
+    asks: ['click "Send feedback"'],
     check: r => hit(r.events, '/api/feedback', d => d.rating === '4' && norm(d.comment).includes('fast delivery')),
     mockPlan: [
       { action: 'click', target: /type="radio".*value="4"/ },
@@ -132,6 +139,7 @@ export const TASKS: Task[] = [
     category: 'navigation',
     start: '/slow-form.html',
     goal: 'Fill in 4 guests and submit the booking',
+    asks: ['click "Book now"'],
     // Exactly one booking: planning again from the page that is still waiting on
     // the server would act on a stale page (and used to double-submit)
     check: r => r.events.filter(e => e.path === '/api/slow/booking').length === 1
@@ -202,6 +210,7 @@ export const TASKS: Task[] = [
     category: 'hard',
     start: '/iframe-payment.html',
     goal: 'Fill in the cardholder name Ada Lovelace in the payment form and submit it',
+    asks: ['click "Pay $42.00"'],
     check: r => hit(r.events, '/api/pay', d => norm(d.cardholder) === 'ada lovelace'),
     mockPlan: [
       { action: 'type', target: /"Cardholder name"/, text: 'Ada Lovelace' },
@@ -213,6 +222,7 @@ export const TASKS: Task[] = [
     category: 'hard',
     start: '/iframe-cross-origin.html',
     goal: 'Fill in the cardholder name Ada Lovelace in the payment form and submit it',
+    asks: ['click "Pay $42.00"'],
     check: r => hit(r.events, '/api/pay', d => norm(d.cardholder) === 'ada lovelace'),
     mockPlan: [
       { action: 'type', target: /"Cardholder name"/, text: 'Ada Lovelace' },
@@ -259,6 +269,7 @@ export const TASKS: Task[] = [
     category: 'hard',
     start: '/editor.html',
     goal: 'Type Hello team in the message box and click Send',
+    asks: ['click "Send"'],
     check: r => hit(r.events, '/api/message', d => norm(d.text).includes('hello team')),
     mockPlan: [
       { action: 'type', target: /"Message #general"/, text: 'Hello team' },
@@ -273,6 +284,7 @@ export const TASKS: Task[] = [
     category: 'expert',
     start: '/shop/index.html',
     goal: 'Buy two pairs of Trail Runner shoes in size US 10 with express shipping, delivered to Ada Lovelace, 12 Analytical Street, London',
+    asks: ['click "Place order"'],
     check: r => hit(r.events, '/api/order', d => {
       let cart: { item?: string; size?: string; qty?: number }[] = [];
       try { cart = JSON.parse(String(d.cart)); } catch { return false; }
@@ -325,6 +337,7 @@ export const TASKS: Task[] = [
     category: 'expert',
     start: '/account/orders.html',
     goal: 'One of my orders is really late. Find it and contact support about it.',
+    asks: ['click "Send to support"'],
     check: r => hit(r.events, '/api/ticket', d => d.order === '1043' && d.reason === 'late'),
     mockPlan: [
       { action: 'click', target: /"Get help with order #1043"/ },
@@ -375,6 +388,8 @@ export const TASKS: Task[] = [
     category: 'expert',
     start: '/contact.html',
     goal: 'Fill in the contact form with the subject Refund request and the message Please refund order 1042, and make sure it actually gets sent',
+    // The first try fails on the server; sending again asks again (it may have gone through)
+    asks: ['click "Send message"', 'click "Send message"'],
     // The first submission fails with an error; the agent must notice and retry
     check: r => hit(r.events, '/api/flaky/contact', d =>
       d.accepted === true && norm(d.subject) === 'refund request' && norm(d.message).includes('refund order 1042')),

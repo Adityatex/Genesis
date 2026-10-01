@@ -6,7 +6,7 @@ import { CHECKPOINT_CHOICES, PARALLEL_CHOICES, DEFAULT_PREFS, type ScreenshotMod
 
 const TASK_ICON: Record<string, string> = { running: '⏳', queued: '🕒', paused: '⏸️', done: '✅', error: '❌', stopped: '⏹️' };
 
-interface TaskRow { tabId: number; goal: string; status: string; step: number; title?: string; model?: string; background?: boolean }
+interface TaskRow { tabId: number; goal: string; status: string; step: number; title?: string; model?: string; background?: boolean; asking?: { action: string; risk: string } }
 import type { BridgeStatus } from '@/lib/mcp/bridgeClient';
 import { formatSkill, type Skill } from '@/lib/skills/skill';
 import type { Workflow } from '@/lib/workflows/workflow';
@@ -51,6 +51,7 @@ export default function App() {
   const [nativeTools, setNativeTools] = useState(DEFAULT_PREFS.nativeTools);
   const [customCode, setCustomCode] = useState(DEFAULT_PREFS.customCode);
   const [maxParallel, setMaxParallel] = useState(DEFAULT_PREFS.maxParallel);
+  const [confirmRisky, setConfirmRisky] = useState(DEFAULT_PREFS.confirmRisky);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [mcp, setMcp] = useState<McpState>({ enabled: false, hasToken: false, status: 'off' });
   const [mcpToken, setMcpToken] = useState('');
@@ -97,6 +98,7 @@ export default function App() {
       setNativeTools(res.data.nativeTools);
       setCustomCode(res.data.customCode);
       setMaxParallel(res.data.maxParallel);
+      setConfirmRisky(res.data.confirmRisky);
     });
     loadStoredProfile().then(setProfile).catch(() => {});
     // Connection status changes while the popup is open (an AI app starts genesis-mcp)
@@ -216,7 +218,7 @@ export default function App() {
     if (change.token) setMcpToken('');
   };
 
-  const handleTask = async (tabId: number, op: 'open' | 'stop' | 'continue') => {
+  const handleTask = async (tabId: number, op: 'open' | 'stop' | 'continue' | 'allow' | 'deny') => {
     await browser.runtime.sendMessage({ action: 'TASK_CONTROL', payload: { tabId, op } }).catch(() => {});
     if (op === 'open') window.close();
   };
@@ -226,6 +228,12 @@ export default function App() {
     setMaxParallel(n);
     const res: any = await browser.runtime.sendMessage({ action: 'SAVE_PREFS', payload: { maxParallel: n } });
     if (!res?.success) setMaxParallel(previous);
+  };
+
+  const handleConfirmRiskyChange = async (on: boolean) => {
+    setConfirmRisky(on);
+    const res: any = await browser.runtime.sendMessage({ action: 'SAVE_PREFS', payload: { confirmRisky: on } });
+    if (!res?.success) setConfirmRisky(!on);
   };
 
   const handleCustomCodeChange = async (on: boolean) => {
@@ -392,7 +400,9 @@ export default function App() {
                   <strong className="task-goal" title={t.goal}>{t.goal || t.title}</strong>
                   <span className="skill-actions">
                     <button className="link-btn" onClick={() => handleTask(t.tabId, 'open')}>Open</button>
-                    {t.status === 'paused' && <button className="link-btn" onClick={() => handleTask(t.tabId, 'continue')}>Continue</button>}
+                    {t.status === 'paused' && !t.asking && <button className="link-btn" onClick={() => handleTask(t.tabId, 'continue')}>Continue</button>}
+                    {t.asking && <button className="link-btn" onClick={() => handleTask(t.tabId, 'allow')}>Allow</button>}
+                    {t.asking && <button className="link-btn" onClick={() => handleTask(t.tabId, 'deny')}>Don't</button>}
                     {['running', 'queued', 'paused'].includes(t.status) && (
                       <button className="link-btn" onClick={() => handleTask(t.tabId, 'stop')}>Stop</button>
                     )}
@@ -591,6 +601,26 @@ export default function App() {
           Tasks have no step limit. The agent pauses at this point to ask whether to keep going, so a long run doesn't
           quietly use up your API quota. It also pauses if it keeps repeating an action that changes nothing.
         </p>
+
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={confirmRisky}
+            onChange={(e) => handleConfirmRiskyChange(e.target.checked)}
+          />
+          <span>Ask before buying, sending or deleting</span>
+        </label>
+        <p className="hint">
+          Before a click that can't be undone (placing an order, paying, sending a message or post, deleting, moving
+          money, booking, submitting an application) the agent stops and asks. Tasks in background tabs send a
+          notification. Saved workflows replay without asking: you approved their steps when you saved them.
+        </p>
+        {!confirmRisky && (
+          <p className="hint advisory">
+            ⚠️ The agent will buy, send and delete without checking with you first, including when a page it reads tries
+            to talk it into something. Keep this on unless you're watching every step.
+          </p>
+        )}
 
         <label className="toggle-row" htmlFor="screenshots">
           <span>Screenshots for vision models</span>

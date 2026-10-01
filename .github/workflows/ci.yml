@@ -81,6 +81,9 @@ jobs:
       - name: Parallel background tasks respect the limit (tab group, queue, notifications)
         run: npm run eval:parallel
 
+      - name: Asks before an action that can't be undone (Don't allow, background notification, Allow)
+        run: npm run eval:confirm
+
       - name: Save as skill, then reuse it (mock)
         run: npm run eval:mock -- --task login --trials 2 --learn --timeout 45
 

@@ -2,6 +2,22 @@
 
 All runs are live: real model, real extension, real Chromium. A run passes only if the right requests reached the test server **and** the agent finished cleanly.
 
+## Asking before actions that can't be undone (2026-10-02)
+
+The agent now stops for the user's OK before buying, paying, sending, deleting, moving money, booking or applying, judged from the label of what the action would set off. The benchmark answers **Allow** the way a user would, notes what was asked, and in mock runs checks that each task asks before exactly the steps it should:
+
+| Asks before | Tasks |
+|---|---|
+| `click "Place order"` | checkout-flow |
+| `click "Pay $42.00"` | iframe-payment, iframe-cross-origin (the button is inside a cross-origin frame) |
+| `click "Send"`, `"Send feedback"`, `"Send to support"` | contenteditable-message, feedback-radio, vague-support |
+| `click "Book now"` | slow-submit |
+| `click "Send message"`, twice | flaky-submit: the first send fails on the server, and sending again asks again, since it may have gone through |
+
+The other 19 tasks never ask: logging in, signing up, searching, filters, "Add to cart" and "Proceed to checkout" go ahead. Replayed workflows don't ask (0 asks across the replay runs). All 27 mock tasks pass with it on. `npm run eval:confirm` covers what the benchmark doesn't: **Don't allow** sends nothing and the model finishes without it, and a background task shows in the task list and sends a notification until it's allowed.
+
+One label gap turned up on the way: a button written as `<input type="submit" value="Send">` reached the model with no label at all. Its text is now its label.
+
 ## Workflows: record once, replay with no model (2026-10-01)
 
 After a task finishes, "Save as workflow" keeps its exact steps: each action that worked, with its element described (`<button> "Sign in"`, the nth of any look-alikes) rather than by its ID, which changes every page load. `/name` in the sidebar, or Run in the popup, replays them with no model calls. If a step's element is gone or the action fails, the agent takes over from there with a note on what happened, and the sidebar offers to update the workflow. A replay that ends on a different page from the recording says so.
@@ -89,7 +105,14 @@ The first design had one tool per action, plus `set_plan`. On the expert tier, g
 | `qwen/qwen3.8-27b` (Groq) | login, signup-checkbox, checkout-flow, username-taken | 4/4 | batching intact: login and signup in 2 calls each |
 | `deepseek-flash` | checkout-flow, username-taken, compare-and-buy | 2/3 | JSON (same prompt order): 3/3; compare-and-buy looped to the 40-step check-in, as deepseek-flash has done with JSON before |
 
-Not tested yet: whether tools stop gpt-oss-120b's malformed JSON on `compare-and-buy`, the reason for building this. gpt-oss had used its daily Groq quota. Tools stay off by default until that run shows a win.
+**gpt-oss-120b retest (2026-10-01)**, expert tier, 1 trial each, the same build for both (commit 9063732, with structured extract, skills and workflows off):
+
+| `openai/gpt-oss-120b` (Groq) | Passed | Avg calls | Avg tokens | Prompt served from cache | Avg time |
+|---|---|---|---|---|---|
+| Native tools | 7/8 | **5.9** | **14,303** | 33% | **90.6s** |
+| JSON replies | 7/8 | 7.4 | 16,472 | 28% | 109.6s |
+
+With tools, `compare-and-buy` passes (8 calls), the task gpt-oss used to fail with malformed JSON. Each mode's one failure was a different task timing out at 5 minutes after Groq rate-limited it (tools: `username-taken`; JSON: `compare-and-buy`), so on this run the pass rates tie, while tools needed fewer calls and tokens. That is a small edge from one trial of one model, so tools stay off by default and remain the setting to try for a model that writes broken JSON.
 
 ## What changed, and a cache-friendly prompt (2026-09-29)
 

@@ -281,6 +281,11 @@ function truncate(str: string, max: number): string {
   return clean.length > max ? clean.substring(0, max) + '…' : clean;
 }
 
+/** An <input> drawn as a button, whose value is its text rather than something typed. */
+function isButtonInput(el: Element): boolean {
+  return el.tagName === 'INPUT' && /^(submit|button|reset)$/i.test(el.getAttribute('type') ?? '');
+}
+
 function getLabel(el: Element): string {
   // Try multiple strategies to get a human-readable label
   const ariaLabel = el.getAttribute('aria-label');
@@ -288,6 +293,9 @@ function getLabel(el: Element): string {
 
   const title = el.getAttribute('title');
   if (title) return truncate(title, 60);
+
+  // <input type="submit" value="Place order">: the value is the text on the button
+  if (isButtonInput(el) && (el as HTMLInputElement).value) return truncate((el as HTMLInputElement).value, 60);
 
   const innerText = (el as HTMLElement).innerText;
   if (innerText && innerText.trim().length > 0 && innerText.trim().length < 80) {
@@ -358,7 +366,8 @@ function describe(el: Element, id: number, frame: string | undefined): SnapshotE
   const tag = el.tagName.toLowerCase();
   const input = el as HTMLInputElement;
   // Editors have no .value; show their text so the model can see what's typed
-  const value = ((el as HTMLElement).isContentEditable ? (el as HTMLElement).innerText : input.value) || undefined;
+  const value = isButtonInput(el) ? undefined // its text, already the label
+    : ((el as HTMLElement).isContentEditable ? (el as HTMLElement).innerText : input.value) || undefined;
   const href = tag === 'a' ? (el as HTMLAnchorElement).href : undefined;
 
   return {
@@ -458,6 +467,32 @@ export function describeElement(id: number): ElementKey | null {
   const key = elementKey(target);
   const same = lastElements.filter((el) => elementKey(el) === key);
   return { key, nth: same.indexOf(target) };
+}
+
+/**
+ * What an action would set off, described like elementKey, so the agent can
+ * ask before anything that can't be undone (lib/agent/confirm.ts): the clicked
+ * element, or for Enter the focused button, or the button that submits the
+ * focused field's form. Null if it can't tell.
+ */
+export function commitTarget(action: { action: string; elementId?: number }): string | null {
+  const listed = action.elementId !== undefined ? lastElements.find((el) => el.id === action.elementId) : undefined;
+  if (action.action === 'click') return listed ? elementKey(listed) : null;
+  // press_key goes to the given element, else the focused one
+  const el = (action.elementId !== undefined ? getElementById(action.elementId) : null) ?? deepActiveElement();
+  if (!el) return null;
+  if (el.tagName !== 'INPUT') return listed ? elementKey(listed) : elementKey(describe(el, 0, undefined));
+  // Enter in a field submits its form, through the form's first submit button
+  const form = (el as HTMLInputElement).form;
+  const submit = form?.querySelector('button:not([type]), button[type="submit"], input[type="submit"], input[type="image"]');
+  return submit ? elementKey(describe(submit, 0, undefined)) : null;
+}
+
+/** The focused element, inside shadow roots too. */
+function deepActiveElement(): Element | null {
+  let el = document.activeElement;
+  while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
+  return el && el !== document.body ? el : null;
 }
 
 /**

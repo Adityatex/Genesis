@@ -6,7 +6,7 @@ import App from './App';
 import './sidebar.css';
 import { createPageSnapshot } from '@/lib/agent/frames';
 import { executeAction } from '@/lib/agent/actionExecutor';
-import { viewportMarks, describeElement, resolveElement } from '@/lib/agent/domSnapshot';
+import { viewportMarks, describeElement, resolveElement, commitTarget } from '@/lib/agent/domSnapshot';
 
 export default defineContentScript({
   matches: ['<all_urls>'],
@@ -51,6 +51,10 @@ export default defineContentScript({
         case 'AGENT_DESCRIBE':
           // Workflows: an element's lasting description, recorded before acting on it
           sendResponse(describeElement(Number(message.id)));
+          return;
+        case 'AGENT_COMMIT_TARGET':
+          // What a click or Enter would set off, to ask the user first if it can't be undone
+          sendResponse(commitTarget(message.payload ?? {}));
           return;
         case 'AGENT_RESOLVE':
           // Workflows: find a recorded element again (after AGENT_SNAPSHOT)

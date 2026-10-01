@@ -1,6 +1,7 @@
 // entrypoints/sidebar.content/components/TasksChip.tsx
 // "2 tasks running elsewhere": the agent's tasks in other tabs (background
-// tasks, other sidebars, schedules), with Open / Stop / Continue.
+// tasks, other sidebars, schedules), with Open / Stop / Continue, and Allow /
+// Don't when one asks before doing something that can't be undone.
 import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronUp, Layers } from 'lucide-react';
 
@@ -13,6 +14,8 @@ export interface TaskInfo {
   background?: boolean;
   /** The tab asking: its task shows in its own chat. */
   here?: boolean;
+  /** Waiting for the user to allow this (see RunView.asking). */
+  asking?: { action: string; risk: string };
 }
 
 const ICON: Record<string, string> = { running: '⏳', queued: '🕒', paused: '⏸️', done: '✅', error: '❌', stopped: '⏹️' };
@@ -37,7 +40,7 @@ export default function TasksChip() {
   const active = others.filter((t) => ['running', 'queued', 'paused'].includes(t.status));
   if (others.length === 0) return null;
 
-  const control = (tabId: number, op: 'open' | 'stop' | 'continue') =>
+  const control = (tabId: number, op: 'open' | 'stop' | 'continue' | 'allow' | 'deny') =>
     browser.runtime.sendMessage({ action: 'TASK_CONTROL', payload: { tabId, op } }).catch(() => {});
 
   return (
@@ -55,10 +58,12 @@ export default function TasksChip() {
             <li key={t.tabId} className="flex items-center gap-1.5">
               <span title={t.status}>{ICON[t.status] ?? '•'}</span>
               <span className="flex-1 truncate text-slate-300" title={t.goal}>
-                {t.goal || t.title}{t.status === 'running' ? ` · step ${t.step}` : t.status === 'queued' ? ' · waiting' : ''}
+                {t.goal || t.title}{t.status === 'running' ? ` · step ${t.step}` : t.status === 'queued' ? ' · waiting' : t.asking ? ` · wants to ${t.asking.action}` : ''}
               </span>
               <button onClick={() => control(t.tabId, 'open')} className="text-slate-500 hover:text-blue-400">Open</button>
-              {t.status === 'paused' && <button onClick={() => control(t.tabId, 'continue')} className="text-slate-500 hover:text-blue-400">Continue</button>}
+              {t.status === 'paused' && !t.asking && <button onClick={() => control(t.tabId, 'continue')} className="text-slate-500 hover:text-blue-400">Continue</button>}
+              {t.asking && <button onClick={() => control(t.tabId, 'allow')} className="text-amber-400 hover:text-amber-300">Allow</button>}
+              {t.asking && <button onClick={() => control(t.tabId, 'deny')} className="text-slate-500 hover:text-red-400">Don't</button>}
               {['running', 'queued', 'paused'].includes(t.status) && (
                 <button onClick={() => control(t.tabId, 'stop')} className="text-slate-500 hover:text-red-400">Stop</button>
               )}

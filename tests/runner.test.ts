@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { startRun, stopRun, resumeRun, getRunView, notifyTabLoading, changesSection, textChanges, PLANNER_EVERY, type RunnerDeps, type RunView, type TabInfo } from '@/lib/agent/runner';
+import { startRun, stopRun, resumeRun, answerRun, getRunView, notifyTabLoading, changesSection, textChanges, PLANNER_EVERY, type RunnerDeps, type RunView, type TabInfo } from '@/lib/agent/runner';
 import { promptHistory, PROMPT_RECENT_STEPS } from '@/lib/agent/history';
 
 /**
@@ -9,6 +9,8 @@ import { promptHistory, PROMPT_RECENT_STEPS } from '@/lib/agent/history';
 function fakeDeps(actions: string[], opts: {
   onExecute?: (tab: TabInfo, action: any) => unknown;
   onPause?: (view: RunView) => void;
+  /** What each element would set off (AGENT_COMMIT_TARGET), by element ID. */
+  targets?: Record<number, string>;
 } = {}) {
   const tab: TabInfo = { status: 'complete', url: 'https://shop.test/', title: 'Shop' };
   const prompts: string[][] = [];
@@ -21,6 +23,7 @@ function fakeDeps(actions: string[], opts: {
     send: vi.fn(async (_tabId, message: any) => {
       if (message.action === 'AGENT_SNAPSHOT') return { text: `PAGE: ${tab.title}` };
       if (message.action === 'AGENT_EXECUTE') return opts.onExecute ? opts.onExecute(tab, message.payload) : `✅ ran ${message.payload.action}`;
+      if (message.action === 'AGENT_COMMIT_TARGET') return opts.targets?.[message.payload.elementId] ?? null;
       if (message.action === 'AGENT_UPDATE' && message.payload.status === 'paused') opts.onPause?.(message.payload);
       return { ok: true }; // AGENT_PING, AGENT_UPDATE
     }),
@@ -514,5 +517,75 @@ describe('missing pages', () => {
       'navigate https://shop.test/cart → ❌ landed on "Page not found" (https://shop.test/cart): that page doesn\'t exist. Don\'t guess URLs; use links you have seen.',
       '(note from Genesis) 1 more action not run: the page changed, so they may not fit it any more',
     ]);
+  });
+});
+
+describe('asking before actions that cannot be undone', () => {
+  const targets = { 7: '<button> type="submit" "Place order"', 8: '<button> "Add to cart"' };
+  const executed = (deps: RunnerDeps) =>
+    (deps.send as any).mock.calls.filter(([, m]: any) => m.action === 'AGENT_EXECUTE').map(([, m]: any) => m.payload.elementId);
+
+  it('asks before placing an order, and does it once allowed', async () => {
+    const asked: RunView[] = [];
+    const { deps, prompts } = fakeDeps(['{"actions":[{"action":"click","elementId":8},{"action":"click","elementId":7}]}', '{"action":"done","summary":"Ordered"}'], {
+      targets,
+      onPause: (view) => { asked.push(view); answerRun(30, true); },
+    });
+    const result = await startRun(deps, 30, 'Buy it', { confirm: true });
+    expect(result.status).toBe('done');
+    expect(asked).toHaveLength(1); // not for "Add to cart"
+    expect(asked[0].asking).toEqual({ action: 'click "Place order"', risk: 'a purchase' });
+    expect(asked[0].message).toMatch(/^## ✋ Allow this\?\n\nThe agent wants to \*\*click "Place order"\*\*/);
+    expect(executed(deps)).toEqual([8, 7]);
+    expect(prompts[1][1]).toBe('click [7] → ✅ ran click (the user allowed it)');
+    expect(result.asking).toBeUndefined();
+  });
+
+  it("doesn't do it when the user says no, and tells the model to finish without it", async () => {
+    const { deps, prompts } = fakeDeps(['{"actions":[{"action":"click","elementId":7},{"action":"click","elementId":8}]}', '{"action":"done","summary":"Left the order for you"}'], {
+      targets,
+      onPause: () => answerRun(31, false),
+    });
+    const result = await startRun(deps, 31, 'Buy it', { confirm: true });
+    expect(result.status).toBe('done');
+    expect(executed(deps)).toEqual([]); // nor the rest of the batch
+    expect(prompts[1][0]).toMatch(/^click \[7\] → ⛔ not run: the user didn't allow it\. Don't do it, or anything else with the same effect; finish with "done"/);
+  });
+
+  it('stops when the user stops instead of answering', async () => {
+    const { deps } = fakeDeps(['{"action":"click","elementId":7}'], { targets, onPause: () => stopRun(32) });
+    const result = await startRun(deps, 32, 'Buy it', { confirm: true });
+    expect(result.status).toBe('stopped');
+    expect(executed(deps)).toEqual([]);
+  });
+
+  it("Continue (for checkpoints) doesn't count as allowing it", async () => {
+    let answered = false;
+    const { deps } = fakeDeps(['{"action":"click","elementId":7}', '{"action":"done","summary":"ok"}'], {
+      targets,
+      onPause: () => {
+        resumeRun(33); // ignored: only Allow / Don't allow answer this
+        expect(getRunView(33)?.status).toBe('paused');
+        answered = true;
+        answerRun(33, true);
+      },
+    });
+    await startRun(deps, 33, 'Buy it', { confirm: true });
+    expect(answered).toBe(true);
+    expect(executed(deps)).toEqual([7]);
+  });
+
+  it('tells the background (for a notification) when it asks', async () => {
+    const { deps } = fakeDeps(['{"action":"click","elementId":7}', '{"action":"done","summary":"ok"}'], { targets, onPause: () => answerRun(34, true) });
+    deps.onAsk = vi.fn();
+    await startRun(deps, 34, 'Buy it', { confirm: true });
+    expect(deps.onAsk).toHaveBeenCalledWith(34, expect.objectContaining({ asking: { action: 'click "Place order"', risk: 'a purchase' } }));
+  });
+
+  it('never asks with the setting off', async () => {
+    const { deps } = fakeDeps(['{"action":"click","elementId":7}', '{"action":"done","summary":"ok"}'], { targets, onPause: () => stopRun(35) });
+    const result = await startRun(deps, 35, 'Buy it', { confirm: false });
+    expect(result.status).toBe('done');
+    expect(executed(deps)).toEqual([7]);
   });
 });

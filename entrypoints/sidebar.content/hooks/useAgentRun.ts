@@ -39,10 +39,15 @@ export function useAgentRun(onUpdate: (view: RunView) => void) {
     browser.runtime.sendMessage({ action: 'RESUME_AGENT' }).catch(() => {});
   };
 
+  /** Answer "Allow this?": let the agent do something that can't be undone, or not. */
+  const answer = (allow: boolean): void => {
+    browser.runtime.sendMessage({ action: 'ANSWER_AGENT', payload: { allow } }).catch(() => {});
+  };
+
   /** Stop after the current step; `forget` also clears it (e.g. "Clear all"). */
   const stop = (forget = false): void => {
     browser.runtime.sendMessage({ action: 'STOP_AGENT', payload: { forget } }).catch(() => {});
   };
 
-  return { start, stop, resume };
+  return { start, stop, resume, answer };
 }

@@ -10,7 +10,7 @@ Open-source Brave/Chrome extension (Manifest V3) that injects a floating AI-powe
 
 | Feature | Description |
 |---|---|
-| 🤖 **Autonomous Agent** | DOM snapshot → LLM planner → action executor with real (trusted) mouse and keyboard input, resumes across navigations. Keeps a visible plan and sends several actions per model call (a whole form in one call instead of one call per field). Collects data from lists, tables and each item's own page in one step with `extract`, without the model writing code. For what that can't reach, an opt-in setting lets the model run its own read-only code: in an isolated context, with the network functions removed and risky code refused. No step limit: it checks in every 50 steps (configurable) and pauses if it gets stuck |
+| 🤖 **Autonomous Agent** | DOM snapshot → LLM planner → action executor with real (trusted) mouse and keyboard input, resumes across navigations. Keeps a visible plan and sends several actions per model call (a whole form in one call instead of one call per field). Collects data from lists, tables and each item's own page in one step with `extract`, without the model writing code. For what that can't reach, an opt-in setting lets the model run its own read-only code: in an isolated context, with the network functions removed and risky code refused. No step limit: it checks in every 50 steps (configurable) and pauses if it gets stuck. Before anything that can't be undone (buying, paying, sending, deleting) it stops and asks you |
 | 📝 **Text Extraction** | Extract all visible text from any webpage using TreeWalker API |
 | 🔍 **Element Detection** | Detect all interactive elements (inputs, buttons, dropdowns, etc.) |
 | ✏️ **Trustworthy Form Auto-Fill** | Fill forms with *your own* profile data (React/Angular compatible). Edit it in the popup — stored only in `chrome.storage.local`. No exam auto-solving. |
@@ -176,6 +176,12 @@ In the popup, schedule any workflow or shortcut to run every hour, day or week. 
 ## ⧉ Parallel tasks
 
 The **Run in background** button next to Send starts a task (or a `/workflow` or `/shortcut`) in a new tab beside yours, in a purple **Genesis** tab group, and leaves you where you are. A notification says when it's done; click it to see the tab. At most 3 tasks use the model at once (set in the popup): more wait in line, since each running task sends requests and free tiers limit them per minute. Workflow replays don't count. The popup's Tasks list, and the sidebar's "running elsewhere" line, show every task with Open, Stop and Continue.
+
+## ✋ Asks before it buys, sends or deletes
+
+Before a click (or Enter in a form) that can't be undone, the agent stops and asks: placing an order, paying, sending a message or post, deleting something, moving money, booking, submitting an application. The sidebar shows what it wants to do with **Allow** and **Don't allow**. If you don't allow it, the agent skips it and finishes by telling you what's left for you to do. A task in a background tab sends a notification, and the Tasks lists can answer too. Steps that can be undone on the way ("Add to cart", "Proceed to checkout") don't ask. The check reads the label of what the action would set off, so pressing Enter in a card field asks before the form's "Pay" button.
+
+Saved workflows replay without asking, since you approved their steps when you saved them (a scheduled one has to run unattended). It's on by default, under **Ask before buying, sending or deleting** in the popup. `npm run eval:confirm` checks it end to end, and the mock benchmark checks that each task asks before exactly the steps it should and nowhere else.
 
 ## 🤝 Use it from Claude Code, Claude Desktop or Codex (MCP)
 

@@ -14,11 +14,12 @@ import { parseAgentResponse } from '@/lib/agent/parseAction';
 import type { ScreenshotMode } from '@/lib/agent/prefs';
 import { pickSkills, slugify, type Skill } from '@/lib/skills/skill';
 import { checkCode, wrapCode, formatCodeResult } from '@/lib/agent/customCode';
+import { canCommit, riskOf, labelOf, type Risk } from '@/lib/agent/confirm';
 import { isReplayed, describeStep, type Workflow, type WorkflowStep } from '@/lib/workflows/workflow';
 import type { ElementKey } from '@/lib/agent/domSnapshot';
 import { MAX_INVALID_RESPONSES, REPEAT_PAUSE, REPEAT_WARN, describeAction, formatHistory } from '@/lib/agent/history';
 
-/** "paused": waiting for the user to continue or stop (checkpoint, or the agent looks stuck). */
+/** "paused": waiting for the user (checkpoint, the agent looks stuck, or an action needs their OK). */
 export type RunStatus = 'queued' | 'running' | 'paused' | 'done' | 'error' | 'stopped';
 
 /** What the sidebar shows; pushed on every change and fetched on page load. */
@@ -41,6 +42,8 @@ export interface RunView {
   workflowName?: string;
   /** Why this run can't be saved as a workflow, if it can't. */
   unrecordable?: string;
+  /** Set while the run waits for the user to allow an action that can't be undone. */
+  asking?: { action: string; risk: Risk };
 }
 
 export interface TabInfo {
@@ -78,6 +81,8 @@ export interface RunnerDeps {
   send(tabId: number, message: unknown, timeoutMs: number): Promise<any>;
   getTab(tabId: number): Promise<TabInfo>;
   navigate(tabId: number, url: string): Promise<void>;
+  /** A run is waiting for the user to allow an action (e.g. tell them if the tab is in the background). */
+  onAsk?(tabId: number, view: RunView): void;
   /** Called once when a run ends, however it ends (e.g. to release the debugger). */
   onRunEnded(tabId: number): Promise<void> | void;
   sleep(ms: number): Promise<void>;
@@ -95,8 +100,10 @@ interface Run extends RunView {
   repeats: Map<string, number>;
   /** Pause every this many steps to ask the user (0 = never). */
   checkpoint: number;
-  /** Set while paused: true = continue, false = stop. */
-  decide?: (keepGoing: boolean) => void;
+  /** Set while paused: how the user answered. */
+  decide?: (answer: Answer) => void;
+  /** Ask before actions that can't be undone (lib/agent/confirm.ts). */
+  confirm: boolean;
   /** Why the run stopped, when it wasn't the user's request. */
   stopReason?: string;
   /** A fast executor model is set up (see ModelRole). */
@@ -140,7 +147,16 @@ export interface RunOptions {
   customCode?: boolean;
   /** Replay this saved workflow (no model calls), letting the agent take over if a step fails. */
   workflow?: Workflow;
+  /**
+   * Ask the user before actions that can't be undone: buying, paying, sending,
+   * deleting... (lib/agent/confirm.ts). A workflow's own steps don't ask: the
+   * user saved them, and a scheduled one must run unattended.
+   */
+  confirm?: boolean;
 }
+
+/** A paused run's answer: carry on (allowing the action, if one was asked about), don't allow it, or stop. */
+type Answer = 'continue' | 'decline' | 'stop';
 
 /** Most skills listed by name for use_skill (the rest are too unlikely to matter). */
 const MAX_LISTED_SKILLS = 20;
@@ -302,8 +318,8 @@ const PAUSE_TIMEOUT_MS = 10 * 60_000;
 const runs = new Map<number, Run>();
 
 function view(run: Run): RunView {
-  const { goal, status, message, loading, step, plan, model, updatedAt, replay, unrecordable } = run;
-  return { goal, status, message, loading, step, plan, model, updatedAt, replay, unrecordable, workflowName: run.workflow?.name };
+  const { goal, status, message, loading, step, plan, model, updatedAt, replay, unrecordable, asking } = run;
+  return { goal, status, message, loading, step, plan, model, updatedAt, replay, unrecordable, asking, workflowName: run.workflow?.name };
 }
 
 export function getRunView(tabId: number): RunView | null {
@@ -362,12 +378,19 @@ export function stopRun(tabId: number): void {
   const run = runs.get(tabId);
   if (!run || !isRunning(tabId)) return;
   run.stopRequested = true;
-  run.decide?.(false);
+  run.decide?.('stop');
 }
 
-/** Let a paused run carry on. */
+/** Let a paused run carry on. Not an answer to "Allow this?": that takes answerRun. */
 export function resumeRun(tabId: number): void {
-  runs.get(tabId)?.decide?.(true);
+  const run = runs.get(tabId);
+  if (!run?.asking) run?.decide?.('continue');
+}
+
+/** Answer a run that asked to do something that can't be undone. */
+export function answerRun(tabId: number, allow: boolean): void {
+  const run = runs.get(tabId);
+  if (run?.asking) run.decide?.(allow ? 'continue' : 'decline');
 }
 
 /** Forget a tab's run (tab closed, or the user cleared the chat). */
@@ -588,22 +611,45 @@ export function hashText(text: string): string {
 }
 
 /**
- * Pause and wait for the user. Resolves true to continue; false if they stop
- * or don't answer within PAUSE_TIMEOUT_MS.
+ * Pause with this message and wait for the user. No answer within
+ * PAUSE_TIMEOUT_MS stops the run.
  */
-async function pause(deps: RunnerDeps, run: Run, reason: string): Promise<boolean> {
+async function waitForUser(deps: RunnerDeps, run: Run, message: string): Promise<Answer> {
   run.status = 'paused';
-  const decision = new Promise<boolean>((resolve) => { run.decide = resolve; });
-  publish(deps, run, `## ⏸️ Paused\n\n${reason}\n\n**Steps so far:**\n${formatHistory(run.history) || 'None'}`, false);
-  const keepGoing = await Promise.race([decision, deps.sleep(PAUSE_TIMEOUT_MS).then(() => null)]);
+  const decision = new Promise<Answer>((resolve) => { run.decide = resolve; });
+  publish(deps, run, message, false);
+  if (run.asking) deps.onAsk?.(run.tabId, view(run));
+  const answer = await Promise.race([decision, deps.sleep(PAUSE_TIMEOUT_MS).then(() => null)]);
   run.decide = undefined;
-  if (keepGoing) {
-    run.status = 'running';
-    return true;
+  if (answer === null) run.stopReason = 'Paused for 10 minutes without an answer, so the agent stopped.';
+  if (answer === null || answer === 'stop') {
+    run.stopRequested = true;
+    return 'stop';
   }
-  if (keepGoing === null) run.stopReason = 'Paused for 10 minutes without an answer, so the agent stopped.';
-  run.stopRequested = true;
-  return false;
+  run.status = 'running';
+  return answer;
+}
+
+/** Pause (checkpoint, or stuck) until the user continues (true) or stops. */
+async function pause(deps: RunnerDeps, run: Run, reason: string): Promise<boolean> {
+  return await waitForUser(deps, run, `## ⏸️ Paused\n\n${reason}\n\n**Steps so far:**\n${formatHistory(run.history) || 'None'}`) !== 'stop';
+}
+
+/**
+ * Before a click or Enter: if it would set off something that can't be undone,
+ * ask the user. 'safe' if there was nothing to ask, else their answer.
+ */
+async function askFirst(deps: RunnerDeps, run: Run, action: AgentAction): Promise<Answer | 'safe'> {
+  if (!run.confirm || !canCommit(action)) return 'safe';
+  const target = await deps.send(run.tabId, { action: 'AGENT_COMMIT_TARGET', payload: action }, 2_000).catch(() => null);
+  const risk = riskOf(action, typeof target === 'string' ? target : null);
+  if (!risk) return 'safe';
+  const what = `${action.action === 'click' ? 'click' : 'press Enter to submit'} "${labelOf(target)}"`;
+  run.asking = { action: what, risk };
+  const answer = await waitForUser(deps, run, `## ✋ Allow this?\n\nThe agent wants to **${what}**. That looks like ${risk}, which can't be undone, so Genesis asks first.\n\n`
+    + `**Allow** to let it, or **Don't allow** and it will finish without it.\n\n**Steps so far:**\n${formatHistory(run.history) || 'None'}`);
+  run.asking = undefined;
+  return answer;
 }
 
 async function loop(deps: RunnerDeps, run: Run): Promise<void> {
@@ -745,10 +791,20 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
         continue;
       }
       publish(deps, run, progressMessage(run, `*Step ${run.step}: ${desc}*`), true);
+      // Buying, paying, sending, deleting...: the user says yes first
+      const asked = await askFirst(deps, run, action);
+      if (asked === 'stop') break;
+      if (asked === 'decline') {
+        run.needPlanner = true;
+        run.history.push(`${desc} → ⛔ not run: the user didn't allow it. Don't do it, or anything else with the same effect; finish with "done" and say what is left for the user to do.`);
+        break; // the rest of the batch counted on it
+      }
+      if (asked === 'continue') publish(deps, run, progressMessage(run, `*Step ${run.step}: ${desc}*`), true);
       // Workflows: describe the element before acting, while its ID is still valid
       const target = isReplayed(action) && action.elementId !== undefined ? await describeTarget(deps, run, action.elementId) : undefined;
       const { result, pageChanged } = await runAction(deps, tabId, action, () => run.loads);
-      run.history.push(`${desc} → ${result}${i === 0 ? repeatWarning : ''}`);
+      const allowed = asked === 'continue' ? ' (the user allowed it)' : '';
+      run.history.push(`${desc} → ${result}${allowed}${i === 0 ? repeatWarning : ''}`);
       if (isReplayed(action) && !result.startsWith('❌')) record(run, action, target, page.url);
       run.lastPage = await deps.getTab(tabId).catch(() => run.lastPage);
 
@@ -782,7 +838,7 @@ export async function startRun(deps: RunnerDeps, tabId: number, goal: string, op
     stopRequested: false, loads: 0, visited: new Map(), repeats: new Map(), checkpoint: Math.max(0, options.checkpoint ?? 0),
     split: !!options.split, needPlanner: true, routineCalls: 0, roleModels: {},
     screenshots: options.screenshots ?? 'off', noVision: new Set(),
-    skills: options.skills ?? [], loadedSkills: new Set(), customCode: !!options.customCode,
+    skills: options.skills ?? [], loadedSkills: new Set(), customCode: !!options.customCode, confirm: !!options.confirm,
     trace: [], workflow: options.workflow, replayIndex: 0, ...(options.workflow ? { replay: 'replaying' as const } : {}),
   };
   runs.set(tabId, run);

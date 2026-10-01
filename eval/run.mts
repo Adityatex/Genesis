@@ -31,7 +31,9 @@ import { PREFS_KEY } from '../lib/agent/prefs.ts';
 declare const chrome: any;
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const EXTENSION_DIR = path.join(ROOT, '.output', 'chrome-mv3');
+// --extension <folder>: test a copy of a build, e.g. while the code keeps changing
+const extensionArg = process.argv.indexOf('--extension');
+const EXTENSION_DIR = extensionArg > 0 ? path.resolve(process.argv[extensionArg + 1]) : path.join(ROOT, '.output', 'chrome-mv3');
 const RESULTS_DIR = path.join(ROOT, 'eval', 'results');
 // Final and paused messages start with one of these headings. A pause (checkpoint,
 // or the agent looks stuck) ends the task: nobody is there to press Continue.
@@ -73,6 +75,7 @@ const { values: args } = parseArgs({
     'use-skills': { type: 'boolean', default: false },
     // Save each run's full final message (every step) under eval/results/transcripts
     transcripts: { type: 'boolean', default: false },
+    extension: { type: 'string' },
     // Turn on run_code (the model's own read-only page code); mock plans then use it too
     'custom-code': { type: 'boolean', default: false },
     tpm: { type: 'string' },
@@ -136,6 +139,8 @@ interface RunResult {
   finalUrl: string;
   summary: string;
   knownIssue?: string;
+  /** What the agent asked to be allowed to do (lib/agent/confirm.ts); the eval allows it. */
+  asked: string[];
   /** --learn: the skill this run saved, or the one it started with. */
   skill?: string;
   /** --learn: model calls spent writing the skill (not counted in llmCalls). */
@@ -324,7 +329,7 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
   const result: RunResult = {
     id: task.id, category: task.category, trial, pass: false, outcome: 'timeout',
     llmCalls: 0, rateLimitHits: 0, promptTokens: 0, cachedTokens: 0, completionTokens: 0, durationMs: 0,
-    finalUrl: '', summary: '', knownIssue: task.knownIssue,
+    finalUrl: '', summary: '', knownIssue: task.knownIssue, asked: [],
     ...(installed.length ? { skill: String((installed[0] as any)?.name ?? '') } : {}),
   };
 
@@ -407,6 +412,18 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
     while (Date.now() - started < TIMEOUT_MS) {
       finalText = await readOutcome(page);
       if (finalText) break;
+      // "Allow this?": allow it, as the user would, and note what was asked
+      const asking = page.locator('[data-asking]');
+      if (await asking.count().catch(() => 0)) {
+        const what = await asking.getAttribute('data-asking').catch(() => null);
+        if (what) {
+          result.asked.push(what);
+          log(`asked: ${what}`);
+          await page.getByRole('button', { name: 'Allow', exact: true }).click({ timeout: 5_000 }).catch(() => {});
+          await asking.waitFor({ state: 'detached', timeout: 10_000 }).catch(() => {});
+        }
+        continue;
+      }
       await page.waitForTimeout(500).catch(() => {});
     }
     await page.waitForTimeout(1000).catch(() => {}); // let trailing fetches land
@@ -441,6 +458,12 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
     // --learn: the first passing run of a task presses "Save as skill", as a user would
     const passed = result.outcome === 'done'
       && task.check({ events: [...server.events], summary: result.summary, finalUrl: result.finalUrl });
+    // Mock runs ask exactly before the task's irreversible steps: never too little, never nagging.
+    // A workflow replays without asking: the user approved its steps when saving it.
+    const asks = workflow ? [] : task.asks ?? [];
+    if (MODE === 'mock' && JSON.stringify(result.asked) !== JSON.stringify(asks)) {
+      throw new Error(`asked to allow [${result.asked.join('; ')}], expected [${asks.join('; ')}]`);
+    }
     // A clean replay makes no model calls; in mock mode anything else is a bug (the page doesn't change)
     if (MODE === 'mock' && workflow && result.llmCalls > 0) {
       throw new Error(`the workflow replay called the model ${result.llmCalls} times; it should replay with none`);
@@ -606,7 +629,7 @@ async function main() {
         }
         const r = await runTask(task, trial, server, apiKey);
         results.push(r);
-        console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${task.id}${TRIALS > 1 ? ` #${trial}` : ''}  ${r.outcome}, ${r.llmCalls} calls${r.rateLimitHits ? ` (${r.rateLimitHits}×429)` : ''}, ${(r.durationMs / 1000).toFixed(1)}s${r.skill ? (r.skillCalls ? `, saved skill "${r.skill}"` : `, with skill "${r.skill}"`) : ''}${r.pass ? '' : `  — ${r.summary.slice(0, 100).replace(/\n/g, ' ')}`}`);
+        console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${task.id}${TRIALS > 1 ? ` #${trial}` : ''}  ${r.outcome}, ${r.llmCalls} calls${r.rateLimitHits ? ` (${r.rateLimitHits}×429)` : ''}, ${(r.durationMs / 1000).toFixed(1)}s${r.skill ? (r.skillCalls ? `, saved skill "${r.skill}"` : `, with skill "${r.skill}"`) : ''}${r.asked.length ? `, asked to ${r.asked.join(', ')}` : ''}${r.pass ? '' : `  —${r.summary.slice(0, 100).replace(/\n/g, ' ')}`}`);
       }
     }
   } finally {

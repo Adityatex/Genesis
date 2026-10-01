@@ -97,12 +97,14 @@ export default function App() {
   // in one chat message per run; after a navigation the new page picks it up.
   const agentMessageId = useRef<string | null>(null);
   const [agentStatus, setAgentStatus] = useState<RunStatus | null>(null);
+  const [agentAsking, setAgentAsking] = useState<RunView['asking']>(undefined);
   // The finished run offered to keep (as a skill or workflow), and the ones already handled (by update time)
   const [skillOffer, setSkillOffer] = useState<RunView | null>(null);
   const skillHandled = useRef(new Set<number>());
   const agent = useAgentRun((view) => {
     setSidebarOpen(true);
     setAgentStatus(view.status);
+    setAgentAsking(view.asking);
     // A workflow that replayed cleanly is already saved: nothing to offer
     const offer = view.status === 'done' && view.replay !== 'replayed' && !skillHandled.current.has(view.updatedAt);
     setSkillOffer(offer ? view : null);
@@ -273,7 +275,7 @@ Type **/${saved?.name}** to ask for this again. To make part of it fill-in, edit
       )}
       <TasksChip />
       {(agentStatus === 'running' || agentStatus === 'paused' || agentStatus === 'queued') && (
-        <AgentControls paused={agentStatus === 'paused'} queued={agentStatus === 'queued'} onContinue={agent.resume} onStop={() => agent.stop()} />
+        <AgentControls paused={agentStatus === 'paused'} queued={agentStatus === 'queued'} asking={agentAsking} onContinue={agent.resume} onAnswer={agent.answer} onStop={() => agent.stop()} />
       )}
       <ChatInput
         value={chatInput}
