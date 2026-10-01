@@ -195,4 +195,18 @@ describe('what the extension does for the bridge', () => {
     const { handle } = fakeDeps({ screenshot: vi.fn(async () => null) });
     await expect(handle('page_screenshot', {})).rejects.toThrow("isn't visible");
   });
+  it("keeps AI apps off the user's blocked sites, and off unlisted ones when there's an allow list", async () => {
+    const rules = { blocked: ['mybank.com'], allowed: [] as string[] };
+    const { deps, handle } = fakeDeps({ siteRules: vi.fn(async () => rules) });
+    await expect(handle('tab_open', { url: 'https://login.mybank.com/' })).rejects.toThrow("mybank.com is on the user's block list");
+    expect(deps.createTab).not.toHaveBeenCalled();
+    const acted = String(await handle('page_act', { actions: [{ action: 'navigate', url: 'https://mybank.com/pay' }, { action: 'click', elementId: 1 }] }));
+    expect(acted).toContain("navigate https://mybank.com/pay → ❌ not run: mybank.com is on the user's block list");
+    expect(acted).not.toContain('click'); // the batch stops there
+    expect(deps.navigate).not.toHaveBeenCalled();
+    rules.allowed = ['other.test'];
+    await expect(handle('page_snapshot', {})).rejects.toThrow("shop.test isn't on the user's list of allowed sites");
+    rules.allowed = ['shop.test'];
+    expect(String(await handle('page_snapshot', {}))).toContain('PAGE: Shop');
+  });
 });

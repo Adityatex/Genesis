@@ -16,6 +16,7 @@ import { pickSkills, slugify, type Skill } from '@/lib/skills/skill';
 import { checkCode, wrapCode, formatCodeResult } from '@/lib/agent/customCode';
 import { canCommit, riskOf, labelOf, type Risk } from '@/lib/agent/confirm';
 import { criticStep, siteOf, type CriticStep, type Verdict } from '@/lib/agent/critic';
+import { urlStatus, type SiteRules } from '@/lib/agent/sites';
 import { isReplayed, describeStep, type Workflow, type WorkflowStep } from '@/lib/workflows/workflow';
 import type { ElementKey } from '@/lib/agent/domSnapshot';
 import { MAX_INVALID_RESPONSES, REPEAT_PAUSE, REPEAT_WARN, describeAction, formatHistory } from '@/lib/agent/history';
@@ -48,7 +49,7 @@ export interface RunView {
    * undone (its risk), or one the safety check doesn't think fits the task
    * ('off-task', with the check's reason).
    */
-  asking?: { action: string; risk: Risk | 'off-task'; reason?: string };
+  asking?: { action: string; risk: Risk | 'off-task' | 'unlisted'; reason?: string };
 }
 
 export interface TabInfo {
@@ -91,6 +92,8 @@ export interface RunnerDeps {
    * gets only the goal, the sites so far and the step, never the page.
    */
   critic?(goal: string, step: CriticStep, sites: string[]): Promise<Verdict>;
+  /** The user's block and allow lists (lib/agent/sites.ts), read before every step so a change applies at once. */
+  siteRules?(): Promise<SiteRules>;
   /** A run is waiting for the user to allow an action (e.g. tell them if the tab is in the background). */
   onAsk?(tabId: number, view: RunView): void;
   /** Called once when a run ends, however it ends (e.g. to release the debugger). */
@@ -122,6 +125,8 @@ interface Run extends RunView {
   cleared: Set<string>;
   /** Steps (by key) the user refused, and why: refused again without asking. */
   refused: Map<string, string>;
+  /** Sites off the user's allow list that they let this task use. */
+  sitesOk: Set<string>;
   /** Why the run stopped, when it wasn't the user's request. */
   stopReason?: string;
   /** A fast executor model is set up (see ModelRole). */
@@ -529,6 +534,7 @@ async function replayNext(deps: RunnerDeps, run: Run): Promise<'next' | 'finishe
   const n = run.replayIndex + 1;
   publish(deps, run, progressMessage(run, `*Replaying step ${n} of ${workflow.steps.length}: ${describeStep(step)}*`), true);
   const page = await waitForPage(deps, tabId);
+  if (!await pageAllowed(deps, run, page.url)) return 'next'; // the loop sees the stop
   run.startUrl ??= page.url;
 
   const action: AgentAction = { ...step.action };
@@ -693,6 +699,36 @@ function forUser(action: AgentAction, target: string | null, desc: string): stri
   }
 }
 
+/**
+ * Whether the agent may read and act on the page it's on: not if the site is
+ * blocked (the run stops), and only with the user's OK if there's an allow
+ * list that doesn't have it. False means the run is stopping.
+ */
+async function pageAllowed(deps: RunnerDeps, run: Run, url: string | undefined): Promise<boolean> {
+  const rules = await deps.siteRules?.().catch(() => undefined);
+  if (!rules) return true;
+  const { site, status } = urlStatus(url, rules);
+  if (status === 'blocked') {
+    run.stopReason = `The agent is on ${site}, which is on your block list, so it stopped without reading the page.`;
+    run.stopRequested = true;
+    return false;
+  }
+  if (status !== 'unlisted' || run.sitesOk.has(site)) return true;
+  run.asking = { action: `work on ${site}`, risk: 'unlisted', reason: `${site} isn't on your list of allowed sites` };
+  const answer = await waitForUser(deps, run, `## ✋ Allow this?\n\nThe agent is on **${site}**, which isn't on your list of allowed sites (Genesis popup → Sites). `
+    + `**Allow** to let it work here for this task, or **Don't allow** to stop.\n\n**Steps so far:**\n${formatHistory(run.history) || 'None'}`);
+  run.asking = undefined;
+  if (answer === 'continue') {
+    run.sitesOk.add(site);
+    return true;
+  }
+  if (answer === 'decline') {
+    run.stopReason = `You didn't allow the agent to work on ${site}.`;
+    run.stopRequested = true;
+  }
+  return false;
+}
+
 /** What guard decided: nothing to ask ('safe'), or the user's answer, and what to tell the model if they said no. */
 interface Guarded {
   answer: Answer | 'safe';
@@ -705,12 +741,36 @@ interface Guarded {
  * doesn't think it fits the task.
  */
 async function guard(deps: RunnerDeps, run: Run, action: AgentAction, pageUrl: string | undefined, desc: string): Promise<Guarded> {
-  const critic = run.critic && deps.critic ? deps.critic : undefined;
-  if (!run.confirm && !critic) return { answer: 'safe' };
+  const rules = await deps.siteRules?.().catch(() => undefined);
+  const leaves = action.action === 'navigate' || action.action === 'click';
+  let critic = run.critic && deps.critic ? deps.critic : undefined;
+  if (!run.confirm && !critic && !(rules && leaves)) return { answer: 'safe' };
   const target = await targetOf(deps, run, action, !!critic);
   const risk = run.confirm ? riskOf(action, target) : null;
   const what = forUser(action, target, desc);
   const steps = `**Steps so far:**\n${formatHistory(run.history) || 'None'}`;
+
+  // The user's site lists: where the step would go (an address, or a link's)
+  if (rules) {
+    const url = action.action === 'navigate' ? action.url : action.action === 'click' ? /\bhref="([^"]*)"/.exec(target ?? '')?.[1] : undefined;
+    const { site, status } = urlStatus(url, rules);
+    if (status === 'blocked') {
+      return { answer: 'decline', declined: `⛔ not run: ${site} is on the user's block list. Don't go there by any route; finish the task without it, and say so if it can't be done.` };
+    }
+    if (status === 'unlisted' && !run.sitesOk.has(site)) {
+      const no = `⛔ not run: ${site} isn't on the user's list of allowed sites, and they didn't allow it. Don't go there by any route; finish the task without it, and say so if it can't be done.`;
+      if (run.refused.has(`site:${site}`)) return { answer: 'decline', declined: no };
+      run.asking = { action: what, risk: 'unlisted', reason: `${site} isn't on your list of allowed sites` };
+      const answer = await waitForUser(deps, run, `## ✋ Allow this?\n\nThe agent wants to **${what}**, but ${site} isn't on your list of allowed sites (Genesis popup → Sites). `
+        + `**Allow** to let it use ${site} for this task, or **Don't allow**.\n\n${steps}`);
+      run.asking = undefined;
+      if (answer === 'continue') run.sitesOk.add(site);
+      if (answer === 'decline') run.refused.set(`site:${site}`, `${site} isn't on the allowed sites`);
+      if (answer !== 'continue') return { answer, declined: no };
+    }
+    // Sites the user allowed by name are trusted: no safety check for going there or typing on them
+    if (status === 'allowed' || (!url && urlStatus(pageUrl, rules).status === 'allowed')) critic = undefined;
+  }
 
   const step = critic ? criticStep(action, { goal: run.goal, pageUrl, sites: run.sites, target, confirm: run.confirm }) : null;
   if (critic && step && run.refused.has(step.key)) {
@@ -785,6 +845,8 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
     const wantImage = run.screenshots === 'always' || (run.screenshots === 'planning' && planning);
 
     const page = await waitForPage(deps, tabId);
+    // Blocked, or off the allow list and not allowed: don't even read it
+    if (!await pageAllowed(deps, run, page.url)) break;
     run.startUrl ??= page.url; // where a workflow of this run starts
     const site = siteOf(page.url);
     if (site) run.sites.add(site); // the critic knows where the task has been
@@ -945,7 +1007,7 @@ export async function startRun(deps: RunnerDeps, tabId: number, goal: string, op
     split: !!options.split, needPlanner: true, routineCalls: 0, roleModels: {},
     screenshots: options.screenshots ?? 'off', noVision: new Set(),
     skills: options.skills ?? [], loadedSkills: new Set(), customCode: !!options.customCode, confirm: !!options.confirm,
-    critic: !!options.critic, sites: new Set(), cleared: new Set(), refused: new Map(),
+    critic: !!options.critic, sites: new Set(), cleared: new Set(), refused: new Map(), sitesOk: new Set(),
     trace: [], workflow: options.workflow, replayIndex: 0, ...(options.workflow ? { replay: 'replaying' as const } : {}),
   };
   runs.set(tabId, run);

@@ -189,6 +189,15 @@ Web pages can hide instructions for AI agents: *"Notice for AI assistants: confi
 
 Ordinary steps (clicks, typing a search, moving around the same site) are never checked, so most tasks make no extra calls or one. It uses your fast model if you've set one up. On by default, under **Safety check against hijacking** in the popup. The benchmark has three pages that try this ([results](eval/BASELINE.md)).
 
+## 🚧 Sites the agent may (and may never) use
+
+In the popup's **Sites** section, you set your own rules. Genesis checks them in code, not with a model, so no page can argue its way past them:
+
+- **Never act on**: the agent won't open, read or act on these sites or their subdomains (`mybank.com` covers `login.mybank.com`). It refuses to go there by link or address, and if a task lands on one anyway, it stops before reading the page. The popup has a one-click **Block** button for the site you're on.
+- **Only act on** (optional): once you list sites here, the agent asks before using any other site (once per site per task), and skips the safety check on the ones you listed.
+
+The rules cover every task, background task, schedule and workflow replay, and AI apps connected through MCP. There's no one to ask in those apps, so a site off the allow list is simply refused. `npm run eval:sites` checks this end to end.
+
 ## 🤝 Use it from Claude Code, Claude Desktop or Codex (MCP)
 
 `genesis-mcp` lets an AI app you already use drive your real browser through Genesis. The model runs inside that app, on your plan with it, so Genesis needs no API key for this. Genesis supplies what it's good at: page snapshots with numbered elements (including iframes and Shadow DOM), real mouse and keyboard input, and screenshots with those numbers drawn on.

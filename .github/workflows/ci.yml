@@ -84,6 +84,9 @@ jobs:
       - name: Asks before an action that can't be undone (Don't allow, background notification, Allow)
         run: npm run eval:confirm
 
+      - name: Site lists hold (popup, blocked site refused and never read, allow list asks)
+        run: npm run eval:sites
+
       - name: Save as skill, then reuse it (mock)
         run: npm run eval:mock -- --task login --trials 2 --learn --timeout 45
 

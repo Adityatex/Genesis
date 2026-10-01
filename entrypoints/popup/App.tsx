@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import SitesSection from './SitesSection';
 import { loadStoredProfile, saveStoredProfile, PROFILE_FIELDS, type AutofillProfile } from '@/lib/automation/profile';
 import { PROVIDERS, PROVIDER_IDS, type ProviderId } from '@/lib/api/providers';
 import type { ModelInfo } from '@/lib/api/llmClient';
@@ -726,6 +727,8 @@ export default function App() {
           </p>
         )}
       </div>
+
+      <SitesSection />
 
       {/* Skills Section */}
       <div className="section">

@@ -14,6 +14,7 @@ import { formatError, withTimeout } from '@/lib/utils/errorHandler';
 import { providerPool, modelLabel, type FallbackResult } from '@/lib/api/fallback';
 import { trustedClick, trustedKey, trustedType, releaseTab, watchDetach, debuggerScreenshot, debuggerEvaluate } from '@/lib/agent/trustedInput';
 import { CODE_TIMEOUT_MS } from '@/lib/agent/customCode';
+import { SITES_KEY, cleanRules, normalizeSite, type SiteRules } from '@/lib/agent/sites';
 import { checkStep } from '@/lib/agent/critic';
 import { TaskQueue, TaskCancelled } from '@/lib/agent/taskQueue';
 import { annotate, base64ToBlob, type VisualInfo } from '@/lib/agent/screenshot';
@@ -66,6 +67,12 @@ export default defineBackground(() => {
   console.log('[Genesis] Background service worker started');
   watchDetach();
 
+  /** The user's block and allow lists (lib/agent/sites.ts). */
+  async function loadSiteRules(): Promise<SiteRules> {
+    const stored: any = await browser.storage.local.get(SITES_KEY);
+    return cleanRules(stored[SITES_KEY]);
+  }
+
   /** Agent preferences. Trusted input is on unless the user turns it off. */
   async function loadPrefs(): Promise<AgentPrefs> {
     const stored: any = await browser.storage.local.get(PREFS_KEY);
@@ -112,6 +119,7 @@ export default defineBackground(() => {
       const { value } = await ask((c) => checkStep(goal, step, sites, c), true);
       return value;
     },
+    siteRules: () => loadSiteRules(),
     onAsk: async (tabId, view) => {
       // The tab's sidebar asks; if the user can't see that tab (a background or
       // scheduled task), a notification tells them. Clicking it opens the tab.
@@ -121,7 +129,8 @@ export default defineBackground(() => {
       chrome.notifications.create(`genesis-task:${tabId}`, {
         type: 'basic', iconUrl: browser.runtime.getURL('/icons/icon128.png'), requireInteraction: true,
         title: `✋ Genesis needs your OK: ${view.goal.slice(0, 50)}`,
-        message: `It wants to ${view.asking?.action}, ${view.asking?.risk === 'off-task' ? "which a safety check doesn't think is part of the task" : "which can't be undone"}.\nClick to open the tab and answer.`,
+        message: `It wants to ${view.asking?.action}: ${view.asking?.risk === 'off-task' ? "a safety check doesn't think that's part of the task"
+          : view.asking?.risk === 'unlisted' ? `${view.asking.reason}` : "that can't be undone"}.\nClick to open the tab and answer.`,
       });
     },
     onRunEnded: (tabId) => releaseTab(tabId), // drop the debugger (and its banner)
@@ -851,6 +860,29 @@ export default defineBackground(() => {
 
           case 'GET_PREFS': {
             sendResponse({ success: true, data: await loadPrefs() });
+            break;
+          }
+
+          case 'GET_SITES': {
+            sendResponse({ success: true, data: await loadSiteRules() });
+            break;
+          }
+
+          case 'SAVE_SITES': {
+            // payload: { list: 'blocked' | 'allowed', add?: string, remove?: string }
+            const list = payload?.list === 'allowed' ? 'allowed' : 'blocked';
+            const rules = await loadSiteRules();
+            if (payload?.add !== undefined) {
+              const site = normalizeSite(String(payload.add));
+              if (!site) throw new Error(`"${payload.add}" isn't a site. Type one like example.com`);
+              // A site lives on one list: blocking it takes it off the allow list
+              rules.blocked = rules.blocked.filter((s) => s !== site);
+              rules.allowed = rules.allowed.filter((s) => s !== site);
+              rules[list].push(site);
+            }
+            if (payload?.remove !== undefined) rules[list] = rules[list].filter((s) => s !== payload.remove);
+            await browser.storage.local.set({ [SITES_KEY]: rules });
+            sendResponse({ success: true, data: rules });
             break;
           }
 

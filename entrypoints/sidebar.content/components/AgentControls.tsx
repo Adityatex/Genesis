@@ -35,7 +35,9 @@ export default function AgentControls({ paused, queued, asking, onContinue, onAn
             Allow the agent to <strong>{asking.action}</strong>?{' '}
             {asking.risk === 'off-task'
               ? <>A safety check doesn't think this is part of your task: {asking.reason}</>
-              : <>It looks like {asking.risk}, which can't be undone.</>}
+              : asking.risk === 'unlisted'
+                ? <>{asking.reason} (Genesis popup → Sites).</>
+                : <>It looks like {asking.risk}, which can't be undone.</>}
           </span>
         </span>
         <div className="flex items-center gap-2">

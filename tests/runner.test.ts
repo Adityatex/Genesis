@@ -677,3 +677,63 @@ describe('the safety check (critic)', () => {
     expect(deps.navigate).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("the user's site lists", () => {
+  const rules = (blocked: string[], allowed: string[] = []) => vi.fn(async () => ({ blocked, allowed }));
+  const snapshots = (deps: RunnerDeps) => (deps.send as any).mock.calls.filter(([, m]: any) => m.action === 'AGENT_SNAPSHOT').length;
+
+  it('stops on a blocked site without reading the page', async () => {
+    const { deps } = fakeDeps(['{"action":"done","summary":"ok"}']);
+    deps.siteRules = rules(['shop.test']);
+    const result = await startRun(deps, 50, 'Anything');
+    expect(result.status).toBe('stopped');
+    expect(result.message).toContain('The agent is on shop.test, which is on your block list, so it stopped without reading the page.');
+    expect(snapshots(deps)).toBe(0);
+    expect(deps.plan).not.toHaveBeenCalled();
+  });
+
+  it("won't go to a blocked site, by address or link, and doesn't ask", async () => {
+    let asked = 0;
+    const { deps, prompts } = fakeDeps(['{"action":"navigate","url":"https://login.mybank.com/"}', '{"action":"click","elementId":3}', '{"action":"done","summary":"ok"}'], {
+      targets: { 3: '<a> "Pay now" href="https://mybank.com/pay"' },
+      onPause: () => { asked++; answerRun(51, true); },
+    });
+    deps.siteRules = rules(['mybank.com']);
+    await startRun(deps, 51, 'Pay my bill', { confirm: true });
+    expect(asked).toBe(0);
+    expect(deps.navigate).not.toHaveBeenCalled();
+    expect(prompts[1][0]).toMatch(/→ ⛔ not run: login\.mybank\.com is on the user's block list\. Don't go there by any route/);
+    expect(prompts[2][1]).toMatch(/^click \[3\] → ⛔ not run: mybank\.com is on the user's block list/);
+  });
+
+  it('with an allow list, asks before another site, once per site', async () => {
+    const asked: RunView[] = [];
+    const { deps } = fakeDeps(['{"action":"navigate","url":"https://other.test/a"}', '{"action":"navigate","url":"https://other.test/b"}', '{"action":"done","summary":"ok"}'], {
+      onPause: (view) => { asked.push(view); answerRun(52, true); },
+    });
+    (deps.navigate as any).mockImplementation(async () => {}); // stays on shop.test
+    deps.siteRules = rules([], ['shop.test']);
+    await startRun(deps, 52, 'Compare prices');
+    expect(asked.map((v) => v.asking)).toEqual([{ action: 'go to https://other.test/a', risk: 'unlisted', reason: "other.test isn't on your list of allowed sites" }]);
+    expect(deps.navigate).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks before working on a page off the allow list, and stops if not allowed', async () => {
+    const { deps } = fakeDeps(['{"action":"done","summary":"ok"}'], { onPause: () => answerRun(53, false) });
+    deps.siteRules = rules([], ['bank.test']);
+    const result = await startRun(deps, 53, 'Anything');
+    expect(result.status).toBe('stopped');
+    expect(result.message).toContain("You didn't allow the agent to work on shop.test.");
+    expect(snapshots(deps)).toBe(0);
+  });
+
+  it('sites on the allow list skip the safety check', async () => {
+    const critic = vi.fn(async () => ({ ok: false, reason: 'no' }));
+    const { deps } = fakeDeps(['{"action":"navigate","url":"https://partner.test/"}', '{"action":"done","summary":"ok"}']);
+    deps.critic = critic;
+    deps.siteRules = rules([], ['shop.test', 'partner.test']);
+    await startRun(deps, 54, 'Go to the partner site', { critic: true });
+    expect(critic).not.toHaveBeenCalled();
+    expect(deps.navigate).toHaveBeenCalledTimes(1);
+  });
+});

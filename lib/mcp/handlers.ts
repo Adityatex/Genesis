@@ -9,6 +9,7 @@ import { runAction, waitForPage, type RunnerDeps } from '@/lib/agent/runner';
 import { parseAgentAction } from '@/lib/agent/parseAction';
 import { describeAction } from '@/lib/agent/history';
 import type { AgentAction } from '@/lib/agent/actionExecutor';
+import { urlStatus } from '@/lib/agent/sites';
 
 export interface TabSummary {
   id: number;
@@ -17,7 +18,7 @@ export interface TabSummary {
   active: boolean;
 }
 
-export interface HandlerDeps extends Pick<RunnerDeps, 'getTab' | 'send' | 'sleep' | 'navigate'> {
+export interface HandlerDeps extends Pick<RunnerDeps, 'getTab' | 'send' | 'sleep' | 'navigate' | 'siteRules'> {
   listTabs(): Promise<TabSummary[]>;
   /** The active tab of the last focused window. */
   activeTabId(): Promise<number | undefined>;
@@ -78,6 +79,25 @@ export function createHandlers(deps: HandlerDeps) {
     }
   }
 
+  /**
+   * The user's site lists apply to AI apps too. No one is at the sidebar to
+   * ask, so a site off the allow list is refused like a blocked one.
+   */
+  async function siteProblem(url: string | undefined): Promise<string | null> {
+    const rules = await deps.siteRules?.().catch(() => undefined);
+    if (!rules) return null;
+    const { site, status } = urlStatus(url, rules);
+    if (status === 'blocked') return `${site} is on the user's block list in Genesis, so it can't be opened, read or used from here`;
+    if (status === 'unlisted') return `${site} isn't on the user's list of allowed sites in Genesis, so it can't be opened, read or used from here`;
+    return null;
+  }
+
+  /** Throw if the tab is on a site the user's lists rule out. */
+  async function checkTab(tabId: number): Promise<void> {
+    const problem = await siteProblem((await deps.getTab(tabId)).url);
+    if (problem) throw new Error(`Tab ${tabId}: ${problem}.`);
+  }
+
   function scheduleRelease(tabId: number): void {
     clearTimeout(releaseTimers.get(tabId));
     releaseTimers.set(tabId, setTimeout(() => {
@@ -94,6 +114,8 @@ export function createHandlers(deps: HandlerDeps) {
 
     async tab_open(params) {
       const url = httpUrl(params.url);
+      const problem = await siteProblem(url);
+      if (problem) throw new Error(`${problem}.`);
       let tabId: number;
       if (params.newTab === false) {
         tabId = await tabFor(params);
@@ -118,6 +140,7 @@ export function createHandlers(deps: HandlerDeps) {
     async page_snapshot(params) {
       const tabId = await tabFor(params);
       await ready(tabId);
+      await checkTab(tabId);
       const snapshot = await deps.send(tabId, { action: 'AGENT_SNAPSHOT' }, SNAPSHOT_TIMEOUT_MS);
       return `Tab ${tabId}\n${String(snapshot?.text ?? '')}`;
     },
@@ -138,10 +161,22 @@ export function createHandlers(deps: HandlerDeps) {
       });
 
       await ready(tabId);
+      await checkTab(tabId);
       const lines: string[] = [];
       for (const [i, action] of actions.entries()) {
+        const blocked = action.action === 'navigate' ? await siteProblem(action.url) : null;
+        if (blocked) {
+          lines.push(`${describeAction(action)} → ❌ not run: ${blocked}`);
+          break;
+        }
         const { result, pageChanged } = await runAction(deps, tabId, action, () => deps.loads(tabId));
         lines.push(`${describeAction(action)} → ${result}`);
+        // A click can lead somewhere the lists rule out: stop there
+        const landed = pageChanged ? await siteProblem((await deps.getTab(tabId)).url) : null;
+        if (landed) {
+          lines.push(`(stopped: the page went where it can't be used: ${landed})`);
+          break;
+        }
         const left = actions.length - i - 1;
         if (left > 0 && (pageChanged || result.startsWith('❌'))) {
           lines.push(`(${left} more action${left === 1 ? '' : 's'} not run: ${pageChanged ? 'the page changed; take a new browser_snapshot, since element IDs change' : 'the action above failed'})`);
@@ -155,6 +190,7 @@ export function createHandlers(deps: HandlerDeps) {
     async page_screenshot(params) {
       const tabId = await tabFor(params);
       await ready(tabId);
+      await checkTab(tabId);
       const snapshot = await deps.send(tabId, { action: 'AGENT_SNAPSHOT', visual: true }, SNAPSHOT_TIMEOUT_MS);
       if (!snapshot?.visual) throw new Error('Could not measure the page for a screenshot');
       const image = await deps.screenshot(tabId, snapshot.visual);

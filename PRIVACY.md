@@ -11,6 +11,7 @@
 - **Schedules**, only ones you create: a workflow or shortcut runs at the times you choose, in a background tab of your browser, and the `notifications` permission shows you how it went. A scheduled shortcut sends that page to your AI provider like any other task.
 - **Asking before irreversible actions**: when a task in a tab you aren't looking at wants to buy, send or delete something, the `notifications` permission asks you. Nothing is sent anywhere to decide this: the check runs in the extension, on the label of the button involved.
 - **Safety check against hijacking** (on by default): before a step that goes to a new site or types an email, phone or card number you didn't give, your request and a description of that step (including the text it would type) go to your own AI provider for a yes/no, like any other agent call. No page content is sent with it.
+- **Site lists**: the sites you block or allow are stored in `chrome.storage.local` on your device. On a blocked site the agent stops before reading the page, so nothing from it goes to your AI provider. The popup reads the address of the tab you open it on only to offer its **Block** button.
 - **Background tasks**: the `tabGroups` permission puts the tabs of tasks you run in the background into a group named Genesis. It doesn't read your other tabs or groups.
 - We never sell, share, or retain your browsing data. Your provider's own privacy policy applies to what you send it.
 - Contact: open a GitHub issue at https://github.com/Adityatex/Genesis/issues
