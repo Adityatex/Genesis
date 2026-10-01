@@ -14,6 +14,7 @@ import { formatError, withTimeout } from '@/lib/utils/errorHandler';
 import { providerPool, modelLabel, type FallbackResult } from '@/lib/api/fallback';
 import { trustedClick, trustedKey, trustedType, releaseTab, watchDetach, debuggerScreenshot, debuggerEvaluate } from '@/lib/agent/trustedInput';
 import { CODE_TIMEOUT_MS } from '@/lib/agent/customCode';
+import { checkStep } from '@/lib/agent/critic';
 import { TaskQueue, TaskCancelled } from '@/lib/agent/taskQueue';
 import { annotate, base64ToBlob, type VisualInfo } from '@/lib/agent/screenshot';
 import { PREFS_KEY, DEFAULT_PREFS, type AgentPrefs } from '@/lib/agent/prefs';
@@ -106,6 +107,11 @@ export default defineBackground(() => {
       return { status: tab.status, url: tab.url, title: tab.title };
     },
     navigate: async (tabId, url) => { await chrome.tabs.update(tabId, { url }); },
+    critic: async (goal, step, sites) => {
+      // The fast model if there is one: a yes/no on a few lines, no page
+      const { value } = await ask((c) => checkStep(goal, step, sites, c), true);
+      return value;
+    },
     onAsk: async (tabId, view) => {
       // The tab's sidebar asks; if the user can't see that tab (a background or
       // scheduled task), a notification tells them. Clicking it opens the tab.
@@ -115,7 +121,7 @@ export default defineBackground(() => {
       chrome.notifications.create(`genesis-task:${tabId}`, {
         type: 'basic', iconUrl: browser.runtime.getURL('/icons/icon128.png'), requireInteraction: true,
         title: `✋ Genesis needs your OK: ${view.goal.slice(0, 50)}`,
-        message: `It wants to ${view.asking?.action}, which can't be undone.\nClick to open the tab and answer.`,
+        message: `It wants to ${view.asking?.action}, ${view.asking?.risk === 'off-task' ? "which a safety check doesn't think is part of the task" : "which can't be undone"}.\nClick to open the tab and answer.`,
       });
     },
     onRunEnded: (tabId) => releaseTab(tabId), // drop the debugger (and its banner)
@@ -261,7 +267,7 @@ export default defineBackground(() => {
         if (problem) throw new Error(`Genesis's own agent isn't set up: ${problem}`);
         const view = await executeRun(tabId, goal, {
           checkpoint: 0, split: hasExecutor(settings), screenshots: prefs.screenshots, skills: await loadSkills(skillStorage),
-          customCode: prefs.customCode, confirm: prefs.confirmRisky,
+          customCode: prefs.customCode, confirm: prefs.confirmRisky, critic: prefs.critic,
         });
         return view?.message ?? 'Stopped before it started';
       },
@@ -335,7 +341,7 @@ export default defineBackground(() => {
       // Waits its turn like any task that calls the model (a workflow doesn't)
       const view = await executeRun(tab.id, goal, {
         checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
-        skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, workflow,
+        skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, critic: prefs.critic, workflow,
       });
       if (!view) return { status: 'stopped', summary: 'Stopped before it started' };
       // Close it if it worked; keep it open to look at if it didn't
@@ -519,7 +525,7 @@ export default defineBackground(() => {
             const prefs = await loadPrefs();
             runAgent(tabId, goal, {
               checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
-              skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky,
+              skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, critic: prefs.critic,
             });
             sendResponse({ success: true });
             break;
@@ -550,7 +556,7 @@ export default defineBackground(() => {
             const prefs = await loadPrefs();
             runAgent(tab.id, goal, {
               checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
-              skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, workflow,
+              skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, critic: prefs.critic, workflow,
             });
             sendResponse({ success: true, data: { tabId: tab.id } });
             break;
@@ -799,7 +805,7 @@ export default defineBackground(() => {
             const prefs = await loadPrefs();
             runAgent(tabId, workflow.goal, {
               checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
-              skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, workflow,
+              skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, critic: prefs.critic, workflow,
             });
             sendResponse({ success: true, data: { name: workflow.name, steps: workflow.steps.length } });
             break;

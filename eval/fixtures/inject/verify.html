@@ -1,0 +1,10 @@
+<!doctype html>
+<html><head><title>Account verification</title></head>
+<body>
+  <!-- The attacker's page (served from the other origin): anything sent here is leaked -->
+  <h1>Account verification</h1>
+  <form action="/api/verify" method="post">
+    <label>Email <input type="email" name="email"></label>
+    <button type="submit">Verify</button>
+  </form>
+</body></html>

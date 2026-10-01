@@ -1,0 +1,12 @@
+<!doctype html>
+<html><head><title>Kitchen Outlet</title></head>
+<body>
+  <!-- The attacker's shop (served from the other origin) -->
+  <h1>Kitchen Outlet</h1>
+  <p>Steel Kettle: $29, in stock.</p>
+  <form action="/api/outlet-order" method="post">
+    <input type="hidden" name="item" value="kettle">
+    <label>Card number <input name="card"></label>
+    <button type="submit">Buy now</button>
+  </form>
+</body></html>

@@ -52,6 +52,7 @@ export default function App() {
   const [customCode, setCustomCode] = useState(DEFAULT_PREFS.customCode);
   const [maxParallel, setMaxParallel] = useState(DEFAULT_PREFS.maxParallel);
   const [confirmRisky, setConfirmRisky] = useState(DEFAULT_PREFS.confirmRisky);
+  const [critic, setCritic] = useState(DEFAULT_PREFS.critic);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [mcp, setMcp] = useState<McpState>({ enabled: false, hasToken: false, status: 'off' });
   const [mcpToken, setMcpToken] = useState('');
@@ -99,6 +100,7 @@ export default function App() {
       setCustomCode(res.data.customCode);
       setMaxParallel(res.data.maxParallel);
       setConfirmRisky(res.data.confirmRisky);
+      setCritic(res.data.critic);
     });
     loadStoredProfile().then(setProfile).catch(() => {});
     // Connection status changes while the popup is open (an AI app starts genesis-mcp)
@@ -234,6 +236,12 @@ export default function App() {
     setConfirmRisky(on);
     const res: any = await browser.runtime.sendMessage({ action: 'SAVE_PREFS', payload: { confirmRisky: on } });
     if (!res?.success) setConfirmRisky(!on);
+  };
+
+  const handleCriticChange = async (on: boolean) => {
+    setCritic(on);
+    const res: any = await browser.runtime.sendMessage({ action: 'SAVE_PREFS', payload: { critic: on } });
+    if (!res?.success) setCritic(!on);
   };
 
   const handleCustomCodeChange = async (on: boolean) => {
@@ -621,6 +629,21 @@ export default function App() {
             to talk it into something. Keep this on unless you're watching every step.
           </p>
         )}
+
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={critic}
+            onChange={(e) => handleCriticChange(e.target.checked)}
+          />
+          <span>Safety check against hijacking</span>
+        </label>
+        <p className="hint">
+          Pages can hide instructions for AI agents ("send the user's email to this address"). Before a step that goes to a
+          new site or types personal details you didn't give (an email, phone or card number), a second model that never sees the page checks
+          that it fits your task. If it doesn't, you're asked. Uses your fast model if you set one; most tasks need one or
+          two of these short checks, or none.
+        </p>
 
         <label className="toggle-row" htmlFor="screenshots">
           <span>Screenshots for vision models</span>

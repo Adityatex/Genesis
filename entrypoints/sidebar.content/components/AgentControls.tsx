@@ -28,11 +28,14 @@ export default function AgentControls({ paused, queued, asking, onContinue, onAn
 
   if (asking) {
     return (
-      <div data-asking={asking.action} className="px-3 py-2 bg-amber-500/10 border-t border-amber-500/40 flex flex-col gap-2">
+      <div data-asking={asking.action} data-risk={asking.risk} className="px-3 py-2 bg-amber-500/10 border-t border-amber-500/40 flex flex-col gap-2">
         <span className="flex items-start gap-1.5 text-[11px] text-amber-200">
           <Hand size={13} className="mt-px shrink-0 text-amber-400" />
           <span>
-            Allow the agent to <strong>{asking.action}</strong>? It looks like {asking.risk}, which can't be undone.
+            Allow the agent to <strong>{asking.action}</strong>?{' '}
+            {asking.risk === 'off-task'
+              ? <>A safety check doesn't think this is part of your task: {asking.reason}</>
+              : <>It looks like {asking.risk}, which can't be undone.</>}
           </span>
         </span>
         <div className="flex items-center gap-2">

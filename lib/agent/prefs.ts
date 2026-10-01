@@ -40,6 +40,14 @@ export interface AgentPrefs {
    * sending, deleting, moving money, booking (lib/agent/confirm.ts). On by default.
    */
   confirmRisky: boolean;
+  /**
+   * Before a step that goes to a new site, types personal data the user didn't
+   * give, or (with confirmations off) can't be undone, ask a second model that
+   * never sees the page whether it fits the task (lib/agent/critic.ts). Guards
+   * against pages that hide instructions for AI agents. On by default; costs a
+   * short call per such step.
+   */
+  critic: boolean;
 }
 
 export type ScreenshotMode = 'off' | 'planning' | 'always';
@@ -56,6 +64,7 @@ export const DEFAULT_PREFS: AgentPrefs = {
   customCode: false,
   maxParallel: 3,
   confirmRisky: true,
+  critic: true,
 };
 
 export const PARALLEL_CHOICES = [1, 2, 3, 5] as const;
