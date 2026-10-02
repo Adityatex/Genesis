@@ -68,6 +68,8 @@ export interface RunView {
   calls?: number;
   /** How it ended, in a line or two: the model's summary, why it stopped, or the error. */
   outcome?: string;
+  /** The element (snapshot ID) it's acting on, or asking about: outlined on the page. */
+  target?: number;
   /** While a workflow replays: how many steps it has, when it was saved, and the steps still to come. */
   replaySteps?: { total: number; savedAt?: number; upcoming: string[] };
 }
@@ -196,6 +198,8 @@ interface Run extends RunView {
   current?: StepView;
   /** The action about to run, for the row shown while the user is asked about it. */
   pending?: AgentAction;
+  /** The action being carried out on the page right now. */
+  acting?: AgentAction;
   /** The last model call, for the steps it chose: "Groq · qwen3 · 0.9s". */
   lastCall?: string;
   /** The error a failed run ended with. */
@@ -397,10 +401,12 @@ function view(run: Run): RunView {
   const live = run.current && (status === 'running' || status === 'paused');
   const item = currentPlanItem(run.plan);
   const { steps, hidden } = trimSteps(live ? [...run.steps, { ...run.current!, ...(item ? { planItem: item } : {}) }] : run.steps);
+  const act = status === 'running' ? run.acting : status === 'paused' && asking ? run.pending : undefined;
   const outcome = status === 'done' ? run.summary : status === 'stopped' ? run.stopReason : status === 'error' ? run.error : undefined;
   return {
     goal, status, message, loading, step, plan, model, updatedAt, replay, unrecordable, asking, workflowName: run.workflow?.name, runId: run.id,
     steps, ...(hidden ? { hiddenSteps: hidden } : {}), phase: status === 'running' ? phase : undefined, pausedFor, started, calls, outcome,
+    ...(act?.elementId !== undefined ? { target: act.elementId } : {}),
     ...(run.workflow && replay === 'replaying' ? { replaySteps: replaySteps(run) } : {}),
   };
 }
@@ -659,8 +665,9 @@ async function replayNext(deps: RunnerDeps, run: Run): Promise<'next' | 'finishe
   const label = step.target ? labelOf(step.target.key) : '';
   run.phase = 'acting';
   run.current = stepUnderWay(run.steps.length + 1, action, { label, secret: !!password });
+  run.acting = action;
   publish(deps, run, run.message, true);
-  const { result } = await runAction(deps, tabId, action, () => run.loads);
+  const { result } = await runAction(deps, tabId, action, () => run.loads).finally(() => { run.acting = undefined; });
   if (password) run.secrets.add(password);
   addHistory(run, `↻ ${describeStep(step)} → ${password ? result.split(password).join('••••') : result}`);
   addStep(run, action, result, { label, element: step.target?.key, secret: !!password });
@@ -1166,8 +1173,9 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
       if (secret) run.secrets.add(action.text!);
       const label = target ? labelOf(target.key) : '';
       run.current = stepUnderWay(run.steps.length + 1, action, { label, secret });
+      run.acting = action;
       publish(deps, run, progressMessage(run, `*Step ${run.step}: ${desc}*`), true);
-      const { result, pageChanged } = await runAction(deps, tabId, action, () => run.loads);
+      const { result, pageChanged } = await runAction(deps, tabId, action, () => run.loads).finally(() => { run.acting = undefined; });
       addHistory(run, `${desc} → ${result}${allowed}${i === 0 ? repeatWarning : ''}`);
       addStep(run, action, result, { label, element: target?.key, secret });
       if (label) run.timeline[run.timeline.length - 1].target = label;

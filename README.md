@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Adityatex/Tabi/actions/workflows/ci.yml/badge.svg)](https://github.com/Adityatex/Tabi/actions/workflows/ci.yml)
 
-Tabi is an open-source browser agent for Chrome, Edge, Brave and other Chromium browsers (Manifest V3). It reads the page you're on, answers questions about it, and carries out tasks across your tabs for you. It lives in the browser's side panel: click the toolbar icon, press **Ctrl+G**, or right-click a page. The name is *tab* plus *tabi* (旅), Japanese for a journey. Built with **WXT + React + TypeScript**. BYOK-only — no bundled keys.
+Tabi is an open-source browser agent for Chrome, Edge, Brave and other Chromium browsers (Manifest V3). It reads the page you're on, answers questions about it, and carries out tasks across your tabs for you. It lives in the browser's side panel: click the toolbar icon, press **Ctrl+G**, or right-click a page. While a task runs, the page gets a soft glow around its edge, an outline on what Tabi is about to touch, and a small "Tabi is working · Stop" pill (drag it anywhere; it moves out of the way of clicks). They turn amber when Tabi needs your OK. The name is *tab* plus *tabi* (旅), Japanese for a journey. Built with **WXT + React + TypeScript**. BYOK-only — no bundled keys.
 
 ![Tabi Extension](public/icons/icon128.png)
 
@@ -23,7 +23,7 @@ Tabi is an open-source browser agent for Chrome, Edge, Brave and other Chromium 
 - **Styling:** Tailwind CSS v4 on design tokens (light and dark follow the system), Geist and Geist Mono bundled with the extension, Lucide icons
 - **Testing:** Vitest + happy-dom, GitHub Actions CI (typecheck → test → build)
 - **AI:** any OpenAI-compatible provider: Groq (default, `qwen/qwen3.8-27b`), Google AI Studio (Gemini), Mistral, DeepSeek, OpenAI, OpenRouter, Kilo AI Gateway, OpenCode Zen, local Ollama, or a custom server. Bring your own key. Optional backup providers take over mid-task when the main one hits a rate limit (the plan and progress carry over), and an optional fast model can take routine steps while the main model plans and checks. Optional screenshots (off by default, since they cost tokens) let vision models see the page with every element's number drawn on it
-- **Architecture:** Manifest V3. The UI is Chrome's native side panel (no popup, nothing drawn on the page), with full-tab Settings and History pages; the agent runs in the background worker. Permissions: `activeTab`, `scripting`, `storage`, `sidePanel`, `contextMenus`, `alarms`, `notifications`, `tabGroups`, and `debugger`, which is used only while the agent runs, for real mouse and keyboard input, and can be turned off in Settings
+- **Architecture:** Manifest V3. The UI is Chrome's native side panel (no popup; on the page, only the cue while a task runs, in a closed shadow root the agent never reads), with full-tab Settings and History pages; the agent runs in the background worker. Permissions: `activeTab`, `scripting`, `storage`, `sidePanel`, `contextMenus`, `alarms`, `notifications`, `tabGroups`, and `debugger`, which is used only while the agent runs, for real mouse and keyboard input, and can be turned off in Settings
 
 ## 🚀 Getting Started
 
@@ -168,7 +168,7 @@ When a task finishes, **Save as workflow** keeps its exact steps. Type `/name` i
 
 ## ⚡ Shortcuts
 
-Type `/` in the side panel for a picker of your shortcuts (saved prompts the agent runs), workflows (replayed with no model) and commands (Summarize, Explain selection, Autofill). Arrow keys and Enter run one, Tab completes its name. A shortcut can have blanks in braces: save "Find the price of {product} on this site" as `price-check`, then type `/price-check running shoes`. Save one with **Save as shortcut** after a task, or write them in the popup.
+Type `/` in the side panel for a picker of your shortcuts (saved prompts the agent runs), workflows (replayed with no model) and commands (Summarize, Explain selection, Autofill). Arrow keys and Enter run one, Tab completes its name. A shortcut can have blanks in braces: save "Find the price of {product} on this site" as `price-check`, then type `/price-check running shoes`. Save one with **Save as shortcut** after a task, or write them in Settings.
 
 ## ⏰ Schedules
 

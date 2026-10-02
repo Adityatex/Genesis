@@ -807,6 +807,24 @@ describe('the run timeline', () => {
     expect(log.entries[3].step).toMatchObject({ n: 2, status: 'ok', action: 'Clicked “Place order”', element: '<button> "Place order"' });
   });
 
+  it('names the element it acts on or asks about, for the page cue', async () => {
+    const targets: (number | undefined)[] = [];
+    const { deps } = fakeDeps(['{"actions":[{"action":"click","elementId":3},{"action":"click","elementId":7}]}', '{"action":"done","summary":"ok"}'], {
+      targets: { 7: '<button> "Place order"' },
+      onPause: (view) => { targets.push(view.target); answerRun(62, true); },
+    });
+    const send = deps.send as any;
+    const impl = send.getMockImplementation();
+    send.mockImplementation(async (tabId: number, message: any) => {
+      if (message.action === 'AGENT_UPDATE' && message.payload.status === 'running') targets.push(message.payload.target);
+      return impl(tabId, message);
+    });
+    const end = await startRun(deps, 62, 'Buy it', { confirm: true });
+    expect(targets).toContain(3); // clicking [3]
+    expect(targets.filter((t) => t === 7).length).toBeGreaterThanOrEqual(2); // asked about [7], then clicked it
+    expect(end.target).toBeUndefined();
+  });
+
   it('records safety checks and pauses', async () => {
     const saved: any[] = [];
     const { deps } = fakeDeps(['{"action":"navigate","url":"https://verify.example/"}', '{"action":"done","summary":"ok"}'], {

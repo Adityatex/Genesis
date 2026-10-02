@@ -1,17 +1,22 @@
 // entrypoints/content.ts
-// Tabi in the page: eyes and hands, no UI. The agent runner in the background
-// reads the page (AGENT_SNAPSHOT) and acts on it (AGENT_EXECUTE) through this
-// script, and the side panel asks it for the page's text, the selection, or an
-// autofill. Cross-origin frames have their own script (frame.content.ts).
+// Tabi in the page: eyes and hands, and the cue while a task runs here. The
+// agent runner in the background reads the page (AGENT_SNAPSHOT) and acts on
+// it (AGENT_EXECUTE) through this script, and the side panel asks it for the
+// page's text, the selection, or an autofill. Cross-origin frames have their
+// own script (frame.content.ts).
 
 import { createPageSnapshot } from '@/lib/agent/frames';
 import { executeAction } from '@/lib/agent/actionExecutor';
-import { viewportMarks, describeElement, resolveElement, commitTarget } from '@/lib/agent/domSnapshot';
+import { viewportMarks, describeElement, resolveElement, commitTarget, getElementById } from '@/lib/agent/domSnapshot';
 import { extractVisibleText } from '@/lib/dom/extractVisibleText';
 import { highlightText } from '@/lib/dom/highlightText';
 import { fillForm, fillDropdowns } from '@/lib/automation/formAutofill';
 import { loadStoredProfile, isProfileEmpty } from '@/lib/automation/profile';
 import { reportColorScheme } from '@/lib/utils/toolbarIcon';
+import { createPageCue, cueOf } from '@/lib/dom/pageCue';
+
+/** How long the cue steps aside while the background takes a screenshot for the model. */
+const SCREENSHOT_MS = 1500;
 
 export default defineContentScript({
   matches: ['<all_urls>'],
@@ -20,12 +25,29 @@ export default defineContentScript({
     // The toolbar icon's ink follows the browser's light or dark theme
     reportColorScheme();
 
+    // The cue (glow, pill, outline) while a task runs in this tab; a page
+    // loaded mid-task asks what is going on
+    const cue = createPageCue({
+      onStop: () => { browser.runtime.sendMessage({ action: 'STOP_AGENT' }).catch(() => {}); },
+      onReview: () => { browser.runtime.sendMessage({ action: 'OPEN_PANEL' }).catch(() => {}); },
+      find: (id) => getElementById(id),
+    });
+    browser.runtime.sendMessage({ action: 'GET_AGENT_STATE' })
+      .then((res: any) => cue.set(cueOf(res?.data)))
+      .catch(() => {});
+
     browser.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
       switch (message?.action) {
         case 'AGENT_PING':
           sendResponse({ ok: true });
           return;
+        case 'TABI_CUE':
+          cue.set(message.state ?? null);
+          sendResponse({ ok: true });
+          return;
         case 'AGENT_SNAPSHOT':
+          // A screenshot follows: the model sees the page, not the cue
+          if (message.visual) cue.hideFor(SCREENSHOT_MS);
           // visual: also say where the numbered elements are, for a screenshot
           createPageSnapshot()
             .then(snapshot => sendResponse({
@@ -42,6 +64,8 @@ export default defineContentScript({
             .catch(err => sendResponse({ text: `(could not read the page: ${err?.message ?? err})` }));
           return true; // async response
         case 'AGENT_EXECUTE':
+          // The pill never sits on what the agent is about to click
+          if (typeof message.payload?.elementId === 'number') cue.avoid(getElementById(message.payload.elementId));
           executeAction(message.payload)
             .then(result => sendResponse(result))
             .catch(err => sendResponse(`❌ ${err?.message ?? err}`));

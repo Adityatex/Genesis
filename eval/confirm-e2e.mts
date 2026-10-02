@@ -2,6 +2,7 @@
 // End-to-end check of "Allow this?" (lib/agent/confirm.ts). A fake model
 // types a chat message and clicks Send. In the side panel the user answers
 // "Don't allow": nothing is sent and the model is told to finish without it.
+// Meanwhile the page shows the cue in amber; it goes when the task ends.
 // Then the same task runs in a background tab: it shows in the task list with
 // what it wants to do, a notification asks, and "Allow" in the panel's
 // "tasks in other tabs" strip sends it, without switching tabs.
@@ -83,12 +84,16 @@ async function main(): Promise<void> {
     check('the panel asks before clicking "Send"', (await asking.getAttribute('data-asking')) === 'click "Send"', String(await asking.getAttribute('data-asking')));
     check('and says why', (await asking.innerText()).includes('sending a message or post'));
     check('the message is typed, not sent, while it asks', !sent() && (await page.locator('#editor').innerText()).includes('Hello team'));
+    await page.locator('tabi-cue[data-state="needs"]').waitFor({ state: 'attached', timeout: 5_000 }).catch(() => {});
+    check('the page shows the cue in amber: Tabi needs your OK', (await page.locator('tabi-cue[data-state="needs"]').count()) === 1);
     await panel.getByRole('button', { name: "Don't allow" }).click();
     await panel.locator('[data-run-status="done"]').waitFor({ timeout: 20_000 });
     const text: string = (await runState(panel))?.message ?? '';
     check("Don't allow: nothing is sent", !sent(), JSON.stringify(fixtures.events));
     check('the model is told, and finishes without it', text.includes("the user didn't allow it") && text.includes('left to you'), text.slice(0, 400));
     check('the question goes away', (await asking.count()) === 0);
+    await page.locator('tabi-cue').waitFor({ state: 'detached', timeout: 5_000 }).catch(() => {});
+    check('and the cue leaves the page when the task ends', (await page.locator('tabi-cue').count()) === 0);
 
     // 2. In a background tab: the task list and a notification ask; Allow from the panel's strip
     fixtures.reset();

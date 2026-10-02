@@ -38,6 +38,7 @@ const skillStorage: KeyValueStorage = {
 };
 import { createHandlers } from '@/lib/mcp/handlers';
 import { migrateFromGenesis } from '@/lib/utils/renameMigration';
+import { cueOf } from '@/lib/dom/pageCue';
 import { Attention, toolbarIconPaths, type Scheme } from '@/lib/utils/toolbarIcon';
 import { DEFAULT_PORT, isValidToken, normalizeToken } from '@/mcp/src/protocol';
 
@@ -226,10 +227,14 @@ export default defineBackground(() => {
     sleep: wait,
   };
 
-  /** Show a tab's run in the side panel (open in any window); it ignores other tabs' runs unless it lists them. */
+  /**
+   * Show a tab's run in the side panel (open in any window; it ignores other
+   * tabs' runs unless it lists them), and on the page itself: the cue.
+   */
   function pushView(tabId: number, view: RunView): void {
     noteAttention(tabId, view.status);
     chrome.runtime.sendMessage({ action: 'AGENT_UPDATE', tabId, payload: view }).catch(() => {}); // no panel open
+    chrome.tabs.sendMessage(tabId, { action: 'TABI_CUE', state: cueOf(view) }, { frameId: 0 }).catch(() => {}); // mid-navigation: it asks when it loads
   }
 
   // ---- Parallel tasks: at most N runs use the model at once (lib/agent/taskQueue.ts)
@@ -530,6 +535,14 @@ export default defineBackground(() => {
     const senderTab: number | undefined = fromExtension
       ? (Number.isInteger(payload?.tabId) ? payload.tabId : undefined)
       : _sender.tab?.id;
+
+    // "Review" on the page's cue: the side panel, where the question is. Before
+    // any await, while the click still counts as the user's gesture.
+    if (action === 'OPEN_PANEL') {
+      if (_sender.tab) chrome.sidePanel?.open({ windowId: _sender.tab.windowId }).catch(() => {});
+      sendResponse({ success: true });
+      return;
+    }
 
     // Handle async operations
     (async () => {
