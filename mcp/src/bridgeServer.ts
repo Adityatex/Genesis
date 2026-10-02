@@ -15,7 +15,7 @@ const REQUEST_TIMEOUT_MS = 120_000;
 const HANDSHAKE_TIMEOUT_MS = 10_000;
 
 export const NOT_CONNECTED =
-  'The Tabi extension is not connected. In Chrome, open the Tabi popup, turn on "Let AI apps control this browser" '
+  'The Tabi extension is not connected. In Chrome, open Tabi Settings, turn on "Let AI apps control this browser" '
   + 'and paste the pairing token (run `tabi-mcp token` to see it).';
 
 /** Only browser extensions may connect: web pages can open WebSockets to localhost too. */

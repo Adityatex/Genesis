@@ -13,7 +13,7 @@ export default defineContentScript({
   runAt: 'document_idle',
 
   main() {
-    // The top frame belongs to the sidebar content script
+    // The top frame belongs to the main content script (content.ts)
     if (window === window.top) return;
 
     // Token handshake: the parent page names this frame so the background can

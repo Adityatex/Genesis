@@ -38,7 +38,7 @@ const SKIP_TAGS = new Set([
   'SCRIPT', 'STYLE', 'NOSCRIPT', 'SVG', 'CANVAS', 'TEMPLATE', 'HEAD',
 ]);
 
-// Tabi's own sidebar is a shadow-root UI on the page; never show it to the agent
+// Tabi no longer puts UI in the page (it lives in the side panel), but never show one to the agent
 const OWN_UI_TAG = 'TABI-SIDEBAR';
 
 // ---------------------------------------------------------------- element registry

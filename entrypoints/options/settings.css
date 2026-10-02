@@ -22,9 +22,9 @@
   box-sizing: border-box;
 }
 
+/* Shown as a full-tab Settings page until its redesign (slice 4); it was the 340px popup */
 body {
-  width: 340px;
-  min-height: 440px;
+  min-height: 100vh;
   font-family: 'Inter', -apple-system, sans-serif;
   background: var(--bg-primary);
   color: var(--text-primary);
@@ -32,7 +32,9 @@ body {
 }
 
 .popup-container {
-  padding: 20px;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 32px 20px;
   display: flex;
   flex-direction: column;
   gap: 16px;

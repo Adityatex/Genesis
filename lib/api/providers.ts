@@ -22,7 +22,7 @@ export interface ProviderPreset {
   /**
    * Only set where it has been benchmarked. Model names change and get
    * retired (Groq retired this project's original default), so for other
-   * providers the popup lists what the key can actually use via /models.
+   * providers Settings lists what the key can actually use via /models.
    */
   defaultModel?: string;
   /**
@@ -234,11 +234,11 @@ export function validateBaseUrl(raw: string): string | null {
 /** Why this config can't make requests yet, or null if it's ready. */
 export function configProblem(config: LLMConfig): string | null {
   const preset = PROVIDERS[config.provider];
-  if (!config.baseUrl) return `Set the server URL for ${config.label} in the Tabi popup.`;
+  if (!config.baseUrl) return `Set the server URL for ${config.label} in Tabi's Settings.`;
   const urlError = validateBaseUrl(config.baseUrl);
   if (urlError) return `${config.label} URL: ${urlError}.`;
-  if (preset.needsKey && !config.apiKey) return `No API key for ${config.label}. Add one in the Tabi popup.`;
-  if (!config.model) return `Choose a ${config.label} model in the Tabi popup ("Load models" lists what your key can use).`;
+  if (preset.needsKey && !config.apiKey) return `No API key for ${config.label}. Add one in Tabi's Settings.`;
+  if (!config.model) return `Choose a ${config.label} model in Tabi's Settings ("Load models" lists what your key can use).`;
   return null;
 }
 

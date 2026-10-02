@@ -27,7 +27,11 @@ export default defineConfig({
         '128': 'icons/toolbar-light-128.png',
       },
     },
-    permissions: ['activeTab', 'scripting', 'storage', 'debugger', 'alarms', 'notifications', 'tabGroups'],
+    // No popup: the toolbar icon opens the side panel (entrypoints/sidepanel), as do Ctrl+G and the right-click menu
+    permissions: ['activeTab', 'scripting', 'storage', 'debugger', 'alarms', 'notifications', 'tabGroups', 'sidePanel', 'contextMenus'],
+    commands: {
+      _execute_action: { suggested_key: { default: 'Ctrl+G' }, description: 'Open Tabi' },
+    },
     // <all_urls> covers every LLM provider, including a local Ollama
     host_permissions: ['<all_urls>'],
     // The app icon (extensions page, store, notifications): a white mark on a cobalt rounded square

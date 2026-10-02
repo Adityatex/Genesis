@@ -72,6 +72,6 @@ Answer with one JSON object: {"name": "...", "description": "...", "body": "..."
   const name = slugify(String(parsed.name ?? '')) || slugify(record.goal).slice(0, 40);
   const description = scrubTyped(String(parsed.description ?? '').trim(), typed);
   const body = scrubTyped(String(parsed.body ?? '').trim(), typed).slice(0, MAX_SKILL_BODY);
-  if (!description || !body) throw new Error("The model didn't write a usable skill; try again, or write one by hand in the popup");
+  if (!description || !body) throw new Error("The model didn't write a usable skill; try again, or write one by hand in Settings");
   return { name, description, sites, body };
 }

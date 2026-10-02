@@ -1,5 +1,5 @@
 // lib/agent/history.ts
-// Small helpers shared by the sidebar (content script) and the agent runner
+// Small helpers shared by the side panel and the agent runner
 // (background). No DOM access, so both bundles can import it.
 
 import type { AgentAction } from '@/lib/agent/actionExecutor';

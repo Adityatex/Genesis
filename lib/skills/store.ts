@@ -1,5 +1,5 @@
 // lib/skills/store.ts
-// Skills saved in chrome.storage.local (background and popup). Storage is
+// Skills saved in chrome.storage.local (background and Settings). Storage is
 // injected so this can be tested.
 
 import type { Skill } from '@/lib/skills/skill';

@@ -1,9 +1,9 @@
 // lib/shortcuts/shortcut.ts
-// Shortcuts: saved prompts, run from the sidebar with /name. A prompt can have
+// Shortcuts: saved prompts, run from the side panel with /name. A prompt can have
 // blanks in braces ("Find the price of {product}"): "/price-check running
 // shoes" fills them in, and without extra words the prompt goes into the box
-// to complete by hand. The sidebar's / picker lists these next to workflows.
-// No DOM access: used by the sidebar, popup and background.
+// to complete by hand. The side panel's / picker lists these next to workflows.
+// No DOM access: used by the side panel, Settings and background.
 
 import { slugify } from '@/lib/skills/skill';
 import type { KeyValueStorage } from '@/lib/skills/store';
@@ -49,10 +49,14 @@ export function fillPrompt(prompt: string, args: string): { text: string; comple
 
 /** Something the / picker can offer. */
 export interface PickerItem {
-  kind: 'workflow' | 'shortcut';
+  /** command: one of the side panel's own (summarize, explain, autofill). */
+  kind: 'workflow' | 'shortcut' | 'command';
   name: string;
-  /** What it does: the workflow's goal or the saved prompt. */
+  /** What it does: the workflow's goal, the saved prompt, or a command's hint. */
   detail: string;
+  /** Workflows: how many steps it replays, and the site it starts on. */
+  steps?: number;
+  site?: string;
 }
 
 /**

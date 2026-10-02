@@ -3,7 +3,7 @@
 
 import { summarizePage, explainText, chatWithPage, planAgentStep, listModels, acceptsImages, type TokenUsage } from '@/lib/api/llmClient';
 import {
-  startRun, stopRun, resumeRun, answerRun, forgetRun, getRunView, getRunRecord, listRuns, isRunning, notifyTabLoading,
+  startRun, stopRun, resumeRun, answerRun, hintRun, forgetRun, getRunView, getRunRecord, listRuns, isRunning, notifyTabLoading,
   type RunnerDeps, type RunOptions, type RunView,
 } from '@/lib/agent/runner';
 import {
@@ -101,6 +101,29 @@ export default defineBackground(() => {
     }
   }).catch(() => {});
 
+  // ---- The side panel (entrypoints/sidepanel) is Tabi's main surface: the toolbar icon opens it, and so
+  // does its shortcut (Ctrl+G, the manifest's _execute_action). There is no popup.
+  chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+  // Right-click: open Tabi, or run a page command in it
+  browser.runtime.onInstalled.addListener(() => {
+    chrome.contextMenus?.removeAll(() => {
+      chrome.contextMenus.create({ id: 'tabi-open', title: 'Open Tabi', contexts: ['page', 'frame', 'link', 'image'] });
+      chrome.contextMenus.create({ id: 'tabi-summarize', title: 'Summarize this page with Tabi', contexts: ['page', 'frame'] });
+      chrome.contextMenus.create({ id: 'tabi-explain', title: 'Explain “%s” with Tabi', contexts: ['selection'] });
+    });
+  });
+  chrome.contextMenus?.onClicked.addListener((info: { menuItemId: string; selectionText?: string }, tab?: { id?: number; windowId: number }) => {
+    if (tab?.id === undefined) return;
+    // open() only works in the click's user gesture, so before anything is awaited
+    chrome.sidePanel?.open({ windowId: tab.windowId }).catch(() => {});
+    const command = info.menuItemId === 'tabi-summarize' ? 'summarize' : info.menuItemId === 'tabi-explain' ? 'explain' : null;
+    if (!command) return;
+    // A panel that is just opening reads it from storage; one already open hears it
+    const pending = { tabId: tab.id, command, text: info.selectionText ?? '', at: Date.now() };
+    chrome.storage.session.set({ tabi_panel_command: pending }).catch(() => {});
+    chrome.runtime.sendMessage({ action: 'PANEL_COMMAND', payload: pending }).catch(() => {});
+  });
+
   // ---- Run timelines (lib/agent/timeline.ts), for the History page
   async function loadRunLogs(): Promise<RunLog[]> {
     const stored: any = await browser.storage.local.get(RUNS_KEY);
@@ -165,10 +188,13 @@ export default defineBackground(() => {
       }
       return annotate(captured, visual as VisualInfo);
     },
-    // frameId 0: only the top frame's content script (the sidebar) handles agent messages
+    // frameId 0: only the top frame's content script handles agent messages
     send: (tabId, message, timeoutMs) => {
       const { action, payload } = message as { action?: string; payload?: RunView };
-      if (action === 'AGENT_UPDATE') noteAttention(tabId, payload?.status);
+      if (action === 'AGENT_UPDATE') {
+        pushView(tabId, payload!);
+        return Promise.resolve({ ok: true });
+      }
       return withTimeout(chrome.tabs.sendMessage(tabId, message, { frameId: 0 }), timeoutMs, 'Page');
     },
     getTab: async (tabId) => {
@@ -184,7 +210,7 @@ export default defineBackground(() => {
     siteRules: () => loadSiteRules(),
     saveRun: (log) => saveRunLog(log),
     onAsk: async (tabId, view) => {
-      // The tab's sidebar asks; if the user can't see that tab (a background or
+      // The side panel asks; if the user can't see that tab (a background or
       // scheduled task), a notification tells them. Clicking it opens the tab.
       const tab = await chrome.tabs.get(tabId).catch(() => null);
       const focused = tab?.active && (await chrome.windows.get(tab.windowId).catch(() => null))?.focused;
@@ -199,6 +225,12 @@ export default defineBackground(() => {
     onRunEnded: (tabId) => releaseTab(tabId), // drop the debugger (and its banner)
     sleep: wait,
   };
+
+  /** Show a tab's run in the side panel (open in any window); it ignores other tabs' runs unless it lists them. */
+  function pushView(tabId: number, view: RunView): void {
+    noteAttention(tabId, view.status);
+    chrome.runtime.sendMessage({ action: 'AGENT_UPDATE', tabId, payload: view }).catch(() => {}); // no panel open
+  }
 
   // ---- Parallel tasks: at most N runs use the model at once (lib/agent/taskQueue.ts)
   /** What each waiting tab shows, by tab. */
@@ -221,14 +253,15 @@ export default defineBackground(() => {
         status: 'queued',
         message: `⏳ **Waiting to start** (${position === 1 ? 'next' : `#${position}`} in line)\n\n`
           + `${taskQueue.active} task${taskQueue.active === 1 ? ' is' : 's are'} running, and Tabi runs at most ${limit} at a time `
-          + '(Tabi popup → Agent) so free-tier rate limits hold. This one starts when a slot frees up.',
+          + '(Settings › Agent) so free-tier rate limits hold. This one starts when a slot frees up.',
         loading: true,
         step: 0,
         plan: [],
+        steps: [],
         updatedAt: Date.now(),
       };
       queuedViews.set(tabId, view);
-      chrome.tabs.sendMessage(tabId, { action: 'AGENT_UPDATE', payload: view }, { frameId: 0 }).catch(() => {});
+      pushView(tabId, view);
     },
   );
 
@@ -432,7 +465,7 @@ export default defineBackground(() => {
   };
   migrated.then(() => syncSchedules(schedulerDeps)).catch((err) => console.error('[Tabi] Schedules:', err));
 
-  // Settings can change from elsewhere too (another popup window, tests)
+  // Settings can change from elsewhere too (another Settings tab, tests)
   browser.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes[MCP_KEY]) applyMcp().catch((err) => console.error('[Tabi] MCP bridge:', err));
   });
@@ -479,6 +512,11 @@ export default defineBackground(() => {
     return !!executor && (executor.provider !== main.provider || executor.model !== main.model);
   }
 
+  /** example.com for a workflow's start page. */
+  function hostOf(url: string | undefined): string | undefined {
+    try { return url ? new URL(url).host.replace(/^www./, '') : undefined; } catch { return undefined; }
+  }
+
   function isProvider(id: unknown): id is ProviderId {
     return typeof id === 'string' && (PROVIDER_IDS as string[]).includes(id);
   }
@@ -486,6 +524,12 @@ export default defineBackground(() => {
   // Central message handler
   browser.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
     const { action, payload } = message;
+    // A content script is known by its tab, and can't name another. Tabi's own pages (the side panel,
+    // Settings) name the tab they mean; their own tab, if they're open in one, never counts.
+    const fromExtension = !!_sender.url?.startsWith(browser.runtime.getURL('/' as any));
+    const senderTab: number | undefined = fromExtension
+      ? (Number.isInteger(payload?.tabId) ? payload.tabId : undefined)
+      : _sender.tab?.id;
 
     // Handle async operations
     (async () => {
@@ -493,7 +537,7 @@ export default defineBackground(() => {
       try {
         switch (action) {
           case 'GET_LLM_SETTINGS': {
-            // The popup only ever sees masked keys
+            // Settings only ever sees masked keys
             const settings = await loadSettings();
             const maskedKeys = Object.fromEntries(PROVIDER_IDS.map(id => [id, maskKey(settings.keys[id] ?? '')]));
             // Providers with a key and model saved, which can serve as backups
@@ -568,7 +612,7 @@ export default defineBackground(() => {
           }
 
           case 'LIST_MODELS': {
-            // Uses a key typed into the popup (not saved yet) or the saved one
+            // Uses a key typed into Settings (not saved yet) or the saved one
             const { provider, apiKey, customBaseUrl } = payload ?? {};
             if (!isProvider(provider)) throw new Error('Unknown provider');
             const settings = await loadSettings();
@@ -601,8 +645,8 @@ export default defineBackground(() => {
           }
 
           case 'START_AGENT': {
-            // The sidebar asks; the background runs the whole task, surviving page loads
-            const tabId = _sender.tab?.id;
+            // The side panel asks; the background runs the whole task, surviving page loads
+            const tabId = senderTab;
             if (tabId === undefined) throw new Error('No tab');
             const goal = String(payload?.goal ?? '').trim();
             if (!goal) throw new Error('No goal');
@@ -619,7 +663,7 @@ export default defineBackground(() => {
           case 'START_BACKGROUND_TASK': {
             // "Run in background": a new tab beside this one, in the Tabi group, from this page
             // (or payload.url). payload.workflow replays one; otherwise payload.goal goes to the agent.
-            const from = _sender.tab;
+            const from = senderTab !== undefined ? await chrome.tabs.get(senderTab).catch(() => null) : null;
             const url = String(payload?.url ?? from?.url ?? '');
             if (!/^https?:\/\//.test(url)) throw new Error('Background tasks start from a web page (http or https)');
             let workflow: Workflow | undefined;
@@ -652,7 +696,7 @@ export default defineBackground(() => {
             const runs = [...listRuns(), ...[...queuedViews].map(([tabId, view]) => ({ ...view, tabId }))];
             const tasks = await Promise.all(runs.map(async (r) => {
               const tab = await chrome.tabs.get(r.tabId).catch(() => null);
-              return tab ? { tabId: r.tabId, goal: r.goal, status: r.status, step: r.step, model: r.model, updatedAt: r.updatedAt, asking: r.asking, runId: r.runId, title: tab.title, background: backgroundTabs.has(r.tabId), here: r.tabId === _sender.tab?.id } : null;
+              return tab ? { tabId: r.tabId, goal: r.goal, status: r.status, step: r.step, model: r.model, updatedAt: r.updatedAt, asking: r.asking, runId: r.runId, title: tab.title, background: backgroundTabs.has(r.tabId), here: r.tabId === senderTab } : null;
             }));
             const order = ['running', 'paused', 'queued', 'done', 'error', 'stopped'];
             sendResponse({
@@ -680,12 +724,12 @@ export default defineBackground(() => {
           }
 
           case 'STOP_AGENT': {
-            const tabId = _sender.tab?.id;
+            const tabId = senderTab;
             if (tabId !== undefined) {
               // A task still waiting for a slot is just taken out of the line
               if (taskQueue.cancel(tabId)) {
-                const stopped: RunView = { goal: '', status: 'stopped', message: "## ⏹️ Stopped\n\nIt hadn't started yet.", loading: false, step: 0, plan: [], updatedAt: Date.now() };
-                chrome.tabs.sendMessage(tabId, { action: 'AGENT_UPDATE', payload: stopped }, { frameId: 0 }).catch(() => {});
+                const stopped: RunView = { goal: '', status: 'stopped', message: "## ⏹️ Stopped\n\nIt hadn't started yet.", loading: false, step: 0, plan: [], steps: [], updatedAt: Date.now() };
+                pushView(tabId, stopped);
               } else if (payload?.forget) forgetRun(tabId);
               else stopRun(tabId);
             }
@@ -695,7 +739,7 @@ export default defineBackground(() => {
 
           case 'RESUME_AGENT': {
             // Continue a run paused at a checkpoint or because it looked stuck
-            const tabId = _sender.tab?.id;
+            const tabId = senderTab;
             if (tabId !== undefined) resumeRun(tabId);
             sendResponse({ success: true });
             break;
@@ -703,15 +747,22 @@ export default defineBackground(() => {
 
           case 'ANSWER_AGENT': {
             // "Allow this?": the user allows the action, or doesn't
-            const tabId = _sender.tab?.id;
+            const tabId = senderTab;
             if (tabId !== undefined) answerRun(tabId, !!payload?.allow);
             sendResponse({ success: true });
             break;
           }
 
+          case 'HINT_AGENT': {
+            // Typed in the side panel while the run waits for the user
+            const tabId = senderTab;
+            sendResponse({ success: true, data: tabId !== undefined && hintRun(tabId, String(payload?.text ?? '')) });
+            break;
+          }
+
           case 'GET_AGENT_STATE': {
             // A freshly loaded page asks what the agent is doing in its tab
-            const tabId = _sender.tab?.id;
+            const tabId = senderTab;
             sendResponse({ success: true, data: tabId === undefined ? null : queuedViews.get(tabId) ?? getRunView(tabId) });
             break;
           }
@@ -836,12 +887,12 @@ export default defineBackground(() => {
           }
 
           case 'PICKER_ITEMS': {
-            // The sidebar's / picker: workflows (replayed) and shortcuts (saved prompts)
+            // The side panel's / picker: workflows (replayed) and shortcuts (saved prompts)
             const [workflows, shortcuts] = await Promise.all([loadWorkflows(skillStorage), loadShortcuts(skillStorage)]);
             sendResponse({
               success: true,
               data: [
-                ...workflows.map((w) => ({ kind: 'workflow', name: w.name, detail: w.goal })),
+                ...workflows.map((w) => ({ kind: 'workflow', name: w.name, detail: w.goal, steps: w.steps.length, site: hostOf(w.startUrl) })),
                 ...shortcuts.map((s) => ({ kind: 'shortcut', name: s.name, detail: s.prompt })),
               ],
             });
@@ -859,8 +910,8 @@ export default defineBackground(() => {
           }
 
           case 'SAVE_WORKFLOW_FROM_RUN': {
-            // "Save as workflow" in the sidebar; with a name, updates that workflow (after the agent healed it)
-            const tabId = _sender.tab?.id;
+            // "Save as workflow" in the side panel; with a name, updates that workflow (after the agent healed it)
+            const tabId = senderTab;
             const record = tabId === undefined ? null : getRunRecord(tabId);
             if (!record) throw new Error('There is no finished task in this tab to save');
             if (record.status !== 'done') throw new Error('Only a task that finished can be saved as a workflow');
@@ -881,11 +932,11 @@ export default defineBackground(() => {
           }
 
           case 'RUN_WORKFLOW': {
-            // From the sidebar (/name) or the popup (in the active tab). Replay needs no model
-            // unless a step fails and the agent has to take over.
+            // From the side panel (/name, in its tab) or Settings (Run: in a new tab where it starts).
+            // Replay needs no model unless a step fails and the agent has to take over.
             const workflow = (await loadWorkflows(skillStorage)).find((w) => w.name === slugify(String(payload?.name ?? '')));
             if (!workflow) throw new Error(`There is no workflow named "${payload?.name}"`);
-            const tabId = _sender.tab?.id ?? (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id;
+            const tabId = senderTab ?? (await chrome.tabs.create({ url: workflow.startUrl ?? 'about:blank', active: true })).id;
             if (tabId === undefined) throw new Error('No tab to run it in');
             const prefs = await loadPrefs();
             runAgent(tabId, workflow.goal, {
@@ -897,8 +948,8 @@ export default defineBackground(() => {
           }
 
           case 'SAVE_SKILL_FROM_RUN': {
-            // "Save as skill" in the sidebar, after a task finished
-            const tabId = _sender.tab?.id;
+            // "Save as skill" in the side panel, after a task finished
+            const tabId = senderTab;
             const record = tabId === undefined ? null : getRunRecord(tabId);
             if (!record) throw new Error('There is no finished task in this tab to learn from');
             if (record.status !== 'done') throw new Error('Only a task that finished can be saved as a skill');
@@ -909,7 +960,7 @@ export default defineBackground(() => {
           }
 
           case 'GET_MCP': {
-            // The popup sees whether a token is saved, never the token
+            // Settings sees whether a token is saved, never the token
             const mcp = await loadMcp();
             sendResponse({
               success: true,

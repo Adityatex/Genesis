@@ -3,9 +3,9 @@
 // History page. A fake model signs in on a test page (typing a password),
 // then says done. The run must be saved, listed, and shown step by step
 // with its model calls and token counts, the password masked everywhere,
-// including the Markdown export. OPEN_HISTORY (what a finished task's
-// notification does) must open the page at that run, and Delete must remove
-// it. No real model or API key is involved.
+// including the Markdown export and the side panel's steps. "See the full
+// timeline" in the panel must open the page at that run, and Delete must
+// remove it. No real model or API key is involved.
 //
 //   npm run build && npm run eval:history   (-- --headed to watch)
 
@@ -15,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startFixtureServer } from './server.mts';
+import { openPanel, runState, sendTask } from './panel.mts';
 
 declare const chrome: any;
 
@@ -72,13 +73,16 @@ async function main(): Promise<void> {
       ] })));
     });
 
-    // 1. A run from the sidebar
+    // 1. A run from the side panel
     const page = await context.newPage();
     await page.goto(`${fixtures.baseUrl}/login.html`);
-    await page.locator('[title="Open Tabi"]').click({ timeout: 15_000 });
-    await page.locator('textarea[placeholder^="Describe action"]').fill(GOAL);
-    await page.keyboard.press('Enter');
-    await page.locator('.markdown-body', { hasText: 'Task Complete' }).first().waitFor({ timeout: 30_000 });
+    const panel = await openPanel(context, worker, page);
+    await sendTask(panel, GOAL);
+    await panel.locator('[data-run-status="done"]').waitFor({ timeout: 30_000 });
+    // The steps the panel shows (in the stream while it runs; the done screen sums up instead)
+    const steps = ((await runState(panel))?.steps ?? []).map((st: any) => st.action).join(' | ');
+    check('the panel has the steps in plain words, password hidden',
+      steps.includes('Typed a password into “Password”') && steps.includes('Clicked “Sign in”') && !steps.includes(PASSWORD) && !(await panel.content()).includes(PASSWORD), steps.slice(0, 400));
 
     // 2. It's saved
     let stored: any[] = [];
@@ -91,11 +95,9 @@ async function main(): Promise<void> {
     check('with its model calls and tokens', run?.calls === 2 && run?.tokens === 2560, `calls ${run?.calls}, tokens ${run?.tokens}`);
     check('and the password masked', !JSON.stringify(stored).includes(PASSWORD) && JSON.stringify(stored).includes('••••'));
 
-    // 3. The History page, opened as a finished task's notification would open it
-    const popup = await context.newPage();
-    await popup.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
+    // 3. The History page, from "See the full timeline" in the panel
     const opened = context.waitForEvent('page', { predicate: (p) => p.url().includes('/history.html') });
-    await popup.evaluate((id) => chrome.runtime.sendMessage({ action: 'OPEN_HISTORY', payload: { runId: id } }), run?.id);
+    await panel.getByRole('button', { name: 'See the full timeline' }).click();
     const history = await opened;
     await history.waitForLoadState();
     check('it opens at that run', history.url().endsWith(`/history.html#${run?.id}`), history.url());

@@ -1,5 +1,5 @@
 // eval/schedule-e2e.mts
-// End-to-end check of schedules: the popup saves a schedule for a workflow,
+// End-to-end check of schedules: Settings saves a schedule for a workflow,
 // a real Chrome alarm goes off, the workflow replays in a background tab with
 // no model, the result is recorded, the tab closes and a notification shows.
 // No model or API key is involved.
@@ -62,15 +62,15 @@ async function main(): Promise<void> {
     };
     await worker.evaluate((w) => chrome.storage.local.set({ tabi_workflows: [w] }), workflow);
 
-    // The popup schedules it, as a user would
-    const popup = await context.newPage();
-    await popup.goto(`chrome-extension://${extensionId}/popup.html`);
-    const saved: any = await popup.evaluate(() => chrome.runtime.sendMessage({
+    // Settings schedules it, as a user would
+    const settings = await context.newPage();
+    await settings.goto(`chrome-extension://${extensionId}/options.html`);
+    const saved: any = await settings.evaluate(() => chrome.runtime.sendMessage({
       action: 'SAVE_SCHEDULE',
       payload: { kind: 'workflow', name: 'log-in-as-demo', frequency: 'daily', time: '03:00' },
     }));
     const schedule = saved?.data?.[0];
-    check('the popup saves a schedule', saved?.success === true && schedule?.nextRun > Date.now(), JSON.stringify(saved));
+    check('Settings saves a schedule', saved?.success === true && schedule?.nextRun > Date.now(), JSON.stringify(saved));
     const alarm: any = await worker.evaluate((id) => chrome.alarms.get(`tabi-schedule:${id}`), schedule.id);
     check('its Chrome alarm is set for the next run', alarm?.scheduledTime === schedule.nextRun, JSON.stringify(alarm));
     const tabsBefore = context.pages().length;

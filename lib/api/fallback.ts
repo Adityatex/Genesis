@@ -111,7 +111,7 @@ export class ProviderPool {
       return this.run(chain, call);
     }
     const why = skipped.map((s) => `${s.label} ${s.reason}`).join('; ');
-    throw new LLMError(`No provider can answer right now: ${why}. Add a backup provider in the Tabi popup, or try again later.`, 'rate-limit');
+    throw new LLMError(`No provider can answer right now: ${why}. Add a backup provider in Tabi's Settings, or try again later.`, 'rate-limit');
   }
 }
 

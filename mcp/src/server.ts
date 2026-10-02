@@ -171,7 +171,7 @@ function setupHelp(token: string): string {
     '',
     `  ${token}`,
     '',
-    'In Chrome: open the Tabi popup, turn on "Let AI apps control this browser" and paste the token.',
+    'In Chrome: open Tabi Settings, turn on "Let AI apps control this browser" and paste the token.',
     '',
     'Then add tabi-mcp to your AI app, e.g.:',
     `  Claude Code:     claude mcp add tabi -- node "${script}"`,

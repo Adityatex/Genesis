@@ -1,9 +1,10 @@
 // eval/confirm-e2e.mts
 // End-to-end check of "Allow this?" (lib/agent/confirm.ts). A fake model
-// types a chat message and clicks Send. In the sidebar the user answers
+// types a chat message and clicks Send. In the side panel the user answers
 // "Don't allow": nothing is sent and the model is told to finish without it.
 // Then the same task runs in a background tab: it shows in the task list with
-// what it wants to do, a notification asks, and "Allow" in the popup sends it.
+// what it wants to do, a notification asks, and "Allow" in the panel's
+// "tasks in other tabs" strip sends it, without switching tabs.
 // No real model or API key is involved.
 //
 //   npm run build && npm run eval:confirm   (-- --headed to watch)
@@ -14,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startFixtureServer } from './server.mts';
+import { openPanel, runState, sendTask } from './panel.mts';
 
 declare const chrome: any;
 
@@ -71,51 +73,48 @@ async function main(): Promise<void> {
       })));
     });
 
-    // 1. In the sidebar: Don't allow
+    // 1. In the side panel: Don't allow
     const page = await context.newPage();
     await page.goto(`${fixtures.baseUrl}/editor.html`);
-    await page.locator('[title="Open Tabi"]').click({ timeout: 15_000 });
-    const input = page.locator('textarea[placeholder^="Describe action"]');
-    await input.fill(GOAL);
-    await page.keyboard.press('Enter');
-    const asking = page.locator('[data-asking]');
+    const panel = await openPanel(context, worker, page);
+    await sendTask(panel, GOAL);
+    const asking = panel.locator('[data-asking]');
     await asking.waitFor({ timeout: 20_000 });
-    check('the sidebar asks before clicking "Send"', (await asking.getAttribute('data-asking')) === 'click "Send"', String(await asking.getAttribute('data-asking')));
+    check('the panel asks before clicking "Send"', (await asking.getAttribute('data-asking')) === 'click "Send"', String(await asking.getAttribute('data-asking')));
     check('and says why', (await asking.innerText()).includes('sending a message or post'));
     check('the message is typed, not sent, while it asks', !sent() && (await page.locator('#editor').innerText()).includes('Hello team'));
-    await page.getByRole('button', { name: "Don't allow" }).click();
-    const final = page.locator('.markdown-body', { hasText: 'Task Complete' });
-    await final.first().waitFor({ timeout: 20_000 });
-    const text = await final.first().innerText();
+    await panel.getByRole('button', { name: "Don't allow" }).click();
+    await panel.locator('[data-run-status="done"]').waitFor({ timeout: 20_000 });
+    const text: string = (await runState(panel))?.message ?? '';
     check("Don't allow: nothing is sent", !sent(), JSON.stringify(fixtures.events));
     check('the model is told, and finishes without it', text.includes("the user didn't allow it") && text.includes('left to you'), text.slice(0, 400));
     check('the question goes away', (await asking.count()) === 0);
 
-    // 2. In a background tab: the task list and a notification ask; Allow from the popup
+    // 2. In a background tab: the task list and a notification ask; Allow from the panel's strip
     fixtures.reset();
-    await input.fill(GOAL);
-    await page.getByRole('button', { name: 'Run in background' }).click();
-    const popup = await context.newPage();
-    await popup.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
+    await sendTask(panel, GOAL, { background: true });
     let task: any;
     for (let i = 0; i < 80 && !task; i++) {
-      const tasks = (await popup.evaluate(() => chrome.runtime.sendMessage({ action: 'LIST_TASKS' })) as any)?.data ?? [];
+      const tasks = (await panel.evaluate(() => chrome.runtime.sendMessage({ action: 'LIST_TASKS' })) as any)?.data ?? [];
       task = tasks.find((t: any) => t.asking);
-      if (!task) await popup.waitForTimeout(250);
+      if (!task) await panel.waitForTimeout(250);
     }
     check('the task list shows what a background task wants to do', task?.asking?.action === 'click "Send"', JSON.stringify(task));
     // The notification follows the task list by a moment (it checks the tab first)
     let notes: string[] = [];
     for (let i = 0; i < 20 && !notes.includes(`tabi-task:${task?.tabId}`); i++) {
-      if (i) await popup.waitForTimeout(250);
+      if (i) await panel.waitForTimeout(250);
       notes = Object.keys(await worker.evaluate(() => new Promise((resolve) => chrome.notifications.getAll(resolve))) as object);
     }
     check('a notification asks for the OK', notes.includes(`tabi-task:${task?.tabId}`), JSON.stringify(notes));
     check('nothing is sent before the answer', !sent());
-    await popup.reload();
-    await popup.getByRole('button', { name: 'Allow', exact: true }).click({ timeout: 10_000 });
-    for (let i = 0; i < 40 && !sent(); i++) await popup.waitForTimeout(250);
-    check('Allow in the popup: it sends', sent(), JSON.stringify(fixtures.events));
+    const strip = panel.locator('[data-testid="tasks-elsewhere"]');
+    await strip.getByText('1 needs you').waitFor({ timeout: 10_000 });
+    check('the panel says a task elsewhere needs you', (await strip.innerText()).includes('1 task in other tabs'), await strip.innerText());
+    await strip.getByRole('button', { name: /task in other tabs/ }).click();
+    await strip.getByRole('button', { name: 'Allow', exact: true }).click({ timeout: 10_000 });
+    for (let i = 0; i < 40 && !sent(); i++) await panel.waitForTimeout(250);
+    check('Allow in the panel, without switching tabs: it sends', sent(), JSON.stringify(fixtures.events));
   } finally {
     await context.close().catch(() => {});
     await fixtures.close();

@@ -11,7 +11,7 @@
 //   1. Open "My account" at the top right, then "Orders".
 //   ...
 //
-// No DOM access: used by the background (runner, storage) and the popup.
+// No DOM access: used by the background (runner, storage) and Settings.
 
 export interface Skill {
   name: string;

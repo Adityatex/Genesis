@@ -1,5 +1,5 @@
 // lib/utils/markdown.ts
-// Shared markdown-lite renderer for sidebar chat (extracted from App.tsx, no behavior change)
+// A small Markdown renderer for answers in the side panel (escapes HTML first)
 
 export function renderMarkdown(text: string): string {
   if (!text) return '';

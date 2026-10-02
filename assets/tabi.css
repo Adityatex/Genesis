@@ -1,0 +1,197 @@
+/* assets/tabi.css
+   Tabi's look, shared by the side panel, Settings and History: the design
+   tokens (light by default, dark with the system setting), the fonts and the
+   Tailwind theme that maps utilities onto the tokens (bg-surface, text-muted,
+   border-border, rounded-card...). Colour rules: amber means "needs you" and
+   nothing else, green = done, red = blocked/failed/danger, accent = brand,
+   running and primary actions. A state colour always comes with an icon. */
+
+/* Fonts: Geist and Geist Mono, self-hosted (the extension's security policy blocks remote fonts),
+   imported next to this file from each page's script so the bundler copies the font files */
+@import 'tailwindcss';
+
+:root {
+  --bg: #F6F6F4;            /* panel + page background */
+  --surface: #FFFFFF;       /* cards, rows */
+  --raised: #FFFFFF;        /* menus, inputs, popovers (with shadow) */
+  --border: #E3E3DF;        /* dividers, card edges */
+  --border-strong: #CFCFCA; /* control outlines, empty plan dots */
+  --text: #121212;
+  --muted: #5F5F5B;
+  --accent: #2B45D8;        /* brand = running = primary action */
+  --accent-text: #FFFFFF;
+  --accent-soft: #E5E9FB;   /* running tints, selected rows */
+  --amber: #995000;         /* needs you: text + icons */
+  --amber-bg: #FFF1D9;      /* needs you: card fill */
+  --amber-line: #E9A23E;    /* needs you: card border */
+  --amber-solid: #FFB23F;   /* needs you: buttons, band, glow */
+  --amber-on: #241500;      /* text on amber-solid */
+  --green: #1F7A3D;         /* done */
+  --green-bg: #E2F3E6;
+  --red: #C2271D;           /* blocked / failed / danger */
+  --red-bg: #FDE6E3;
+
+  --font: 'Geist Variable', 'Geist', system-ui, sans-serif;
+  --mono: 'Geist Mono Variable', 'Geist Mono', ui-monospace, monospace;
+  --r: 4px;                 /* controls + cards inside the panel */
+  --r-card: 6px;            /* section cards, needs-you cards */
+  --focus: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, .14);
+  --shadow-ask: 0 6px 20px rgba(0, 0, 0, .12);
+  --shadow-toast: 0 10px 30px rgba(0, 0, 0, .2);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0F0F10;
+    --surface: #171719;
+    --raised: #202023;
+    --border: #2D2D31;
+    --border-strong: #3D3D42;
+    --text: #F1F1EF;
+    --muted: #9D9DA4;
+    --accent: #8394FF;
+    --accent-text: #0B0F33;
+    --accent-soft: #1A2050;
+    --amber: #FFB547;
+    --amber-bg: #2A1F0C;
+    --amber-line: #8F6420;
+    --amber-solid: #FFB23F;
+    --amber-on: #241500;
+    --green: #5DCB80;
+    --green-bg: #10231A;
+    --red: #FF6E61;
+    --red-bg: #2C1412;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-text: var(--accent-text);
+  --color-accent-soft: var(--accent-soft);
+  --color-amber: var(--amber);
+  --color-amber-bg: var(--amber-bg);
+  --color-amber-line: var(--amber-line);
+  --color-amber-solid: var(--amber-solid);
+  --color-amber-on: var(--amber-on);
+  --color-green: var(--green);
+  --color-green-bg: var(--green-bg);
+  --color-red: var(--red);
+  --color-red-bg: var(--red-bg);
+  --font-sans: var(--font);
+  --font-mono: var(--mono);
+  --radius-ctl: var(--r);
+  --radius-card: var(--r-card);
+  --shadow-pop: var(--shadow-pop);
+  --shadow-ask: var(--shadow-ask);
+}
+
+@layer base {
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Every control shows where the keyboard is */
+  :focus-visible {
+    outline: none;
+    box-shadow: var(--focus);
+  }
+  button:not(:disabled), [role='button']:not([aria-disabled='true']) {
+    cursor: pointer;
+  }
+  ::selection {
+    background: var(--accent-soft);
+  }
+}
+
+@layer components {
+  /* Type scale (Geist) */
+  .t-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--muted);
+  }
+
+  /* Buttons: 32px default, 26px small */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: var(--r);
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: background-color .15s, border-color .15s, color .15s;
+  }
+  .btn-sm { height: 26px; padding: 0 10px; font-size: 12px; gap: 5px; }
+  .btn:disabled { opacity: .5; }
+  .btn-primary { background: var(--accent); color: var(--accent-text); }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+  .btn-secondary { background: var(--raised); color: var(--text); border: 1px solid var(--border-strong); }
+  .btn-secondary:hover:not(:disabled) { border-color: var(--muted); }
+  .btn-quiet { color: var(--muted); }
+  .btn-quiet:hover:not(:disabled) { color: var(--text); background: var(--surface); }
+  .btn-danger { background: var(--red); color: #fff; }
+  .btn-amber { background: var(--amber-solid); color: var(--amber-on); box-shadow: 0 0 0 2px var(--amber-bg), 0 0 0 4px var(--amber-line); font-weight: 600; }
+
+  /* Square icon buttons in headers */
+  .icon-btn {
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border-radius: var(--r);
+    color: var(--muted);
+    transition: background-color .15s, color .15s;
+  }
+  .icon-btn:hover { background: var(--surface); color: var(--text); }
+
+  /* Pills and chips: 24px */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 24px;
+    padding: 0 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    font-size: 11.5px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .chip-on { border-color: transparent; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+  .scroll-thin { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+
+  /* Answers, rendered from the model's Markdown (lib/utils/markdown.ts) */
+  .answer strong { font-weight: 600; }
+  .answer .md-h1, .answer .md-h2, .answer .md-h3 { font-size: 14px; font-weight: 600; margin: 6px 0 2px; }
+  .answer .md-ul { margin: 2px 0; padding-left: 18px; list-style: disc; }
+  .answer .md-oli { margin-left: 18px; list-style: decimal; }
+  .answer .md-quote { border-left: 2px solid var(--border-strong); padding-left: 10px; color: var(--muted); }
+  .answer .md-hr { border: 0; border-top: 1px solid var(--border); margin: 8px 0; }
+  .answer .inline-code { font-family: var(--mono); font-size: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; }
+  .answer .code-block { font-family: var(--mono); font-size: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 8px 10px; overflow-x: auto; white-space: pre-wrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

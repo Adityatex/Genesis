@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { startRun, stopRun, resumeRun, answerRun, getRunView, notifyTabLoading, changesSection, textChanges, PLANNER_EVERY, type RunnerDeps, type RunView, type TabInfo } from '@/lib/agent/runner';
+import { startRun, stopRun, resumeRun, answerRun, hintRun, getRunView, notifyTabLoading, changesSection, textChanges, PLANNER_EVERY, type RunnerDeps, type RunView, type TabInfo } from '@/lib/agent/runner';
 import { promptHistory, PROMPT_RECENT_STEPS } from '@/lib/agent/history';
 
 /**
@@ -551,6 +551,42 @@ describe('asking before actions that cannot be undone', () => {
     expect(result.status).toBe('done');
     expect(executed(deps)).toEqual([]); // nor the rest of the batch
     expect(prompts[1][0]).toMatch(/^click \[7\] → ⛔ not run: the user didn't allow it\. Don't do it, or anything else with the same effect; finish with "done"/);
+  });
+
+  it('shows each step in plain words for the panel, the one it asks about as waiting', async () => {
+    const asked: RunView[] = [];
+    const { deps } = fakeDeps(['{"actions":[{"action":"click","elementId":8},{"action":"click","elementId":7}]}', '{"action":"done","summary":"Ordered"}'], {
+      targets,
+      onPause: (view) => { asked.push(view); answerRun(35, true); },
+    });
+    const result = await startRun(deps, 35, 'Buy it', { confirm: true });
+    expect(asked[0].steps.map((s) => [s.n, s.status, s.action, s.result])).toEqual([
+      [1, 'ok', 'Clicked “Add to cart”', 'Done'],
+      [2, 'wait', 'Click “Place order”', 'Waiting for you'],
+    ]);
+    expect(result.steps.map((s) => [s.status, s.action])).toEqual([['ok', 'Clicked “Add to cart”'], ['ok', 'Clicked “Place order”']]);
+    expect(result.steps[0].element).toBe('<button> "Add to cart"');
+    expect(result).toMatchObject({ outcome: 'Ordered', calls: 2, phase: undefined });
+    expect(result.started).toBeGreaterThan(0);
+  });
+
+  it('shows a step the user refused as not run', async () => {
+    const { deps } = fakeDeps(['{"action":"click","elementId":7}', '{"action":"done","summary":"Left it"}'], { targets, onPause: () => answerRun(36, false) });
+    const result = await startRun(deps, 36, 'Buy it', { confirm: true });
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0]).toMatchObject({ status: 'skip', action: 'Click “Place order”' });
+    expect(result.steps[0].result).toMatch(/^Not run: the user didn't allow it\./);
+  });
+
+  it('takes a hint typed while it waits, and carries on with it', async () => {
+    const { deps, prompts } = fakeDeps(['{"action":"click","elementId":7}', '{"action":"done","summary":"ok"}'], {
+      targets, onPause: () => expect(hintRun(37, 'Use the saved card')).toBe(true),
+    });
+    const result = await startRun(deps, 37, 'Buy it', { confirm: true });
+    expect(result.status).toBe('done');
+    expect(prompts[1][0]).toBe('(note from Tabi) The user says: "Use the saved card"');
+    expect(prompts[1][1]).toMatch(/^click \[7\] → ⛔ not run: the user didn't allow it/);
+    expect(hintRun(37, 'too late')).toBe(false);
   });
 
   it('stops when the user stops instead of answering', async () => {

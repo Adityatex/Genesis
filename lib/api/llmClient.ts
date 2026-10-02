@@ -303,11 +303,11 @@ export async function callLLM(messages: ChatMessage[], config: LLMConfig, opts: 
         }
 
         if (response.status === 401 || response.status === 403) {
-          throw new LLMError(`${config.label} rejected the API key (${response.status}): ${errorMessage(errorBody)}. Update it in the Tabi popup.`, 'auth');
+          throw new LLMError(`${config.label} rejected the API key (${response.status}): ${errorMessage(errorBody)}. Update it in Tabi's Settings.`, 'auth');
         }
 
         if (isModelNotFound(response.status, errorBody)) {
-          throw new LLMError(`${config.label} doesn't offer the model "${config.model}" to this key. Pick another with "Load models" in the Tabi popup.`, 'model');
+          throw new LLMError(`${config.label} doesn't offer the model "${config.model}" to this key. Pick another with "Load models" in Tabi's Settings.`, 'model');
         }
 
         if (response.status === 429) {

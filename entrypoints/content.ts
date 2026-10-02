@@ -1,32 +1,24 @@
-// entrypoints/sidebar.content/index.tsx
-// Content script entry — injects the Tabi sidebar via Shadow DOM
+// entrypoints/content.ts
+// Tabi in the page: eyes and hands, no UI. The agent runner in the background
+// reads the page (AGENT_SNAPSHOT) and acts on it (AGENT_EXECUTE) through this
+// script, and the side panel asks it for the page's text, the selection, or an
+// autofill. Cross-origin frames have their own script (frame.content.ts).
 
-import ReactDOM from 'react-dom/client';
-import App from './App';
-import './sidebar.css';
 import { createPageSnapshot } from '@/lib/agent/frames';
 import { executeAction } from '@/lib/agent/actionExecutor';
 import { viewportMarks, describeElement, resolveElement, commitTarget } from '@/lib/agent/domSnapshot';
+import { extractVisibleText } from '@/lib/dom/extractVisibleText';
+import { fillForm, fillDropdowns } from '@/lib/automation/formAutofill';
+import { loadStoredProfile, isProfileEmpty } from '@/lib/automation/profile';
 import { reportColorScheme } from '@/lib/utils/toolbarIcon';
 
 export default defineContentScript({
   matches: ['<all_urls>'],
-  cssInjectionMode: 'ui',
 
-  async main(ctx) {
+  main() {
     // The toolbar icon's ink follows the browser's light or dark theme
     reportColorScheme();
 
-    let ui: Awaited<ReturnType<typeof createShadowRootUi>> | undefined;
-
-    /** Left edge of the open sidebar (CSS px), so screenshots can leave it out. */
-    const sidebarLeft = (): number | null => {
-      const panel = ui?.shadow?.querySelector('#tabi-app')?.firstElementChild;
-      const rect = panel?.getBoundingClientRect();
-      return rect && rect.width > 200 && rect.right >= window.innerWidth - 2 ? rect.left : null;
-    };
-
-    // Eyes and hands for the agent runner in the background (lib/agent/runner.ts)
     browser.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {
       switch (message?.action) {
         case 'AGENT_PING':
@@ -41,7 +33,8 @@ export default defineContentScript({
                 visual: {
                   marks: viewportMarks(),
                   viewport: { width: window.innerWidth, height: window.innerHeight },
-                  cropRight: sidebarLeft(),
+                  // The side panel is outside the page, so there is nothing to crop
+                  cropRight: null,
                 },
               } : {}),
             }))
@@ -64,27 +57,24 @@ export default defineContentScript({
           // Workflows: find a recorded element again (after AGENT_SNAPSHOT)
           sendResponse({ id: resolveElement(message.target) });
           return;
+        case 'PAGE_TEXT':
+          // Answers and summaries in the side panel
+          sendResponse({ text: extractVisibleText(), title: document.title });
+          return;
+        case 'PAGE_SELECTION':
+          sendResponse({ text: window.getSelection()?.toString().trim() ?? '' });
+          return;
+        case 'AUTOFILL':
+          // Fill the page's form from the user's saved profile
+          loadStoredProfile()
+            .then(profile => {
+              if (isProfileEmpty(profile)) return sendResponse({ empty: true });
+              const { filled, skipped } = fillForm(profile);
+              sendResponse({ filled: filled + fillDropdowns(profile), skipped });
+            })
+            .catch(err => sendResponse({ error: err?.message ?? String(err) }));
+          return true;
       }
     });
-
-    ui = await createShadowRootUi(ctx, {
-      name: 'tabi-sidebar',
-      position: 'overlay',
-      zIndex: 2147483647,
-      onMount: (container) => {
-        container.id = 'tabi-sidebar-root';
-        const app = document.createElement('div');
-        app.id = 'tabi-app';
-        container.append(app);
-        const root = ReactDOM.createRoot(app);
-        root.render(<App />);
-        return root;
-      },
-      onRemove: (root) => {
-        root?.unmount();
-      },
-    });
-
-    ui.mount();
   },
 });

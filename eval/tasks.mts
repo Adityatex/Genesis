@@ -49,7 +49,7 @@ export interface Task {
   knownIssue?: string;
   /**
    * What the agent should ask the user to allow (buying, sending, ...), in
-   * order, as the sidebar words it: 'click "Place order"'. Mock runs must ask
+   * order, as the runner words it: 'click "Place order"'. Mock runs must ask
    * exactly these, and nothing for a task without them. Steps the safety check
    * stopped start with "blocked: " (the eval answers those "Don't allow", as a
    * careful user would; in mock runs the check says no to everything it sees).

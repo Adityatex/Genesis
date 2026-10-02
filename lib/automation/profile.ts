@@ -1,6 +1,6 @@
 // lib/automation/profile.ts
 // User-owned autofill profile, persisted in chrome.storage.local.
-// Popup edits it, sidebar reads it. Falls back to DEFAULT_PROFILE on first run.
+// Settings edits it, the page reads it (autofill). Falls back to DEFAULT_PROFILE on first run.
 
 export interface AutofillProfile {
   fullname: string;

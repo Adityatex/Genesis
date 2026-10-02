@@ -1,6 +1,6 @@
 // entrypoints/history/App.tsx
 // The History page: past agent runs, and each one's timeline (lib/agent/timeline.ts).
-// Opened from the popup, and from a finished background or scheduled task's notification.
+// Opened from the side panel, and from a finished background or scheduled task's notification.
 import { useCallback, useEffect, useState } from 'react';
 import { formatDuration, formatRunLog, MAX_RUNS, type EntryKind, type RunLog, type TimelineEntry } from '@/lib/agent/timeline';
 
@@ -97,7 +97,7 @@ export default function App() {
       {runs === null ? null : runs.length === 0 ? (
         <div className="empty">
           <p><strong>No runs yet.</strong></p>
-          <p className="muted">Every task the agent runs shows up here: from the sidebar, in the background, on a schedule, or from an AI app through MCP.</p>
+          <p className="muted">Every task the agent runs shows up here: from the side panel, in the background, on a schedule, or from an AI app through MCP.</p>
         </div>
       ) : (
         <div className="columns">

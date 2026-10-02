@@ -1,6 +1,6 @@
 // eval/run.mts
 // End-to-end benchmark: loads the built extension into Chromium, types each
-// task's goal into the real sidebar, and grades the result from what the
+// task's goal into the real side panel (eval/panel.mts), and grades the result from what the
 // fixture server recorded.
 //
 //   npm run eval                 live run (default provider Groq, needs GROQ_API_KEY)
@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { startFixtureServer, type FixtureServer } from './server.mts';
 import { redact } from './redact.mts';
+import { openPanel, runState, sendTask } from './panel.mts';
 import { shortcutName } from '../lib/shortcuts/shortcut.ts';
 import { TASKS, type Task, type MockStep } from './tasks.mts';
 import { isAgentCommand } from '../lib/agent/history.ts';
@@ -313,14 +314,15 @@ async function launch(apiKey: string, skills: unknown[] = [], workflows: unknown
   return { context, userDataDir };
 }
 
-/** Final agent message text, or '' while the agent is still running. */
-async function readOutcome(page: Page): Promise<string> {
-  try {
-    const texts = await page.locator('.markdown-body').allInnerTexts();
-    return texts.reverse().find(t => OUTCOME_RE.test(t)) ?? '';
-  } catch {
-    return ''; // page is mid-navigation
-  }
+/**
+ * The run's final message, or '' while it's still going: what the panel shows
+ * comes from the same state. A task that couldn't start shows its error in the panel.
+ */
+async function readOutcome(panel: Page): Promise<string> {
+  const view = await runState(panel);
+  if (view && OUTCOME_RE.test(view.message ?? '') && !view.asking) return view.message;
+  const error = await panel.locator('[data-testid="answers"] [role="alert"]').last().innerText({ timeout: 200 }).catch(() => '');
+  return error ? `Couldn't run it: ${error}` : '';
 }
 
 // ---------------------------------------------------------------- runner
@@ -418,32 +420,31 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
   try {
     const page = await context.newPage();
     await page.goto(server.baseUrl + task.start);
-    await page.locator('[title="Open Tabi"]').click({ timeout: 15_000 });
+    const panel = await openPanel(context, context.serviceWorkers()[0], page);
     // --replay: later trials replay the saved workflow, typed as /name like a user would
-    await page.locator('textarea[placeholder^="Describe action"]').fill(workflow ? `/${workflow[0].name}` : shortcut ? `/${shortcut.name.slice(0, 5)}` : task.goal);
-    await page.keyboard.press('Enter');
+    await sendTask(panel, workflow ? `/${workflow[0].name}` : shortcut ? `/${shortcut.name.slice(0, 5)}` : task.goal);
 
     let finalText = '';
     while (Date.now() - started < TIMEOUT_MS) {
-      finalText = await readOutcome(page);
+      finalText = await readOutcome(panel);
       if (finalText) break;
       // "Allow this?": as a careful user would, allow what the task needs (buying,
       // sending) and refuse what the safety check stopped; note what was asked
-      const asking = page.locator('[data-asking]');
+      const asking = panel.locator('[data-asking]');
       if (await asking.count().catch(() => 0)) {
         const what = await asking.getAttribute('data-asking').catch(() => null);
         const blocked = (await asking.getAttribute('data-risk').catch(() => null)) === 'off-task';
         if (what) {
           result.asked.push(blocked ? `blocked: ${what}` : what);
           log(`asked: ${blocked ? 'blocked: ' : ''}${what}`);
-          await page.getByRole('button', { name: blocked ? "Don't allow" : 'Allow', exact: true }).click({ timeout: 5_000 }).catch(() => {});
+          await panel.getByRole('button', { name: blocked ? "Don't allow" : /^Allow( for this task)?$/ }).click({ timeout: 5_000 }).catch(() => {});
           await asking.waitFor({ state: 'detached', timeout: 10_000 }).catch(() => {});
         }
         continue;
       }
-      await page.waitForTimeout(500).catch(() => {});
+      await panel.waitForTimeout(500).catch(() => {});
     }
-    await page.waitForTimeout(1000).catch(() => {}); // let trailing fetches land
+    await panel.waitForTimeout(1000).catch(() => {}); // let trailing fetches land
 
     result.outcome = !finalText ? 'timeout'
       : finalText.includes('Task Complete') ? 'done'
@@ -487,14 +488,14 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
       throw new Error(`the workflow replay called the model ${result.llmCalls} times; it should replay with none`);
     }
     if (args.replay && passed && !savedWorkflows.has(task.id)) {
-      await page.getByRole('button', { name: 'Save as workflow' }).click({ timeout: 10_000 });
-      const saved = page.locator('.markdown-body', { hasText: /Workflow saved:|Couldn't save a workflow/ });
+      await panel.getByRole('button', { name: 'Save as workflow' }).click({ timeout: 10_000 });
+      const saved = panel.locator('[data-testid="save-result"]', { hasText: /Workflow saved:|Couldn't save a workflow/ });
       await saved.first().waitFor({ timeout: 30_000 }).catch(async (err) => {
-        // Rare in CI order; say what the sidebar showed instead
-        const messages = (await page.locator('.markdown-body').allInnerTexts().catch(() => [])).slice(-2).map((t) => t.slice(0, 150).replace(/\s+/g, ' '));
-        const button = await page.getByRole('button', { name: 'Save as workflow' }).isVisible().catch(() => false);
+        // Rare in CI order; say what the panel showed instead
+        const messages = [(await panel.locator('[data-testid="ending"]').innerText().catch(() => '')).slice(0, 300).replace(/\s+/g, ' ')];
+        const button = await panel.getByRole('button', { name: 'Save as workflow' }).isVisible().catch(() => false);
         // Disabled = the click landed and the save request never answered; enabled = the click was lost
-        const busy = await page.getByRole('button', { name: 'Save as workflow' }).isDisabled().catch(() => false);
+        const busy = await panel.getByRole('button', { name: 'Save as workflow' }).isDisabled().catch(() => false);
         throw new Error(`no "Workflow saved" message (button still shown: ${button}, busy: ${busy}; last messages: ${JSON.stringify(messages)}): ${(err as Error).message.split('\n')[0]}`);
       });
       const all: any[] = await context.serviceWorkers()[0].evaluate(async () => (await chrome.storage.local.get('tabi_workflows')).tabi_workflows ?? []);
@@ -510,8 +511,8 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
     }
     if (args.learn && passed && !learnedSkills.has(task.id)) {
       learning = true;
-      await page.getByRole('button', { name: 'Save as skill' }).click({ timeout: 10_000 });
-      const saved = page.locator('.markdown-body', { hasText: /Skill saved:|Couldn't save a skill/ });
+      await panel.getByRole('button', { name: 'Save as skill' }).click({ timeout: 10_000 });
+      const saved = panel.locator('[data-testid="save-result"]', { hasText: /Skill saved:|Couldn't save a skill/ });
       await saved.first().waitFor({ timeout: 120_000 });
       learning = false;
       const skills: any[] = await context.serviceWorkers()[0].evaluate(async () => (await chrome.storage.local.get('tabi_skills')).tabi_skills ?? []);

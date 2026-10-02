@@ -26,6 +26,8 @@
     "eval:history": "tsx eval/history-e2e.mts"
   },
   "dependencies": {
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
     "lucide-react": "^1.8.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"

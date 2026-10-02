@@ -1,5 +1,5 @@
 // lib/agent/prefs.ts
-// Agent preferences, stored in chrome.storage.local and edited in the popup.
+// Agent preferences, stored in chrome.storage.local and edited in Settings.
 
 export interface AgentPrefs {
   /**

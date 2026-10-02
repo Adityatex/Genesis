@@ -2,7 +2,7 @@
 // The user's own rules for where the agent may act: a block list (never act
 // on these sites) and an optional allow list (only these, ask about others).
 // Checked in code, not by a model, so no page can argue its way past them.
-// Applies to every run (sidebar, background, schedules, workflow replays) and
+// Applies to every run (side panel, background, schedules, workflow replays) and
 // to AI apps driving the browser through tabi-mcp.
 
 import { siteOf } from '@/lib/agent/critic';

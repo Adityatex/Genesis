@@ -1,6 +1,6 @@
 # Tabi eval harness
 
-End-to-end benchmark for the agent. Each run loads the **built extension** into Chromium with Playwright, opens a local test page, types the task's goal into the real sidebar, and waits for the agent to finish.
+End-to-end benchmark for the agent. Each run loads the **built extension** into Chromium with Playwright, opens a local test page, types the task's goal into the real side panel (opened in a window of its own, pinned to the test page's tab: Chrome won't let a test open the side panel itself), and waits for the agent to finish.
 
 Tasks are graded by what actually happened, not by what the agent says. The fixture server records every request under `/api/`, and each task's `check` looks at those records. A task passes only if the right side effects happened **and** the agent finished with "Task Complete". An agent that does the work and then hangs still fails.
 

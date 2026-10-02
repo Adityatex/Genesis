@@ -27,7 +27,7 @@ interface McpState { enabled: boolean; hasToken: boolean; status: BridgeStatus; 
 type Status = 'idle' | 'saving' | 'saved' | 'error';
 
 export default function App() {
-  // AI provider settings. Keys stay in the background worker; the popup only
+  // AI provider settings. Keys stay in the background worker; this page only
   // ever receives masked versions.
   const [provider, setProvider] = useState<ProviderId>('groq');
   // The provider Tabi uses (the dropdown may show another one being set up)
@@ -105,10 +105,10 @@ export default function App() {
       setCritic(res.data.critic);
     });
     loadStoredProfile().then(setProfile).catch(() => {});
-    // Connection status changes while the popup is open (an AI app starts tabi-mcp)
+    // Connection status changes while this page is open (an AI app starts tabi-mcp)
     const refreshMcp = () => browser.runtime.sendMessage({ action: 'GET_MCP' }).then((res: any) => { if (res?.success) setMcp(res.data); }).catch(() => {});
     refreshMcp();
-    // The task list follows what the agent is doing while the popup is open
+    // The task list follows what the agent is doing while this page is open
     const refreshTasks = () => browser.runtime.sendMessage({ action: 'LIST_TASKS' }).then((res: any) => { if (res?.success) setTasks(res.data); }).catch(() => {});
     refreshTasks();
     const tasksTimer = setInterval(refreshTasks, 2000);
@@ -184,7 +184,7 @@ export default function App() {
     }
     setShortcuts(res.data);
     setShortcutDraft({ name: '', prompt: '' });
-    setShortcutMessage({ ok: true, text: 'Saved. Type / in the sidebar to use it.' });
+    setShortcutMessage({ ok: true, text: 'Saved. Type / in the side panel to use it.' });
   };
 
   const handleDeleteShortcut = async (name: string) => {
@@ -198,7 +198,8 @@ export default function App() {
       setWorkflowMessage({ ok: false, text: res?.error || 'Could not run it' });
       return;
     }
-    window.close(); // the page's sidebar shows the replay
+    // It replays in a new tab where it starts; that tab's side panel shows it
+    setWorkflowMessage({ ok: true, text: `Running /${name} in a new tab. Open Tabi there to watch it.` });
   };
 
   const handleDeleteWorkflow = async (name: string) => {
@@ -734,7 +735,7 @@ export default function App() {
         <label className="section-label">Skills</label>
         <p className="hint">
           Saved instructions for tasks you repeat. The agent uses a skill when it fits the site and the task. After a task
-          finishes, the sidebar offers "Save as skill".
+          finishes, the side panel offers "Save as skill".
         </p>
         {skills.length > 0 ? (
           <ul className="skill-list">
@@ -781,8 +782,8 @@ export default function App() {
         <label className="section-label">Workflows</label>
         <p className="hint">
           A task's exact steps, replayed with no model calls: instant and free. If the site has changed, the agent takes
-          over from where the steps stopped fitting. Save one from the sidebar after a task finishes; run it here or by
-          typing /name in the sidebar.
+          over from where the steps stopped fitting. Save one from the side panel after a task finishes; run it here or by
+          typing /name in the side panel.
         </p>
         {workflows.length > 0 ? (
           <ul className="skill-list">
@@ -810,7 +811,7 @@ export default function App() {
       <div className="section">
         <label className="section-label">Shortcuts</label>
         <p className="hint">
-          Saved prompts: type /name in the sidebar to run one. Write a part that changes as a blank in braces, e.g.
+          Saved prompts: type /name in the side panel to run one. Write a part that changes as a blank in braces, e.g.
           "Find the price of {'{product}'} on this site", then type /name running shoes.
         </p>
         {shortcuts.length > 0 && (

@@ -80,7 +80,7 @@ export function createHandlers(deps: HandlerDeps) {
   }
 
   /**
-   * The user's site lists apply to AI apps too. No one is at the sidebar to
+   * The user's site lists apply to AI apps too. No one is at the side panel to
    * ask, so a site off the allow list is refused like a blocked one.
    */
   async function siteProblem(url: string | undefined): Promise<string | null> {
@@ -147,7 +147,7 @@ export function createHandlers(deps: HandlerDeps) {
 
     async page_act(params) {
       const tabId = await tabFor(params);
-      if (deps.isBusy(tabId)) throw new Error(`Tabi's own agent is working in tab ${tabId}; wait for it to finish or stop it from the sidebar.`);
+      if (deps.isBusy(tabId)) throw new Error(`Tabi's own agent is working in tab ${tabId}; wait for it to finish or stop it from the Tabi side panel.`);
       const raw = Array.isArray(params.actions) ? params.actions : [];
       if (raw.length === 0) throw new Error('No actions given');
       if (raw.length > MAX_ACTIONS) throw new Error(`At most ${MAX_ACTIONS} actions per call`);

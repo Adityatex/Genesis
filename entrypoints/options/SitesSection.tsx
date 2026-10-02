@@ -1,4 +1,4 @@
-// entrypoints/popup/SitesSection.tsx
+// entrypoints/options/SitesSection.tsx
 // The user's site lists (lib/agent/sites.ts): sites the agent never acts on,
 // and optionally the only sites it may act on without asking.
 import { useEffect, useState } from 'react';
@@ -10,13 +10,17 @@ export default function SitesSection() {
   const [rules, setRules] = useState<SiteRules>({ blocked: [], allowed: [] });
   const [drafts, setDrafts] = useState<Record<ListName, string>>({ blocked: '', allowed: '' });
   const [error, setError] = useState<string | null>(null);
-  /** The site of the tab the popup was opened on, for one-click blocking. */
+  /** The site of the last web page the user was on, for one-click blocking. */
   const [current, setCurrent] = useState<string | null>(null);
 
   useEffect(() => {
     browser.runtime.sendMessage({ action: 'GET_SITES' }).then((res: any) => { if (res?.success) setRules(res.data); }).catch(() => {});
-    browser.tabs.query({ active: true, currentWindow: true })
-      .then(([tab]) => setCurrent(/^https?:/.test(tab?.url ?? '') ? normalizeSite(tab!.url!) : null))
+    // This page is a tab of its own: the site is the web page the user was on last
+    browser.tabs.query({})
+      .then((tabs) => {
+        const last = tabs.filter((t) => /^https?:/.test(t.url ?? '')).sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))[0];
+        setCurrent(last?.url ? normalizeSite(last.url) : null);
+      })
       .catch(() => {});
   }, []);
 

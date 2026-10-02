@@ -1,9 +1,9 @@
 // eval/sites-e2e.mts
 // End-to-end check of the user's site lists (lib/agent/sites.ts). The test
-// pages are served on two sites: 127.0.0.1 and localhost. Through the popup,
+// pages are served on two sites: 127.0.0.1 and localhost. Through Settings,
 // localhost goes on the block list; a fake model then tries to go there and
 // must be refused without anything loading, and a task started on a localhost
-// page must stop before the model sees it. Then, with an allow list that
+// page must stop before the model sees it, and the side panel says why. Then, with an allow list that
 // doesn't have 127.0.0.1, a task there must ask first. No real model or API key.
 //
 //   npm run build && npm run eval:sites   (-- --headed to watch)
@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startFixtureServer } from './server.mts';
+import { openPanel, runState, sendTask } from './panel.mts';
 
 declare const chrome: any;
 
@@ -63,31 +64,35 @@ async function main(): Promise<void> {
     const loads: string[] = [];
     context.on('request', (r) => { if (r.url().startsWith(other)) loads.push(r.url()); });
 
-    // 1. The popup: a bad entry is refused, a good one is saved
-    const popup = await context.newPage();
-    await popup.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
-    const blockInput = popup.locator('input[placeholder="mybank.com"]');
+    // 1. Settings: a bad entry is refused, a good one is saved
+    const settings = await context.newPage();
+    await settings.goto(`chrome-extension://${new URL(worker.url()).host}/options.html`);
+    const blockInput = settings.locator('input[placeholder="mybank.com"]');
     await blockInput.fill('not a site');
     await blockInput.press('Enter');
-    const refused = await popup.locator('.message.error').waitFor({ timeout: 5_000 }).then(() => popup.locator('.message.error').innerText()).catch(() => '');
-    check("the popup refuses something that isn't a site", refused.includes("isn't a site"), refused || 'no error shown');
+    const refused = await settings.locator('.message.error').waitFor({ timeout: 5_000 }).then(() => settings.locator('.message.error').innerText()).catch(() => '');
+    check("Settings refuses something that isn't a site", refused.includes("isn't a site"), refused || 'no error shown');
     await blockInput.fill(`${other}/anything`);
     await blockInput.press('Enter');
-    await popup.getByText('localhost', { exact: true }).waitFor({ timeout: 5_000 }).catch(() => {});
+    await settings.getByText('localhost', { exact: true }).waitFor({ timeout: 5_000 }).catch(() => {});
     const stored: any = await worker.evaluate(() => chrome.storage.local.get('tabi_sites'));
-    check('the popup blocks a site typed as a full address', JSON.stringify(stored.tabi_sites?.blocked) === '["localhost"]', JSON.stringify(stored));
+    check('Settings blocks a site typed as a full address', JSON.stringify(stored.tabi_sites?.blocked) === '["localhost"]', JSON.stringify(stored));
 
     // 2. The agent won't go to the blocked site
     const page = await context.newPage();
-    const run = async (p: Page, goal: string) => {
-      await p.locator('[title="Open Tabi"]').click({ timeout: 15_000 });
-      await p.locator('textarea[placeholder^="Describe action"]').fill(goal);
-      await p.keyboard.press('Enter');
+    /** Open the side panel for a page and send it a task. */
+    const run = async (p: Page, goal: string): Promise<Page> => {
+      const panel = await openPanel(context, worker, p);
+      await sendTask(panel, goal);
+      return panel;
     };
-    const outcome = (p: Page) => p.locator('.markdown-body', { hasText: /Task Complete|Stopped/ }).first();
+    /** Wait for the run to end; its final message. */
+    const outcome = async (panel: Page): Promise<string> => {
+      await panel.locator('[data-run-status="done"], [data-run-status="stopped"]').waitFor({ timeout: 20_000 });
+      return (await runState(panel))?.message ?? '';
+    };
     await page.goto(`${fixtures.baseUrl}/search.html`);
-    await run(page, 'Go to the other search page');
-    await outcome(page).waitFor({ timeout: 20_000 });
+    await outcome(await run(page, 'Go to the other search page'));
     check("a blocked site isn't opened", loads.length === 0 && page.url().startsWith(fixtures.baseUrl), `${page.url()} ${JSON.stringify(loads)}`);
     check('the model is told why', prompts.some((p) => p.includes("⛔ not run: localhost is on the user's block list")), prompts.at(-1)?.slice(-400));
 
@@ -95,24 +100,24 @@ async function main(): Promise<void> {
     const before = prompts.length;
     const blocked = await context.newPage();
     await blocked.goto(`${other}/search.html`);
-    await run(blocked, 'Search for headphones');
-    await outcome(blocked).waitFor({ timeout: 20_000 });
-    const text = await outcome(blocked).innerText();
+    const blockedPanel = await run(blocked, 'Search for headphones');
+    const text = await outcome(blockedPanel);
     check('a task on a blocked site stops', text.includes('which is on your block list, so it stopped without reading the page'), text.slice(0, 300));
+    const card = await blockedPanel.locator('[data-testid="ending"]').innerText().catch(() => '');
+    check('the panel says Tabi doesn’t act there, and offers to answer instead', card.includes('Tabi doesn’t act on localhost') && card.includes('Ask instead'), card.slice(0, 300));
     check('and the model never sees that page', prompts.length === before, `${prompts.length - before} model calls`);
 
     // 4. With an allow list that doesn't have this site, the agent asks first
     await worker.evaluate(() => chrome.storage.local.set({ tabi_sites: { blocked: [], allowed: ['example.com'] } }));
     const unlisted = await context.newPage();
     await unlisted.goto(`${fixtures.baseUrl}/search.html`);
-    await run(unlisted, 'Search for headphones');
-    const asking = unlisted.locator('[data-asking]');
+    const unlistedPanel = await run(unlisted, 'Search for headphones');
+    const asking = unlistedPanel.locator('[data-asking]');
     await asking.waitFor({ timeout: 20_000 });
-    check('a site off the allow list needs your OK', (await asking.getAttribute('data-risk')) === 'unlisted' && (await asking.innerText()).includes("127.0.0.1 isn't on your list of allowed sites"),
+    check('a site off the allow list needs your OK', (await asking.getAttribute('data-risk')) === 'unlisted' && (await asking.innerText()).includes('127.0.0.1 isn’t on your list of allowed sites'),
       await asking.innerText());
-    await unlisted.getByRole('button', { name: "Don't allow" }).click();
-    await outcome(unlisted).waitFor({ timeout: 20_000 });
-    check("Don't allow stops the task", (await outcome(unlisted).innerText()).includes("You didn't allow the agent to work on 127.0.0.1."));
+    await unlistedPanel.getByRole('button', { name: "Don't allow" }).click();
+    check("Don't allow stops the task", (await outcome(unlistedPanel)).includes("You didn't allow the agent to work on 127.0.0.1."));
   } finally {
     await context.close().catch(() => {});
     await fixtures.close();
