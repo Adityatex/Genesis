@@ -7,12 +7,16 @@ import './sidebar.css';
 import { createPageSnapshot } from '@/lib/agent/frames';
 import { executeAction } from '@/lib/agent/actionExecutor';
 import { viewportMarks, describeElement, resolveElement, commitTarget } from '@/lib/agent/domSnapshot';
+import { reportColorScheme } from '@/lib/utils/toolbarIcon';
 
 export default defineContentScript({
   matches: ['<all_urls>'],
   cssInjectionMode: 'ui',
 
   async main(ctx) {
+    // The toolbar icon's ink follows the browser's light or dark theme
+    reportColorScheme();
+
     let ui: Awaited<ReturnType<typeof createShadowRootUi>> | undefined;
 
     /** Left edge of the open sidebar (CSS px), so screenshots can leave it out. */

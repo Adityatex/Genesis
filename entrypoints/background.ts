@@ -38,6 +38,7 @@ const skillStorage: KeyValueStorage = {
 };
 import { createHandlers } from '@/lib/mcp/handlers';
 import { migrateFromGenesis } from '@/lib/utils/renameMigration';
+import { Attention, toolbarIconPaths, type Scheme } from '@/lib/utils/toolbarIcon';
 import { DEFAULT_PORT, isValidToken, normalizeToken } from '@/mcp/src/protocol';
 
 /** tabi-mcp bridge settings (chrome.storage.local); only this worker reads the token. */
@@ -77,6 +78,28 @@ export default defineBackground(() => {
     alarmNames: async () => ((await chrome.alarms.getAll()) as { name: string }[]).map((a) => a.name),
     clearAlarm: (name) => { chrome.alarms.clear(name); },
   }).catch((err) => console.error('[Tabi] Moving data saved by Genesis:', err));
+
+  // ---- Toolbar icon (lib/utils/toolbarIcon.ts): ink to match the toolbar, an amber dot while a task needs you
+  const attention = new Attention();
+  let scheme: Scheme = 'light';
+  let mcpConnected = false;
+  /** The badge shows MCP while an AI app is connected, but never covers the amber dot. */
+  function paintToolbar(): void {
+    chrome.action.setIcon({ path: toolbarIconPaths(scheme, attention.needed) }).catch(() => {});
+    chrome.action.setBadgeText({ text: mcpConnected && !attention.needed ? 'MCP' : '' });
+  }
+  /** A tab's run changed status: paused means it waits for the user. */
+  function noteAttention(tabId: number, status: string | undefined): void {
+    if (attention.update(tabId, status)) paintToolbar();
+  }
+  chrome.action.setBadgeBackgroundColor({ color: '#2B45D8' });
+  // Pages report the colour scheme (a worker can't see it); kept for when the worker restarts
+  chrome.storage.session.get('tabi_scheme').then((stored: any) => {
+    if (stored?.tabi_scheme === 'dark') {
+      scheme = 'dark';
+      paintToolbar();
+    }
+  }).catch(() => {});
 
   // ---- Run timelines (lib/agent/timeline.ts), for the History page
   async function loadRunLogs(): Promise<RunLog[]> {
@@ -143,7 +166,11 @@ export default defineBackground(() => {
       return annotate(captured, visual as VisualInfo);
     },
     // frameId 0: only the top frame's content script (the sidebar) handles agent messages
-    send: (tabId, message, timeoutMs) => withTimeout(chrome.tabs.sendMessage(tabId, message, { frameId: 0 }), timeoutMs, 'Page'),
+    send: (tabId, message, timeoutMs) => {
+      const { action, payload } = message as { action?: string; payload?: RunView };
+      if (action === 'AGENT_UPDATE') noteAttention(tabId, payload?.status);
+      return withTimeout(chrome.tabs.sendMessage(tabId, message, { frameId: 0 }), timeoutMs, 'Page');
+    },
     getTab: async (tabId) => {
       const tab = await chrome.tabs.get(tabId);
       return { status: tab.status, url: tab.url, title: tab.title };
@@ -254,7 +281,7 @@ export default defineBackground(() => {
     try {
       const groupId = await chrome.tabs.group({ tabIds: [tabId], ...(existing !== undefined ? { groupId: existing } : { createProperties: { windowId } }) });
       taskGroups.set(windowId, groupId);
-      if (existing === undefined) await chrome.tabGroups.update(groupId, { title: 'Tabi', color: 'purple', collapsed: false });
+      if (existing === undefined) await chrome.tabGroups.update(groupId, { title: 'Tabi', color: 'blue', collapsed: false });
     } catch {
       // The group was closed: start a new one
       if (existing === undefined) return;
@@ -329,8 +356,8 @@ export default defineBackground(() => {
     onStatus: (status, detail) => {
       mcpStatus = { status, detail };
       // A visible sign that an AI app can control the browser
-      chrome.action.setBadgeText({ text: status === 'connected' ? 'MCP' : '' });
-      chrome.action.setBadgeBackgroundColor({ color: '#7c3aed' });
+      mcpConnected = status === 'connected';
+      paintToolbar();
     },
   });
 
@@ -409,7 +436,10 @@ export default defineBackground(() => {
   browser.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes[MCP_KEY]) applyMcp().catch((err) => console.error('[Tabi] MCP bridge:', err));
   });
-  chrome.tabs.onRemoved.addListener((tabId: number) => forgetRun(tabId));
+  chrome.tabs.onRemoved.addListener((tabId: number) => {
+    forgetRun(tabId);
+    noteAttention(tabId, undefined);
+  });
 
   // Store the default API key on install
   browser.runtime.onInstalled.addListener(async () => {
@@ -901,6 +931,17 @@ export default defineBackground(() => {
             await browser.storage.local.set({ [MCP_KEY]: mcp });
             await applyMcp();
             sendResponse({ success: true, data: { enabled: mcp.enabled, port: mcp.port, hasToken: isValidToken(mcp.token), ...mcpStatus } });
+            break;
+          }
+
+          case 'COLOR_SCHEME': {
+            const next: Scheme = payload === 'dark' ? 'dark' : 'light';
+            if (next !== scheme) {
+              scheme = next;
+              paintToolbar();
+              chrome.storage.session.set({ tabi_scheme: scheme }).catch(() => {});
+            }
+            sendResponse({ success: true });
             break;
           }
 

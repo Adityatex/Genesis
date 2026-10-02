@@ -2,6 +2,9 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './popup.css';
+import { reportColorScheme } from '@/lib/utils/toolbarIcon';
+
+reportColorScheme();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

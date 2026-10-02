@@ -1,13 +1,13 @@
 // entrypoints/sidebar.content/components/SidebarHeader.tsx
 import { X } from 'lucide-react';
-import TabiLogo from './TabiLogo';
+import TabiMark from '@/components/TabiMark';
 
 export default function SidebarHeader({ status, onClose }: { status: string; onClose: () => void }) {
   return (
     <header className="px-4 py-3 bg-[#161920] border-b border-[#242933] flex items-center justify-between">
       <div className="flex items-center gap-2.5">
         <div className="w-8 h-8 flex items-center justify-center">
-          <TabiLogo size={32} />
+          <TabiMark size={24} color="#8394FF" label="" />
         </div>
         <div>
           <h1 className="text-sm font-semibold text-white tracking-tight">Tabi</h1>

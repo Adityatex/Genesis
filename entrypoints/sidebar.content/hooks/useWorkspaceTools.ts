@@ -220,7 +220,7 @@ export function useWorkspaceTools(d: Deps) {
       const res: any = await browser.runtime.sendMessage({ action: 'START_BACKGROUND_TASK', payload });
       if (!res?.success) throw new Error(res?.error || 'Could not start it');
       d.pushUserMessage(`⧉ ${message}`);
-      d.addBotMessage('Started in a **background tab** (in the purple *Tabi* group). Carry on here; you\'ll get a notification when it\'s done, and the task list above shows how it\'s going.');
+      d.addBotMessage('Started in a **background tab** (in the blue *Tabi* group). Carry on here; you\'ll get a notification when it\'s done, and the task list above shows how it\'s going.');
     } catch (err: any) {
       d.setChatInput(message); // give it back to fix and retry
       d.addBotMessage(`**Couldn't start it:** ${err.message}`);

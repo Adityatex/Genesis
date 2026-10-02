@@ -1,6 +1,6 @@
 // entrypoints/sidebar.content/components/FloatingFab.tsx
 import { MessageSquare } from 'lucide-react';
-import TabiLogo from './TabiLogo';
+import TabiMark from '@/components/TabiMark';
 
 interface Props {
   fabPos: { x: number; y: number };
@@ -28,7 +28,7 @@ export default function FloatingFab(p: Props) {
           <div
             className={`absolute inset-0 flex items-center justify-center transition-all duration-200 ${p.isHovered ? 'opacity-0 scale-75' : 'opacity-100 scale-100'}`}
           >
-            <TabiLogo size={28} />
+            <TabiMark size={26} color="#8394FF" label="" />
           </div>
           <MessageSquare
             size={20}

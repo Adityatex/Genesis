@@ -108,9 +108,10 @@ The suite has 10 standard tasks (forms, dropdowns, radios, multi-page flows, slo
 │   ├── sidebar.content/    # Content script with Shadow DOM sidebar
 │   │   ├── App.tsx         # Thin composition shell (~180 lines)
 │   │   ├── hooks/          # useChatMessages, useAgentLoop, useWorkspaceTools
-│   │   ├── components/     # TabiLogo, FloatingFab, Header, ToolsGrid, MessageList, ChatInput
+│   │   ├── components/     # FloatingFab, Header, ToolsGrid, MessageList, ChatInput
 │   │   └── sidebar.css     # Dark glassmorphic theme
 │   └── background.ts      # Service worker: runs the agent loop, LLM API proxy (BYOK-only)
+├── components/             # TabiMark: the logo, with a motion for each agent state
 ├── lib/
 │   ├── api/                # Provider presets + OpenAI-compatible LLM client (BYOK)
 │   ├── agent/              # runner (background loop), DOM snapshot, action executor, frames, trusted input, parser
@@ -118,6 +119,7 @@ The suite has 10 standard tasks (forms, dropdowns, radios, multi-page flows, slo
 │   ├── dom/                # DOM extraction & element detection
 │   └── utils/              # Messaging, error handling, markdown
 ├── eval/                   # End-to-end benchmark (Playwright + fixture pages)
+├── scripts/icons.mts       # Renders the mark to the PNG icons in public/icons (npm run icons)
 └── tests/                  # Vitest unit tests
 ```
 
@@ -175,7 +177,7 @@ In the popup, schedule any workflow or shortcut to run every hour, day or week. 
 
 ## ⧉ Parallel tasks
 
-The **Run in background** button next to Send starts a task (or a `/workflow` or `/shortcut`) in a new tab beside yours, in a purple **Tabi** tab group, and leaves you where you are. A notification says when it's done; click it to see the tab. At most 3 tasks use the model at once (set in the popup): more wait in line, since each running task sends requests and free tiers limit them per minute. Workflow replays don't count. The popup's Tasks list, and the sidebar's "running elsewhere" line, show every task with Open, Stop and Continue.
+The **Run in background** button next to Send starts a task (or a `/workflow` or `/shortcut`) in a new tab beside yours, in a blue **Tabi** tab group, and leaves you where you are. A notification says when it's done; click it to see the tab. At most 3 tasks use the model at once (set in the popup): more wait in line, since each running task sends requests and free tiers limit them per minute. Workflow replays don't count. The popup's Tasks list, and the sidebar's "running elsewhere" line, show every task with Open, Stop and Continue.
 
 ## ✋ Asks before it buys, sends or deletes
 

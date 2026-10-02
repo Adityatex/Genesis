@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import SitesSection from './SitesSection';
+import TabiMark from '@/components/TabiMark';
 import { loadStoredProfile, saveStoredProfile, PROFILE_FIELDS, type AutofillProfile } from '@/lib/automation/profile';
 import { PROVIDERS, PROVIDER_IDS, type ProviderId } from '@/lib/api/providers';
 import type { ModelInfo } from '@/lib/api/llmClient';
@@ -380,16 +381,7 @@ export default function App() {
       {/* Header */}
       <div className="popup-header">
         <div className="logo-icon">
-          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-            <defs>
-              <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#3b82f6" />
-                <stop offset="100%" stopColor="#8b5cf6" />
-              </linearGradient>
-            </defs>
-            <circle cx="14" cy="14" r="13" stroke="url(#logoGrad)" strokeWidth="2" fill="none" />
-            <text x="14" y="19" textAnchor="middle" fill="url(#logoGrad)" fontSize="16" fontWeight="bold" fontFamily="Inter, sans-serif">G</text>
-          </svg>
+          <TabiMark size={28} color="#8394FF" label="" />
         </div>
         <div>
           <h1 className="popup-title">Tabi</h1>

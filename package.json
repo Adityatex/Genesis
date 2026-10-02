@@ -15,6 +15,7 @@
     "eval": "tsx eval/run.mts",
     "eval:mock": "tsx eval/run.mts --mock",
     "fixtures": "tsx eval/serve.mts",
+    "icons": "tsx scripts/icons.mts",
     "postinstall": "wxt prepare",
     "build:mcp": "cd mcp && npm install && npm run build",
     "eval:mcp": "tsx eval/mcp-e2e.mts",
