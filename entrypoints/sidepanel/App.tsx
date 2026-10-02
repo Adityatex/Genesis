@@ -14,6 +14,9 @@ import { BlockedCard, DoneCard, FailedCard, StoppedCard, type SaveState } from '
 import Idle, { type RecentRun } from './components/Idle';
 import Answers, { type Answer } from './components/Answers';
 import TasksStrip from './components/TasksStrip';
+import ModeGuess from './components/ModeGuess';
+import Setup from './components/Setup';
+import TabiMark from '@/components/TabiMark';
 import { askPage, send, useCurrentTab, useRuns, useSettings, useTasks } from './hooks';
 import type { RunView } from '@/lib/agent/runner';
 import { isAgentCommand } from '@/lib/agent/history';
@@ -62,6 +65,8 @@ export default function App() {
 
   const [value, setValue] = useState('');
   const [mode, setMode] = useState<Mode>('auto');
+  /** Picked on the guess card: for this message only, then back to Auto. */
+  const [guessed, setGuessed] = useState(false);
   const [background, setBackground] = useState(false);
   const [pickerItems, setPickerItems] = useState<PickerItem[]>([]);
   const [recent, setRecent] = useState<RecentRun[]>([]);
@@ -193,6 +198,10 @@ export default function App() {
     if (!text || tabId === undefined) return;
     setValue('');
     setNotice(null);
+    if (guessed) {
+      setMode('auto');
+      setGuessed(false);
+    }
     // Waiting for the user: what they type is a hint for the agent
     if (showRun && run?.status === 'paused') {
       await send('HINT_AGENT', { tabId, text });
@@ -253,7 +262,9 @@ export default function App() {
   const mark = showRun ? markState(run!) : state.answers.some((a) => a.answer === undefined && !a.error) ? 'reading' : 'idle';
   const backup = showRun && !!run?.model && !!model.main && run.model !== model.main && run.model !== model.fast;
   const needsYou = showRun && run!.status === 'paused';
-  const placeholder = !model.ready ? 'Set up a provider in Settings to start'
+  // In Auto, say what a sentence being typed will do (not for /commands, background tasks, or hints)
+  const showGuess = mode === 'auto' && !background && !needsYou && value.trim().length >= 12 && !value.startsWith('/');
+  const placeholder = !model.ready ? 'Finish setup to start'
     : needsYou ? (run!.asking ? 'Answer above, or tell Tabi something else' : 'Answer above, or give Tabi a hint')
     : mode === 'answer' ? 'Ask about this page' : 'Ask about this page or tell Tabi what to do';
 
@@ -275,9 +286,23 @@ export default function App() {
             />
           </div>
         ) : (
-        <StepStream steps={run.steps} hidden={run.hiddenSteps}>
+        <StepStream steps={run.steps} hidden={run.hiddenSteps} upcoming={run.replaySteps?.upcoming}>
           {run.status === 'queued' && (
-            <p className="text-muted px-1 pt-3 leading-[1.5]">Tabi is already running as many tasks as it’s allowed at once. This one starts as soon as one of them finishes.</p>
+            <div className="px-1 pt-3 flex flex-col gap-[10px]">
+              <p className="text-muted leading-[1.5]">Tabi is already running as many tasks as it’s allowed at once. This one starts as soon as one of them finishes.</p>
+              {tasks.some((x) => x.status === 'running' || x.status === 'paused') && (
+                <ul className="border border-border rounded-card bg-surface text-[12.5px]">
+                  {tasks.filter((x) => x.status === 'running' || x.status === 'paused').map((x, i) => (
+                    <li key={x.tabId} className={`flex items-center gap-[7px] px-[10px] py-[9px] ${i ? 'border-t border-border' : ''}`}>
+                      <TabiMark state={x.status === 'paused' ? 'waiting' : 'acting'} size={13} label="" />
+                      <span className="flex-1 min-w-0 truncate">{x.goal}</span>
+                      <span className={x.status === 'paused' ? 'text-[11px] text-amber font-semibold' : 'font-mono text-[11px] text-muted'}>{x.status === 'paused' ? 'needs you' : `step ${x.step}`}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <button type="button" className="self-start text-[12px] font-medium text-accent" onClick={openSettings}>Change the limit</button>
+            </div>
           )}
           {(run.status === 'stopped' || run.status === 'error') && (
             <div className="flex flex-col gap-[10px] pt-3 pb-1" data-testid="ending">
@@ -302,8 +327,16 @@ export default function App() {
         )}
       </>
     );
+  } else if (!model.ready) {
+    body = <Setup onOpenSettings={openSettings} onReady={() => {}} />;
   } else if (state.show === 'answers' && state.answers.length) {
-    body = <Answers answers={state.answers} onDoInstead={(q) => startTask(q)} />;
+    body = (
+      <Answers
+        answers={state.answers}
+        onDoInstead={(q) => startTask(q)}
+        onShowSource={async (quote) => tabId !== undefined && !!(await askPage<{ found: boolean }>(tabId, 'HIGHLIGHT_TEXT', { text: quote }).catch(() => null))?.found}
+      />
+    );
   } else {
     body = (
       <Idle
@@ -321,7 +354,7 @@ export default function App() {
     <div className="h-screen flex flex-col bg-bg text-text min-w-0" data-panel-tab={tabId}>
       <Header
         mark={mark}
-        model={model.label || 'No model yet'}
+        model={showRun && run?.replay === 'replaying' ? 'Replay · no AI' : model.label || 'No model yet'}
         backup={backup}
         url={tab?.url}
         onModel={openSettings}
@@ -335,12 +368,13 @@ export default function App() {
           <button type="button" aria-label="Close" className="font-semibold" onClick={() => setNotice(null)}>×</button>
         </div>
       )}
+      {showGuess && <ModeGuess task={isAgentCommand(value)} onPick={(m) => { setMode(m); setGuessed(true); }} />}
       <TasksStrip tasks={tasks} tabIndex={tabIndex} onControl={control} />
       <Composer
         value={value}
         onChange={setValue}
         mode={mode}
-        onMode={setMode}
+        onMode={(m) => { setMode(m); setGuessed(false); }}
         background={background}
         onBackground={setBackground}
         onSubmit={submit}
@@ -348,6 +382,7 @@ export default function App() {
         pickerItems={pickerItems}
         onRefreshPicker={loadPicker}
         placeholder={placeholder}
+        disabled={!model.ready}
       />
     </div>
   );

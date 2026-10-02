@@ -8,6 +8,7 @@ import { createPageSnapshot } from '@/lib/agent/frames';
 import { executeAction } from '@/lib/agent/actionExecutor';
 import { viewportMarks, describeElement, resolveElement, commitTarget } from '@/lib/agent/domSnapshot';
 import { extractVisibleText } from '@/lib/dom/extractVisibleText';
+import { highlightText } from '@/lib/dom/highlightText';
 import { fillForm, fillDropdowns } from '@/lib/automation/formAutofill';
 import { loadStoredProfile, isProfileEmpty } from '@/lib/automation/profile';
 import { reportColorScheme } from '@/lib/utils/toolbarIcon';
@@ -60,6 +61,10 @@ export default defineContentScript({
         case 'PAGE_TEXT':
           // Answers and summaries in the side panel
           sendResponse({ text: extractVisibleText(), title: document.title });
+          return;
+        case 'HIGHLIGHT_TEXT':
+          // A source of an answer, clicked in the side panel
+          sendResponse({ found: highlightText(String(message.text ?? '')) });
           return;
         case 'PAGE_SELECTION':
           sendResponse({ text: window.getSelection()?.toString().trim() ?? '' });

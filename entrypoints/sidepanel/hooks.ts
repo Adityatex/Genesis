@@ -14,9 +14,9 @@ export function send<T = any>(action: string, payload?: unknown): Promise<{ succ
 }
 
 /** Ask the page's content script (its text, the selection, an autofill). */
-export async function askPage<T = any>(tabId: number, action: string): Promise<T> {
+export async function askPage<T = any>(tabId: number, action: string, extra: Record<string, unknown> = {}): Promise<T> {
   try {
-    return await browser.tabs.sendMessage(tabId, { action }, { frameId: 0 }) as T;
+    return await browser.tabs.sendMessage(tabId, { action, ...extra }, { frameId: 0 }) as T;
   } catch {
     throw new Error('Tabi can’t read this page. If it was open before Tabi was installed or updated, reload it and try again.');
   }

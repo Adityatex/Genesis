@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stepView, stepUnderWay, statusOf, trimSteps, type StepView } from '@/lib/agent/stepView';
+import { stepView, stepUnderWay, statusOf, trimSteps, actionToDo, currentPlanItem, type StepView } from '@/lib/agent/stepView';
 
 describe('steps in plain words', () => {
   it('names the element by its label and says where a click led', () => {
@@ -40,6 +40,18 @@ describe('steps in plain words', () => {
   it('shows the step under way', () => {
     expect(stepUnderWay(10, { action: 'type', elementId: 5, text: 'Springfield' }, { label: 'City' }))
       .toEqual({ n: 10, status: 'run', icon: 'type', action: 'Typing “Springfield” into “City”', result: 'Working…' });
+  });
+
+  it('words steps still to come as instructions', () => {
+    expect(actionToDo({ action: 'click' }, 'Place order')).toBe('Click “Place order”');
+    expect(actionToDo({ action: 'type', text: 'hunter2' }, 'Password', true)).toBe('Type a password into “Password”');
+    expect(actionToDo({ action: 'navigate', url: 'https://bluebottle.com/menu' }, '')).toBe('Go to bluebottle.com/menu');
+  });
+
+  it('finds the plan item being worked on', () => {
+    expect(currentPlanItem(['[x] Search', '[ ] Read listings', '[ ] Add them'])).toBe('Read listings');
+    expect(currentPlanItem(['[x] Search'])).toBeUndefined();
+    expect(currentPlanItem([])).toBeUndefined();
   });
 
   it('keeps the last steps of a long run and counts the rest', () => {

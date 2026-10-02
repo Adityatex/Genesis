@@ -14,7 +14,7 @@ Tabi is an open-source browser agent for Chrome, Edge, Brave and other Chromium 
 | ✏️ **Trustworthy Form Auto-Fill** | Fill forms with *your own* profile data (React/Angular compatible). Type `/autofill` in the side panel; edit the profile in Settings. Stored only in `chrome.storage.local`. No exam auto-solving. |
 | 📊 **Page Summarization** | Summaries of the page: `/summarize`, or right-click the page |
 | 💡 **Text Explanation** | Select text and get it explained in plain words: `/explain`, or right-click the selection |
-| 💬 **Ask** | Ask anything about the current page. Answering only reads the page, never clicks, and says so; one click turns the question into a task |
+| 💬 **Ask** | Ask anything about the current page. Answering only reads the page, never clicks, and says so. Answers list numbered quotes from the page: click one to see it highlighted there. One click turns the question into a task |
 
 ## 🛠️ Tech Stack
 

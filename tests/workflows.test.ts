@@ -161,6 +161,36 @@ describe('replaying a workflow', () => {
     expect(view).toMatchObject({ status: 'done', replay: 'healed' });
   });
 
+  it('shows the panel the steps to come while it replays, and what went as recorded', async () => {
+    const seen: any[] = [];
+    const { deps } = fakeDeps();
+    const send = deps.send as any;
+    const inner = send.getMockImplementation();
+    send.mockImplementation(async (t: number, m: any) => {
+      if (m.action === 'AGENT_UPDATE' && m.payload.replaySteps) seen.push(m.payload.replaySteps);
+      return inner(t, m);
+    });
+    const view = await startRun(deps, 313, workflow.goal, { workflow: { ...workflow, createdAt: 1000 } });
+    expect(seen[0]).toEqual({ total: 2, savedAt: 1000, upcoming: ['Type “demo” into “Username”', 'Click “Sign in”'] });
+    expect(seen.some((r) => JSON.stringify(r.upcoming) === '["Click “Sign in”"]')).toBe(true); // while the first step runs
+    expect(view.steps.map((s) => [s.action, s.result])).toEqual([['Typed “demo” into “Username”', 'Same as last time'], ['Clicked “Sign in”', 'Same as last time']]);
+    expect(view.replaySteps).toBeUndefined(); // finished
+  });
+
+  it('shows the step that no longer fits as failed, then the agent\'s own steps', async () => {
+    const { deps } = fakeDeps({
+      resolve: (t) => (t.key.includes('Sign in') ? null : 7),
+      answers: ['{"plan":["[ ] Sign in"],"action":"click","elementId":4}', '{"action":"done","summary":"Signed in via the new button"}'],
+    });
+    const view = await startRun(deps, 314, workflow.goal, { workflow });
+    expect(view.steps.map((s) => [s.status, s.action, s.result])).toEqual([
+      ['ok', 'Typed “demo” into “Username”', 'Same as last time'],
+      ['fail', 'Click “Sign in”', 'Not found: the site changed'],
+      ['ok', 'Clicked “4”', 'Done'],
+    ]);
+    expect(view.steps[2].planItem).toBe('Sign in');
+  });
+
   it('warns when the replay ended somewhere the recording did not', async () => {
     const { deps } = fakeDeps();
     const view = await startRun(deps, 312, workflow.goal, { workflow: { ...workflow, finalUrl: 'https://shop.test/account' } });

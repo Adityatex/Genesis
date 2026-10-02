@@ -27,6 +27,13 @@ function useNow(active: boolean): number {
   return now;
 }
 
+/** "Saved 14 days ago" */
+function savedAgo(at: number | undefined): string {
+  if (!at) return 'Saved workflow';
+  const days = Math.floor((Date.now() - at) / 86_400_000);
+  return days < 1 ? 'Saved today' : days === 1 ? 'Saved yesterday' : `Saved ${days} days ago`;
+}
+
 interface Props {
   run: RunView;
   /** "#2 in line" while it waits for a slot. */
@@ -51,7 +58,7 @@ export default function GoalCard({ run, queuePosition, confirmOn, onStop }: Prop
   const steps = run.steps.filter((s) => s.status !== 'run' && s.status !== 'wait').length + (run.hiddenSteps?.count ?? 0);
   const ended = run.updatedAt;
   const elapsed = run.started ? formatElapsed((active ? now : ended) - run.started) : '';
-  const meta = run.status === 'queued' ? '' : run.replay === 'replaying' ? `step ${steps + 1}` : [elapsed, `${steps} step${steps === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+  const meta = run.status === 'queued' ? '' : run.replaySteps ? `step ${Math.min(steps + 1, run.replaySteps.total)} of ${run.replaySteps.total}` : [elapsed, `${steps} step${steps === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
   const segColor = { waiting: 'var(--amber)', failed: 'var(--red)', neutral: 'var(--muted)', done: 'var(--green)' }[pill.tone as string] ?? 'var(--accent)';
 
   return (
@@ -78,7 +85,20 @@ export default function GoalCard({ run, queuePosition, confirmOn, onStop }: Prop
           )}
         </div>
       </div>
-      {items.length > 0 && (open ? (
+      {run.replaySteps && (
+        // A replay: its own steps are the plan
+        <div className="w-full flex items-center gap-2 border-t border-border px-3 py-[10px] text-[12px] min-w-0">
+          <span className="font-semibold">Replay</span>
+          <span className="flex gap-[3px] flex-none" aria-hidden>
+            {Array.from({ length: Math.min(run.replaySteps.total, 16) }, (_, i) => {
+              const at = Math.floor((i * run.replaySteps!.total) / Math.min(run.replaySteps!.total, 16));
+              return <span key={i} className="w-3 h-1 rounded-[2px]" style={{ background: at < steps ? 'var(--green)' : at === steps ? 'var(--accent)' : 'var(--border-strong)' }} />;
+            })}
+          </span>
+          <span className="text-muted whitespace-nowrap overflow-hidden text-ellipsis min-w-0">{savedAgo(run.replaySteps.savedAt)}</span>
+        </div>
+      )}
+      {!run.replaySteps && items.length > 0 && (open ? (
         <div className="border-t border-border px-3 pt-[9px] pb-[11px]">
           <button type="button" onClick={() => setOpen(false)} className="w-full flex items-center gap-[6px] text-[11.5px] text-muted mb-[7px]" aria-expanded>
             <span className="font-semibold text-text">Plan</span><span>{Math.min(doneCount + 1, items.length)} of {items.length}</span>

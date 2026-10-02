@@ -22,7 +22,7 @@ import type { TokenUsage } from '@/lib/api/llmClient';
 import { isReplayed, describeStep, type Workflow, type WorkflowStep } from '@/lib/workflows/workflow';
 import type { ElementKey } from '@/lib/agent/domSnapshot';
 import { MAX_INVALID_RESPONSES, REPEAT_PAUSE, REPEAT_WARN, describeAction, formatHistory } from '@/lib/agent/history';
-import { stepView, stepUnderWay, trimSteps, quote, type HiddenSteps, type StepView } from '@/lib/agent/stepView';
+import { stepView, stepUnderWay, trimSteps, quote, actionToDo, currentPlanItem, type HiddenSteps, type StepView } from '@/lib/agent/stepView';
 
 /** "paused": waiting for the user (checkpoint, the agent looks stuck, or an action needs their OK). */
 export type RunStatus = 'queued' | 'running' | 'paused' | 'done' | 'error' | 'stopped';
@@ -68,6 +68,8 @@ export interface RunView {
   calls?: number;
   /** How it ended, in a line or two: the model's summary, why it stopped, or the error. */
   outcome?: string;
+  /** While a workflow replays: how many steps it has, when it was saved, and the steps still to come. */
+  replaySteps?: { total: number; savedAt?: number; upcoming: string[] };
 }
 
 export interface TabInfo {
@@ -390,18 +392,40 @@ const runs = new Map<number, Run>();
 function view(run: Run): RunView {
   const { goal, status, message, loading, step, plan, model, updatedAt, replay, unrecordable, asking, phase, pausedFor, started, calls } = run;
   const live = run.current && (status === 'running' || status === 'paused');
-  const { steps, hidden } = trimSteps(live ? [...run.steps, run.current!] : run.steps);
+  const item = currentPlanItem(run.plan);
+  const { steps, hidden } = trimSteps(live ? [...run.steps, { ...run.current!, ...(item ? { planItem: item } : {}) }] : run.steps);
   const outcome = status === 'done' ? run.summary : status === 'stopped' ? run.stopReason : status === 'error' ? run.error : undefined;
   return {
     goal, status, message, loading, step, plan, model, updatedAt, replay, unrecordable, asking, workflowName: run.workflow?.name, runId: run.id,
     steps, ...(hidden ? { hiddenSteps: hidden } : {}), phase: status === 'running' ? phase : undefined, pausedFor, started, calls, outcome,
+    ...(run.workflow && replay === 'replaying' ? { replaySteps: replaySteps(run) } : {}),
   };
+}
+
+/** Upcoming steps shown during a replay, at most. */
+const MAX_UPCOMING = 20;
+
+/** A replay's length, its saved date, and the steps after the one under way, as instructions. */
+function replaySteps(run: Run): NonNullable<RunView['replaySteps']> {
+  const workflow = run.workflow!;
+  const start = run.replayIndex + (run.current ? 1 : 0);
+  const upcoming = workflow.steps.slice(start, start + MAX_UPCOMING).map((step) => {
+    const key = step.target?.key ?? '';
+    return actionToDo(step.action, key ? labelOf(key) : '', /type="password"/.test(key));
+  });
+  return { total: workflow.steps.length, savedAt: workflow.createdAt, upcoming };
 }
 
 /** Add a finished step to the panel's list. */
 function addStep(run: Run, action: AgentAction, result: string, opts: { label?: string; element?: string; secret?: boolean } = {}): void {
   run.current = undefined;
-  run.steps.push(stepView(run.steps.length + 1, action, result, { ...opts, model: run.replay === 'replaying' ? undefined : run.lastCall }));
+  const replaying = run.replay === 'replaying';
+  const step = stepView(run.steps.length + 1, action, result, { ...opts, model: replaying ? undefined : run.lastCall });
+  // A replayed step that went as recorded says so, unless it landed somewhere worth naming
+  if (replaying && step.status === 'ok' && !/now on "/.test(result)) step.result = 'Same as last time';
+  const item = currentPlanItem(run.plan);
+  if (item) step.planItem = item;
+  run.steps.push(step);
 }
 
 export function getRunView(tabId: number): RunView | null {
@@ -612,7 +636,14 @@ async function replayNext(deps: RunnerDeps, run: Run): Promise<'next' | 'finishe
   if (step.target) {
     await deps.send(tabId, { action: 'AGENT_SNAPSHOT' }, SNAPSHOT_TIMEOUT_MS); // fresh element IDs
     const found = await deps.send(tabId, { action: 'AGENT_RESOLVE', target: step.target }, 5_000).catch(() => null);
-    if (typeof found?.id !== 'number') return heal(run, n, step, `its element (${step.target.key}) isn't on the page any more`);
+    if (typeof found?.id !== 'number') {
+      // Shown as the step that failed; the agent's own steps follow
+      run.steps.push({
+        ...stepView(run.steps.length + 1, step.action, '❌ not found', { label: labelOf(step.target.key), element: step.target.key }),
+        action: actionToDo(step.action, labelOf(step.target.key), /type="password"/.test(step.target.key)), result: 'Not found: the site changed',
+      });
+      return heal(run, n, step, `its element (${step.target.key}) isn't on the page any more`);
+    }
     action.elementId = found.id;
   }
   // The executor echoes typed text; never a saved password

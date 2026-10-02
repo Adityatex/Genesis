@@ -95,15 +95,18 @@
   --shadow-ask: var(--shadow-ask);
 }
 
+/* Outside any layer on purpose: Chrome gives extension pages its own default
+   body font (Segoe UI at 75%), unlayered, which beats anything in a layer */
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
 @layer base {
-  html, body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font);
-    font-size: 13px;
-    line-height: 1.4;
-    -webkit-font-smoothing: antialiased;
-  }
   /* Every control shows where the keyboard is */
   :focus-visible {
     outline: none;

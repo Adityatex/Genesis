@@ -27,6 +27,18 @@ export interface StepView {
   element?: string;
   /** Which model chose it and how long the call took, e.g. Groq · qwen3 · 0.9s. */
   model?: string;
+  /** The plan item it was done for, so a long run can fold finished items. */
+  planItem?: string;
+}
+
+/** The plan item being worked on: the first one not ticked. */
+export function currentPlanItem(plan: string[]): string | undefined {
+  for (const raw of plan) {
+    const m = /^\[([ xX✓]?)\]\s*(.*)$/.exec(raw.trim());
+    if (!m) return raw.trim();
+    if (!m[1].trim()) return m[2].trim();
+  }
+  return undefined;
 }
 
 const ICON: Record<AgentAction['action'], StepIcon> = {
@@ -99,6 +111,22 @@ export function actionUnderWay(action: AgentAction, label: string, secret = fals
     case 'wait': return 'Waiting for the page';
     case 'extract': return 'Collecting data from the page';
     case 'run_code': return 'Running its own code on the page';
+    default: return actionWords(action, label, secret);
+  }
+}
+
+/** A step still to do, as an instruction: Click “Place order” (a workflow's coming steps). */
+export function actionToDo(action: AgentAction, label: string, secret = false): string {
+  const into = label ? ` into ${quote(label)}` : '';
+  switch (action.action) {
+    case 'click': return label ? `Click ${quote(label)}` : 'Click an element';
+    case 'type': return `Type ${typedValue(action, secret)}${into}`;
+    case 'clear_and_type': return `Replace the text${into} with ${typedValue(action, secret)}`;
+    case 'select': return `Choose ${quote(action.value ?? action.text ?? '')}${label ? ` in ${quote(label)}` : ''}`;
+    case 'navigate': return `Go to ${shortUrl(action.url)}`;
+    case 'scroll': return `Scroll ${action.direction === 'up' ? 'up' : 'down'}`;
+    case 'press_key': return `Press ${action.key || 'Enter'}`;
+    case 'wait': return 'Wait for the page';
     default: return actionWords(action, label, secret);
   }
 }
