@@ -88,7 +88,12 @@ async function main(): Promise<void> {
     check('the result is recorded', after?.lastRun?.status === 'done' && /no model calls/.test(after?.lastRun?.summary ?? ''), JSON.stringify(after?.lastRun));
     check('the next run is set', after?.nextRun > Date.now(), String(after?.nextRun));
 
-    const notes: Record<string, unknown> = await worker.evaluate(() => new Promise((resolve) => chrome.notifications.getAll(resolve)));
+    // The scheduler records the result first and notifies after, so wait for it
+    const notes: Record<string, unknown> = await until(
+      () => worker.evaluate(() => new Promise<Record<string, unknown>>((resolve) => chrome.notifications.getAll(resolve))),
+      (n) => Object.keys(n).length > 0,
+      10_000,
+    );
     check('a notification says how it went', Object.keys(notes).length === 1, JSON.stringify(notes));
     await until(async () => context.pages().length, (n) => n <= tabsBefore, 10_000);
     check('the background tab closes after a successful run', context.pages().length <= tabsBefore, `${context.pages().length} pages open`);

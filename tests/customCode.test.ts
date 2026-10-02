@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm';
 import { describe, it, expect, vi } from 'vitest';
 import { checkCode, wrapCode, formatCodeResult, MAX_RESULT_CHARS } from '@/lib/agent/customCode';
 import { startRun, type RunnerDeps, type TabInfo } from '@/lib/agent/runner';
@@ -40,11 +41,13 @@ describe('what run_code may do', () => {
 describe('the wrapped code', () => {
   it('runs as an async function body, turns elements into text, and has no network functions', async () => {
     document.body.innerHTML = '<ul><li class="p">Aero $899</li><li class="p">Kite $1,049</li></ul>';
-    // What the isolated world runs; here in the test page's own world instead
-    const json = await (0, eval)(wrapCode(`
+    // What the isolated world runs; here in a fresh context sharing the test page's document,
+    // since locking fetch in the test's own globals breaks the environment's teardown
+    const world = { document, Element, Navigator: class {}, fetch, XMLHttpRequest };
+    const json = await runInNewContext(wrapCode(`
       const items = [...document.querySelectorAll('.p')];
       return { first: items[0], count: items.length, fetchType: typeof fetch, xhrType: typeof XMLHttpRequest };
-    `));
+    `), world);
     expect(JSON.parse(json)).toEqual({ first: 'Aero $899', count: 2, fetchType: 'undefined', xhrType: 'undefined' });
   });
 
