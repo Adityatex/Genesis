@@ -12,6 +12,8 @@ export interface ScheduleResult {
   /** done, paused, stopped or error (as the run ended), or "missed" if it couldn't start. */
   status: string;
   summary: string;
+  /** Its timeline on the History page. */
+  runId?: string;
 }
 
 export interface Schedule {

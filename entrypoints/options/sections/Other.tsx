@@ -1,0 +1,136 @@
+// entrypoints/options/sections/Other.tsx
+// Autofill profile, Privacy & data, and About.
+import { useEffect, useState } from 'react';
+import { ArrowUpRight, Database, History, Keyboard, Trash2 } from 'lucide-react';
+import { loadStoredProfile, saveStoredProfile, PROFILE_FIELDS, DEFAULT_PROFILE, type AutofillProfile } from '@/lib/automation/profile';
+import { MAX_RUNS } from '@/lib/agent/timeline';
+import TabiMark from '@/components/TabiMark';
+import { Card, Field, Notice, PageHead, TextInput, send } from '../ui';
+
+export function Autofill() {
+  const [profile, setProfile] = useState<AutofillProfile>({ ...DEFAULT_PROFILE });
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => { loadStoredProfile().then(setProfile).catch(() => {}); }, []);
+
+  const save = async () => {
+    try {
+      await saveStoredProfile(profile);
+      setMessage({ ok: true, text: 'Saved on this device.' });
+    } catch (err) {
+      setMessage({ ok: false, text: (err as Error)?.message || 'Couldn’t save it' });
+    }
+  };
+
+  return (
+    <>
+      <PageHead title="Autofill profile">Your details, for filling in forms: type /autofill in the side panel. They’re kept only in this browser, and nothing is filled without you asking.</PageHead>
+      <Card bare testId="autofill">
+        <form className="px-5 py-[18px] grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-4" onSubmit={(e) => { e.preventDefault(); save(); }}>
+          {PROFILE_FIELDS.map((f) => (
+            <Field key={f.key} label={f.label} className={f.key === 'address' ? 'sm:col-span-2' : ''}>
+              <TextInput
+                type={f.type || 'text'}
+                placeholder={f.placeholder}
+                value={profile[f.key]}
+                onChange={(e) => { setProfile((p) => ({ ...p, [f.key]: e.target.value })); setMessage(null); }}
+              />
+            </Field>
+          ))}
+          <div className="sm:col-span-2 flex items-center gap-3">
+            <button type="submit" className="btn btn-primary">Save profile</button>
+            {message && <Notice kind={message.ok ? 'ok' : 'error'}>{message.text}</Notice>}
+          </div>
+        </form>
+      </Card>
+    </>
+  );
+}
+
+const STORED: [string, string][] = [
+  ['API keys', 'In this browser only. Each is sent only to its own provider, and this page only ever sees them masked.'],
+  ['Pages Tabi reads', 'Sent to the AI provider you chose, as part of each request. Nothing goes anywhere else.'],
+  ['Run history', `The last ${MAX_RUNS} tasks, step by step, in this browser. Typed passwords and card numbers are masked.`],
+  ['Skills, workflows, shortcuts, schedules', 'In this browser. A workflow that types a password keeps it here, like your keys.'],
+  ['Autofill profile and site lists', 'In this browser.'],
+];
+
+export function Privacy() {
+  const [runs, setRuns] = useState<number | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const load = () => send<unknown[]>('LIST_RUNS').then((res) => { if (res.success) setRuns(res.data?.length ?? 0); });
+  useEffect(() => { load(); }, []);
+
+  const deleteAll = async () => {
+    const res = await send('DELETE_RUNS', {});
+    setConfirming(false);
+    setMessage(res.success ? 'All run history is deleted.' : res.error ?? 'Couldn’t delete it');
+    load();
+  };
+
+  return (
+    <>
+      <PageHead title="Privacy & data">Tabi has no server and no account. Everything below stays in this browser, apart from what each task sends to the AI provider you picked.</PageHead>
+      <Card title="What’s stored where" bare>
+        <dl className="px-5 py-2">
+          {STORED.map(([what, where]) => (
+            <div key={what} className="grid grid-cols-1 sm:grid-cols-[220px_minmax(0,1fr)] gap-1 sm:gap-4 py-[10px] border-b border-border last:border-b-0">
+              <dt className="font-medium">{what}</dt>
+              <dd className="text-muted">{where}</dd>
+            </div>
+          ))}
+        </dl>
+      </Card>
+      <Card title="Run history" note={`Tabi keeps the last ${MAX_RUNS} tasks so you can see what a background or scheduled task did. Older ones are dropped.`} bare>
+        <div className="px-5 py-4 flex items-center gap-3 flex-wrap">
+          <span className="flex items-center gap-2 text-muted"><Database size={14} aria-hidden />{runs === null ? '…' : `${runs} saved run${runs === 1 ? '' : 's'}`}</span>
+          <div className="flex-1" />
+          <button type="button" className="btn btn-secondary" onClick={() => send('OPEN_HISTORY', {})}><History size={14} aria-hidden />Open History</button>
+          {confirming ? (
+            <span className="flex items-center gap-[6px]">
+              <span className="text-[12.5px]">Delete {runs} run{runs === 1 ? '' : 's'}? This can’t be undone.</span>
+              <button type="button" className="btn btn-danger" onClick={deleteAll}>Delete</button>
+              <button type="button" className="btn btn-quiet" onClick={() => setConfirming(false)}>Cancel</button>
+            </span>
+          ) : (
+            <button type="button" className="btn btn-secondary" disabled={!runs} onClick={() => setConfirming(true)}><Trash2 size={14} aria-hidden />Delete all history</button>
+          )}
+        </div>
+        {message && <div className="px-5 pb-4"><Notice kind="ok">{message}</Notice></div>}
+      </Card>
+    </>
+  );
+}
+
+export function About() {
+  const version = browser.runtime.getManifest().version;
+  const link = (href: string, text: string) => (
+    <a href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium text-accent">{text}<ArrowUpRight size={12} aria-hidden /></a>
+  );
+  return (
+    <>
+      <PageHead title="About" />
+      <Card bare>
+        <div className="px-5 py-5 flex items-center gap-4">
+          <div className="w-12 h-12 rounded-[10px] bg-accent grid place-items-center flex-none"><TabiMark size={28} color="#fff" label="" /></div>
+          <div className="flex-1">
+            <div className="font-semibold text-[16px]">Tabi <span className="font-mono text-[12px] text-muted font-normal">v{version}</span></div>
+            <div className="text-muted">An open-source browser agent. Bring your own AI key. MIT licensed.</div>
+          </div>
+        </div>
+        <div className="px-5 pb-5 flex flex-wrap gap-x-5 gap-y-2">
+          {link('https://github.com/Adityatex/Tabi', 'Source on GitHub')}
+          {link('https://github.com/Adityatex/Tabi#readme', 'Docs')}
+          {link('https://github.com/Adityatex/Tabi/issues', 'Report a problem')}
+        </div>
+      </Card>
+      <Card title="Keyboard" bare>
+        <div className="px-5 py-4 flex items-center gap-3 flex-wrap">
+          <Keyboard size={14} className="text-muted" aria-hidden />
+          <span className="flex-1">Open Tabi: <span className="font-mono text-[12px] border border-border rounded-[4px] px-[5px] py-px">Ctrl+G</span></span>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => browser.tabs.create({ url: 'chrome://extensions/shortcuts' })}>Change shortcut</button>
+        </div>
+      </Card>
+    </>
+  );
+}

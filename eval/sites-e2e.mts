@@ -66,15 +66,16 @@ async function main(): Promise<void> {
 
     // 1. Settings: a bad entry is refused, a good one is saved
     const settings = await context.newPage();
-    await settings.goto(`chrome-extension://${new URL(worker.url()).host}/options.html`);
-    const blockInput = settings.locator('input[placeholder="mybank.com"]');
+    await settings.goto(`chrome-extension://${new URL(worker.url()).host}/options.html#safety`);
+    const blockInput = settings.getByRole('textbox', { name: 'Site to never act on' });
     await blockInput.fill('not a site');
     await blockInput.press('Enter');
-    const refused = await settings.locator('.message.error').waitFor({ timeout: 5_000 }).then(() => settings.locator('.message.error').innerText()).catch(() => '');
+    const alert = settings.locator('[data-testid="blocked-sites"] [role="alert"]');
+    const refused = await alert.waitFor({ timeout: 5_000 }).then(() => alert.innerText()).catch(() => '');
     check("Settings refuses something that isn't a site", refused.includes("isn't a site"), refused || 'no error shown');
     await blockInput.fill(`${other}/anything`);
     await blockInput.press('Enter');
-    await settings.getByText('localhost', { exact: true }).waitFor({ timeout: 5_000 }).catch(() => {});
+    await settings.getByRole('list', { name: 'Sites Tabi never acts on' }).getByText('localhost', { exact: true }).waitFor({ timeout: 5_000 }).catch(() => {});
     const stored: any = await worker.evaluate(() => chrome.storage.local.get('tabi_sites'));
     check('Settings blocks a site typed as a full address', JSON.stringify(stored.tabi_sites?.blocked) === '["localhost"]', JSON.stringify(stored));
 

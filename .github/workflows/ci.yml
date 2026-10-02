@@ -84,11 +84,14 @@ jobs:
       - name: Asks before an action that can't be undone (Don't allow, background notification, Allow)
         run: npm run eval:confirm
 
-      - name: Site lists hold (popup, blocked site refused and never read, allow list asks)
+      - name: Site lists hold (Settings, blocked site refused and never read, allow list asks)
         run: npm run eval:sites
 
       - name: Run timeline is saved and shown (History page, tokens, masked password, export, delete)
         run: npm run eval:history
+
+      - name: Settings page works (provider and masked key, backups and order, safety, schedules, deep links)
+        run: npm run eval:settings
 
       - name: Save as skill, then reuse it (mock)
         run: npm run eval:mock -- --task login --trials 2 --learn --timeout 45

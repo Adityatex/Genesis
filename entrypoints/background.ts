@@ -1018,6 +1018,20 @@ export default defineBackground(() => {
             break;
           }
 
+          case 'OPEN_SETTINGS': {
+            // From the side panel: Settings at a section, in its open tab if there is one
+            const section = /^[a-z]+$/.test(String(payload?.section ?? '')) ? String(payload.section) : '';
+            const base = browser.runtime.getURL('/options.html' as any);
+            const url = section ? `${base}#${section}` : base;
+            // Tabi's own open pages (tab URLs aren't visible without the tabs permission)
+            const contexts: { tabId: number; documentUrl?: string }[] = await chrome.runtime.getContexts?.({ contextTypes: ['TAB'] }).catch(() => []) ?? [];
+            const open = contexts.find((c) => c.tabId >= 0 && c.documentUrl?.startsWith(base));
+            const tab = open ? await chrome.tabs.update(open.tabId, { url, active: true }) : await chrome.tabs.create({ url, active: true });
+            chrome.windows.update(tab.windowId, { focused: true });
+            sendResponse({ success: true });
+            break;
+          }
+
           case 'OPEN_HISTORY': {
             await openHistory(payload?.runId);
             sendResponse({ success: true });

@@ -250,7 +250,8 @@ export default function App() {
     update(tabId, () => ({ show: 'idle', answers: [], save: {} }));
   };
   const openHistory = (runId?: string) => send('OPEN_HISTORY', { runId });
-  const openSettings = () => browser.runtime.openOptionsPage();
+  /** Settings, at a section (models, safety, agent...) if given. */
+  const openSettings = (section?: string) => send('OPEN_SETTINGS', { section });
   const control = (id: number, op: string) => send('TASK_CONTROL', { tabId: id, op }).then(() => setNudge((n) => n + 1));
 
   // ---- What the middle shows
@@ -301,15 +302,15 @@ export default function App() {
                   ))}
                 </ul>
               )}
-              <button type="button" className="self-start text-[12px] font-medium text-accent" onClick={openSettings}>Change the limit</button>
+              <button type="button" className="self-start text-[12px] font-medium text-accent" onClick={() => openSettings('agent')}>Change the limit</button>
             </div>
           )}
           {(run.status === 'stopped' || run.status === 'error') && (
             <div className="flex flex-col gap-[10px] pt-3 pb-1" data-testid="ending">
               {run.status === 'stopped' && (blocked
-                ? <BlockedCard url={tab?.url} onAsk={() => { setMode('answer'); startOver(); }} onSettings={openSettings} />
+                ? <BlockedCard url={tab?.url} onAsk={() => { setMode('answer'); startOver(); }} onSettings={() => openSettings('safety')} />
                 : <StoppedCard run={run} onResume={() => startTask(run.goal)} onStartOver={startOver} />)}
-              {run.status === 'error' && <FailedCard run={run} provider={model.provider} onSettings={openSettings} onRetry={() => startTask(run.goal)} onTimeline={() => openHistory(run.runId)} />}
+              {run.status === 'error' && <FailedCard run={run} provider={model.provider} onSettings={() => openSettings('models')} onRetry={() => startTask(run.goal)} onTimeline={() => openHistory(run.runId)} />}
             </div>
           )}
         </StepStream>
@@ -328,7 +329,7 @@ export default function App() {
       </>
     );
   } else if (!model.ready) {
-    body = <Setup onOpenSettings={openSettings} onReady={() => {}} />;
+    body = <Setup onOpenSettings={() => openSettings('models')} onReady={() => {}} />;
   } else if (state.show === 'answers' && state.answers.length) {
     body = (
       <Answers
@@ -357,9 +358,9 @@ export default function App() {
         model={showRun && run?.replay === 'replaying' ? 'Replay · no AI' : model.label || 'No model yet'}
         backup={backup}
         url={tab?.url}
-        onModel={openSettings}
+        onModel={() => openSettings('models')}
         onHistory={() => openHistory()}
-        onSettings={openSettings}
+        onSettings={() => openSettings()}
       />
       <main className="flex-1 min-h-0 flex flex-col">{body}</main>
       {notice && (
