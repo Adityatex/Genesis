@@ -60,6 +60,14 @@ export interface CallOptions {
   tools?: ToolDef[];
   /** Turns the model's tool calls into the text callLLM returns. */
   toolsToText?: (calls: ToolCall[]) => string;
+  /** Told the tokens the provider counted for a successful call (if it reports them). */
+  onUsage?: (usage: TokenUsage) => void;
+}
+
+/** Tokens one call used, as the provider reported them. */
+export interface TokenUsage {
+  prompt: number;
+  completion: number;
 }
 
 /** The provider or model refused tools; the refusal is remembered for this model. */
@@ -320,6 +328,7 @@ export async function callLLM(messages: ChatMessage[], config: LLMConfig, opts: 
       }
 
       const data: ChatResponse = await response.json();
+      if (data.usage) opts.onUsage?.({ prompt: data.usage.prompt_tokens ?? 0, completion: data.usage.completion_tokens ?? 0 });
       const choice = data.choices?.[0];
       const calls = choice?.message?.tool_calls;
       if (calls?.length && opts.toolsToText) return opts.toolsToText(calls);
@@ -507,6 +516,8 @@ export interface PlanOptions {
   tools?: boolean;
   /** The user turned on run_code (the model's own read-only page code). Default false. */
   customCode?: boolean;
+  /** Told the tokens the call used (see CallOptions.onUsage). */
+  onUsage?: (usage: TokenUsage) => void;
 }
 
 /**
@@ -561,7 +572,7 @@ RULES:
     },
   ];
   // Headroom: reasoning models think before answering (deepseek-v4-pro used >1k)
-  const opts: CallOptions = { maxTokens: config.maxOutputTokens ?? 4096, temperature: 0, topP: 1 };
+  const opts: CallOptions = { maxTokens: config.maxOutputTokens ?? 4096, temperature: 0, topP: 1, onUsage: options.onUsage };
   if (!useTools) return callLLM(messages, config, { ...opts, jsonMode: true });
   try {
     return await callLLM(messages, config, { ...opts, tools: AGENT_TOOLS, toolsToText: toolCallsToResponse });

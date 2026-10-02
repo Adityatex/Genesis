@@ -198,6 +198,17 @@ In the popup's **Sites** section, you set your own rules. Genesis checks them in
 
 The rules cover every task, background task, schedule and workflow replay, and AI apps connected through MCP. There's no one to ask in those apps, so a site off the allow list is simply refused. `npm run eval:sites` checks this end to end.
 
+## 🕘 Run history
+
+Every run is saved step by step, so you can see what a background or scheduled task did after its tab is gone. Open it with **Run history** in the popup, **Timeline** next to a task, or by clicking a finished task's notification. Each run shows:
+
+- every step and what came of it, with the element it acted on by its label;
+- each model call: which model (including a switch to a backup provider), how long it took, the tokens it used, and what the agent saw change on the page;
+- safety checks, questions it asked you and your answers, pauses, and how it ended;
+- totals: time, model calls, tokens and safety checks.
+
+**Export** saves a run as Markdown (handy for bug reports). Runs are kept only in this browser, the last 50, with typed passwords and card numbers masked. **Delete** and **Delete all** remove them.
+
 ## 🤝 Use it from Claude Code, Claude Desktop or Codex (MCP)
 
 `genesis-mcp` lets an AI app you already use drive your real browser through Genesis. The model runs inside that app, on your plan with it, so Genesis needs no API key for this. Genesis supplies what it's good at: page snapshots with numbered elements (including iframes and Shadow DOM), real mouse and keyboard input, and screenshots with those numbers drawn on.

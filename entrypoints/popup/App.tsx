@@ -7,7 +7,7 @@ import { CHECKPOINT_CHOICES, PARALLEL_CHOICES, DEFAULT_PREFS, type ScreenshotMod
 
 const TASK_ICON: Record<string, string> = { running: '⏳', queued: '🕒', paused: '⏸️', done: '✅', error: '❌', stopped: '⏹️' };
 
-interface TaskRow { tabId: number; goal: string; status: string; step: number; title?: string; model?: string; background?: boolean; asking?: { action: string; risk: string } }
+interface TaskRow { tabId: number; goal: string; status: string; step: number; title?: string; model?: string; background?: boolean; asking?: { action: string; risk: string }; runId?: string }
 import type { BridgeStatus } from '@/lib/mcp/bridgeClient';
 import { formatSkill, type Skill } from '@/lib/skills/skill';
 import type { Workflow } from '@/lib/workflows/workflow';
@@ -233,6 +233,12 @@ export default function App() {
     if (!res?.success) setMaxParallel(previous);
   };
 
+  /** The History page: past runs and their timelines (at one run if given). */
+  const openHistory = (runId?: string) => {
+    browser.runtime.sendMessage({ action: 'OPEN_HISTORY', payload: { runId } }).catch(() => {});
+    window.close();
+  };
+
   const handleConfirmRiskyChange = async (on: boolean) => {
     setConfirmRisky(on);
     const res: any = await browser.runtime.sendMessage({ action: 'SAVE_PREFS', payload: { confirmRisky: on } });
@@ -395,6 +401,7 @@ export default function App() {
       <div className="status-badge">
         <div className="status-dot"></div>
         <span>Active on all pages</span>
+        <button className="link-btn" style={{ marginLeft: 'auto' }} onClick={() => openHistory()}>Run history</button>
       </div>
 
       {/* Tasks Section: the agent's tasks in every tab */}
@@ -409,6 +416,7 @@ export default function App() {
                   <strong className="task-goal" title={t.goal}>{t.goal || t.title}</strong>
                   <span className="skill-actions">
                     <button className="link-btn" onClick={() => handleTask(t.tabId, 'open')}>Open</button>
+                    {t.runId && <button className="link-btn" onClick={() => openHistory(t.runId)}>Timeline</button>}
                     {t.status === 'paused' && !t.asking && <button className="link-btn" onClick={() => handleTask(t.tabId, 'continue')}>Continue</button>}
                     {t.asking && <button className="link-btn" onClick={() => handleTask(t.tabId, 'allow')}>Allow</button>}
                     {t.asking && <button className="link-btn" onClick={() => handleTask(t.tabId, 'deny')}>Don't</button>}

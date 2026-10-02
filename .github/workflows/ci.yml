@@ -87,6 +87,9 @@ jobs:
       - name: Site lists hold (popup, blocked site refused and never read, allow list asks)
         run: npm run eval:sites
 
+      - name: Run timeline is saved and shown (History page, tokens, masked password, export, delete)
+        run: npm run eval:history
+
       - name: Save as skill, then reuse it (mock)
         run: npm run eval:mock -- --task login --trials 2 --learn --timeout 45
 

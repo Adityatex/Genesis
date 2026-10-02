@@ -21,7 +21,8 @@
     "eval:schedule": "tsx eval/schedule-e2e.mts",
     "eval:parallel": "tsx eval/parallel-e2e.mts",
     "eval:confirm": "tsx eval/confirm-e2e.mts",
-    "eval:sites": "tsx eval/sites-e2e.mts"
+    "eval:sites": "tsx eval/sites-e2e.mts",
+    "eval:history": "tsx eval/history-e2e.mts"
   },
   "dependencies": {
     "lucide-react": "^1.8.0",

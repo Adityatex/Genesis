@@ -737,3 +737,48 @@ describe("the user's site lists", () => {
     expect(deps.navigate).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('the run timeline', () => {
+  it('records model calls, steps, questions and how it ended, with typed passwords masked', async () => {
+    const saved: any[] = [];
+    const { deps } = fakeDeps([
+      '{"actions":[{"action":"type","elementId":2,"text":"s3cret-pass"},{"action":"click","elementId":7}]}',
+      '{"action":"done","summary":"Ordered"}',
+    ], {
+      targets: { 2: '<input> type="password" "Password"', 7: '<button> "Place order"' },
+      onPause: () => answerRun(60, true),
+    });
+    (deps.plan as any).mockImplementation(async () => ({ text: (deps.plan as any).mock.calls.length === 1
+      ? '{"actions":[{"action":"type","elementId":2,"text":"s3cret-pass"},{"action":"click","elementId":7}]}'
+      : '{"action":"done","summary":"Ordered"}', model: 'Groq · qwen', usage: { prompt: 900, completion: 100 } }));
+    deps.saveRun = (log) => saved.push(log);
+    const result = await startRun(deps, 60, 'Buy it', { confirm: true });
+
+    const log = saved.at(-1);
+    expect(log.id).toBe(result.runId);
+    expect(log).toMatchObject({ goal: 'Buy it', status: 'done', summary: 'Ordered', calls: 2, tokens: 2000, checks: 0 });
+    expect(log.ended).toBeGreaterThanOrEqual(log.started);
+    expect(log.entries.map((e: any) => e.kind)).toEqual(['model', 'step', 'ask', 'step', 'model', 'end']);
+    expect(log.entries[0]).toMatchObject({ model: 'Groq · qwen', tokens: 1000, url: 'https://shop.test/' });
+    expect(log.entries[2]).toMatchObject({ text: 'Asked to allow: click "Place order"', detail: "it looks like a purchase, which can't be undone. Answer: you allowed it" });
+    expect(log.entries[5]).toMatchObject({ text: 'Finished', detail: 'Ordered' });
+    expect(JSON.stringify(log)).not.toContain('s3cret-pass');
+    expect(log.entries[1].text).toContain('"••••"');
+    expect(saved.length).toBeGreaterThanOrEqual(2); // saved when it asked, and at the end
+  });
+
+  it('records safety checks and pauses', async () => {
+    const saved: any[] = [];
+    const { deps } = fakeDeps(['{"action":"navigate","url":"https://verify.example/"}', '{"action":"done","summary":"ok"}'], {
+      onPause: () => answerRun(61, false),
+    });
+    deps.critic = vi.fn(async () => ({ ok: false, reason: 'Unrelated site.' }));
+    deps.saveRun = (log) => saved.push(log);
+    await startRun(deps, 61, 'Read my address', { critic: true });
+    const log = saved.at(-1);
+    expect(log.checks).toBe(1);
+    const check = log.entries.find((e: any) => e.kind === 'check');
+    expect(check).toMatchObject({ text: "Doesn't fit the task: go to https://verify.example/", detail: "Unrelated site. (checked because it opens verify.example, a site this task hasn't been on)" });
+    expect(log.entries.find((e: any) => e.kind === 'ask').detail).toBe("Unrelated site. Answer: you didn't allow it");
+  });
+});

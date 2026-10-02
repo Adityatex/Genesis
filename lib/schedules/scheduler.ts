@@ -16,8 +16,9 @@ export interface SchedulerDeps {
   setAlarm(name: string, when: number): void;
   clearAlarm(name: string): void;
   /** Run a schedule's workflow or shortcut in a background tab; resolves when it ends. */
-  run(schedule: Schedule): Promise<{ status: string; summary: string }>;
-  notify(title: string, message: string): void;
+  run(schedule: Schedule): Promise<{ status: string; summary: string; runId?: string }>;
+  /** Tell the user how a run went; `runId` = its timeline, for clicking through to it. */
+  notify(title: string, message: string, runId?: string): void;
 }
 
 const ALARM_PREFIX = 'genesis-schedule:';
@@ -94,7 +95,7 @@ export async function runSchedule(deps: SchedulerDeps, id: string): Promise<void
   arm(deps, schedule);
   running.add(id);
   const started = deps.now();
-  let result: { status: string; summary: string };
+  let result: { status: string; summary: string; runId?: string };
   try {
     result = await deps.run(schedule);
   } catch (err) {
@@ -104,7 +105,7 @@ export async function runSchedule(deps: SchedulerDeps, id: string): Promise<void
   }
   await update(deps, id, (s) => ({ ...s, lastRun: { at: started, ...result, summary: result.summary.slice(0, 300) } }));
   const icon = result.status === 'done' ? '✅' : result.status === 'paused' ? '⏸️' : '⚠️';
-  deps.notify(`${icon} Genesis: /${schedule.name}`, result.summary.slice(0, 250) || result.status);
+  deps.notify(`${icon} Genesis: /${schedule.name}`, result.summary.slice(0, 250) || result.status, result.runId);
 }
 
 /** An alarm went off: run its schedule if it's still on. */

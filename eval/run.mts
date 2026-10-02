@@ -489,7 +489,12 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
     if (args.replay && passed && !savedWorkflows.has(task.id)) {
       await page.getByRole('button', { name: 'Save as workflow' }).click({ timeout: 10_000 });
       const saved = page.locator('.markdown-body', { hasText: /Workflow saved:|Couldn't save a workflow/ });
-      await saved.first().waitFor({ timeout: 30_000 });
+      await saved.first().waitFor({ timeout: 30_000 }).catch(async (err) => {
+        // Rare in CI order; say what the sidebar showed instead
+        const messages = (await page.locator('.markdown-body').allInnerTexts().catch(() => [])).slice(-2).map((t) => t.slice(0, 150).replace(/\s+/g, ' '));
+        const button = await page.getByRole('button', { name: 'Save as workflow' }).isVisible().catch(() => false);
+        throw new Error(`no "Workflow saved" message (button still shown: ${button}; last messages: ${JSON.stringify(messages)}): ${(err as Error).message.split('\n')[0]}`);
+      });
       const all: any[] = await context.serviceWorkers()[0].evaluate(async () => (await chrome.storage.local.get('genesis_workflows')).genesis_workflows ?? []);
       if (all.length) {
         savedWorkflows.set(task.id, all);

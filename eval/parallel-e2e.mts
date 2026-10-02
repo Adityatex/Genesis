@@ -112,7 +112,7 @@ async function main(): Promise<void> {
     const active: any[] = await worker.evaluate(() => chrome.tabs.query({ active: true, lastFocusedWindow: true }));
     check('the user stays on their own page', active[0]?.url?.includes('/search.html'), active[0]?.url);
     const notes: Record<string, unknown> = await worker.evaluate(() => new Promise((resolve) => chrome.notifications.getAll(resolve)));
-    check('each finished task notifies', Object.keys(notes).filter((k) => k.startsWith('genesis-task:')).length === 3, JSON.stringify(Object.keys(notes)));
+    check('each finished task notifies, linking to its timeline', Object.keys(notes).filter((k) => k.startsWith('genesis-run:')).length === 3, JSON.stringify(Object.keys(notes)));
   } finally {
     await context.close().catch(() => {});
     await fixtures.close();

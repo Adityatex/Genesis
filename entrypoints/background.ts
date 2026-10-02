@@ -1,7 +1,7 @@
 // entrypoints/background.ts
 // Background service worker — message router, LLM API proxy, storage management
 
-import { summarizePage, explainText, chatWithPage, planAgentStep, listModels, acceptsImages } from '@/lib/api/llmClient';
+import { summarizePage, explainText, chatWithPage, planAgentStep, listModels, acceptsImages, type TokenUsage } from '@/lib/api/llmClient';
 import {
   startRun, stopRun, resumeRun, answerRun, forgetRun, getRunView, getRunRecord, listRuns, isRunning, notifyTabLoading,
   type RunnerDeps, type RunOptions, type RunView,
@@ -15,6 +15,7 @@ import { providerPool, modelLabel, type FallbackResult } from '@/lib/api/fallbac
 import { trustedClick, trustedKey, trustedType, releaseTab, watchDetach, debuggerScreenshot, debuggerEvaluate } from '@/lib/agent/trustedInput';
 import { CODE_TIMEOUT_MS } from '@/lib/agent/customCode';
 import { SITES_KEY, cleanRules, normalizeSite, type SiteRules } from '@/lib/agent/sites';
+import { RUNS_KEY, upsertRun, runHeader, type RunLog } from '@/lib/agent/timeline';
 import { checkStep } from '@/lib/agent/critic';
 import { TaskQueue, TaskCancelled } from '@/lib/agent/taskQueue';
 import { annotate, base64ToBlob, type VisualInfo } from '@/lib/agent/screenshot';
@@ -67,6 +68,28 @@ export default defineBackground(() => {
   console.log('[Genesis] Background service worker started');
   watchDetach();
 
+  // ---- Run timelines (lib/agent/timeline.ts), for the History page
+  async function loadRunLogs(): Promise<RunLog[]> {
+    const stored: any = await browser.storage.local.get(RUNS_KEY);
+    return Array.isArray(stored[RUNS_KEY]) ? stored[RUNS_KEY] : [];
+  }
+  /** One write at a time: parallel tasks save into the same list. */
+  let runLogWrites: Promise<void> = Promise.resolve();
+  function saveRunLog(log: RunLog): void {
+    runLogWrites = runLogWrites
+      .then(async () => { await browser.storage.local.set({ [RUNS_KEY]: upsertRun(await loadRunLogs(), log) }); })
+      .catch((err) => console.error('[Genesis] Saving the run timeline:', err));
+  }
+  function editRunLogs(change: (runs: RunLog[]) => RunLog[]): Promise<void> {
+    runLogWrites = runLogWrites.then(async () => { await browser.storage.local.set({ [RUNS_KEY]: change(await loadRunLogs()) }); });
+    return runLogWrites;
+  }
+  /** The History page, at one run if given. */
+  async function openHistory(runId?: string): Promise<void> {
+    const tab = await chrome.tabs.create({ url: browser.runtime.getURL(`/history.html${runId ? `#${runId}` : ''}` as any), active: true });
+    chrome.windows.update(tab.windowId, { focused: true });
+  }
+
   /** The user's block and allow lists (lib/agent/sites.ts). */
   async function loadSiteRules(): Promise<SiteRules> {
     const stored: any = await browser.storage.local.get(SITES_KEY);
@@ -85,11 +108,13 @@ export default defineBackground(() => {
       const { nativeTools, customCode } = await loadPrefs();
       // Any provider in the chain can answer: the prompt carries the whole task state.
       // Executor calls try the fast model first, then the usual chain.
+      let usage: TokenUsage | undefined;
+      const onUsage = (u: TokenUsage) => { usage = { prompt: (usage?.prompt ?? 0) + u.prompt, completion: (usage?.completion ?? 0) + u.completion }; };
       const { value, config, skipped } = await ask(
-        (c) => planAgentStep(goal, snapshot, history, currentPlan, c, { image, tools: nativeTools, customCode }),
+        (c) => planAgentStep(goal, snapshot, history, currentPlan, c, { image, tools: nativeTools, customCode, onUsage }),
         role === 'executor',
       );
-      return { text: value, model: modelLabel(config), unavailable: skipped, imageDropped: !!image && !acceptsImages(config) };
+      return { text: value, model: modelLabel(config), unavailable: skipped, imageDropped: !!image && !acceptsImages(config), usage };
     },
     // run_code (opt-in): in an isolated world through the debugger; the runner checked the code first
     runCode: (tabId, expression) => debuggerEvaluate(tabId, expression, CODE_TIMEOUT_MS),
@@ -120,6 +145,7 @@ export default defineBackground(() => {
       return value;
     },
     siteRules: () => loadSiteRules(),
+    saveRun: (log) => saveRunLog(log),
     onAsk: async (tabId, view) => {
       // The tab's sidebar asks; if the user can't see that tab (a background or
       // scheduled task), a notification tells them. Clicking it opens the tab.
@@ -201,9 +227,11 @@ export default defineBackground(() => {
       backgroundTabs.delete(tabId);
       const icon = view?.status === 'done' ? '✅' : view?.status === 'paused' ? '⏸️' : '⚠️';
       const line = view ? view.message.split('\n').map((l) => l.trim()).find((l) => l && !l.startsWith('#')) ?? view.status : 'Stopped before it started';
-      chrome.notifications.create(`genesis-task:${tabId}`, {
+      chrome.notifications.clear(`genesis-task:${tabId}`); // a question it asked is over
+      // Clicking it opens the run's timeline (or, if it never started, its tab)
+      chrome.notifications.create(view?.runId ? `genesis-run:${view.runId}` : `genesis-task:${tabId}`, {
         type: 'basic', iconUrl: browser.runtime.getURL('/icons/icon128.png'),
-        title: `${icon} Genesis: ${goal.slice(0, 60)}`, message: `${line.slice(0, 200)}\nClick to open the tab.`,
+        title: `${icon} Genesis: ${goal.slice(0, 60)}`, message: `${line.slice(0, 200)}\nClick to see what it did.`,
       });
     }
     return view;
@@ -226,6 +254,11 @@ export default defineBackground(() => {
   }
 
   chrome.notifications.onClicked.addListener(async (id: string) => {
+    if (id.startsWith('genesis-run:')) {
+      chrome.notifications.clear(id);
+      await openHistory(id.slice('genesis-run:'.length));
+      return;
+    }
     if (!id.startsWith('genesis-task:')) return;
     const tabId = Number(id.slice('genesis-task:'.length));
     chrome.notifications.clear(id);
@@ -322,8 +355,10 @@ export default defineBackground(() => {
     now: () => Date.now(),
     setAlarm: (name, when) => chrome.alarms.create(name, { when }),
     clearAlarm: (name) => { chrome.alarms.clear(name); },
-    notify: (title, message) => {
-      chrome.notifications.create({ type: 'basic', iconUrl: browser.runtime.getURL('/icons/icon128.png'), title, message });
+    notify: (title, message, runId) => {
+      const options = { type: 'basic', iconUrl: browser.runtime.getURL('/icons/icon128.png'), title, message: runId ? `${message}\nClick to see what it did.` : message };
+      if (runId) chrome.notifications.create(`genesis-run:${runId}`, options);
+      else chrome.notifications.create(options);
     },
     run: async (schedule) => {
       // What to run: a workflow replays (no model); a shortcut's prompt goes to the agent
@@ -355,7 +390,7 @@ export default defineBackground(() => {
       if (!view) return { status: 'stopped', summary: 'Stopped before it started' };
       // Close it if it worked; keep it open to look at if it didn't
       if (view.status === 'done') chrome.tabs.remove(tab.id).catch(() => {});
-      return { status: view.status, summary: resultLine(view.message) };
+      return { status: view.status, summary: resultLine(view.message), runId: view.runId };
     },
   };
   syncSchedules(schedulerDeps).catch((err) => console.error('[Genesis] Schedules:', err));
@@ -576,7 +611,7 @@ export default defineBackground(() => {
             const runs = [...listRuns(), ...[...queuedViews].map(([tabId, view]) => ({ ...view, tabId }))];
             const tasks = await Promise.all(runs.map(async (r) => {
               const tab = await chrome.tabs.get(r.tabId).catch(() => null);
-              return tab ? { tabId: r.tabId, goal: r.goal, status: r.status, step: r.step, model: r.model, updatedAt: r.updatedAt, asking: r.asking, title: tab.title, background: backgroundTabs.has(r.tabId), here: r.tabId === _sender.tab?.id } : null;
+              return tab ? { tabId: r.tabId, goal: r.goal, status: r.status, step: r.step, model: r.model, updatedAt: r.updatedAt, asking: r.asking, runId: r.runId, title: tab.title, background: backgroundTabs.has(r.tabId), here: r.tabId === _sender.tab?.id } : null;
             }));
             const order = ['running', 'paused', 'queued', 'done', 'error', 'stopped'];
             sendResponse({
@@ -860,6 +895,29 @@ export default defineBackground(() => {
 
           case 'GET_PREFS': {
             sendResponse({ success: true, data: await loadPrefs() });
+            break;
+          }
+
+          case 'LIST_RUNS': {
+            sendResponse({ success: true, data: (await loadRunLogs()).map(runHeader) });
+            break;
+          }
+
+          case 'GET_RUN': {
+            sendResponse({ success: true, data: (await loadRunLogs()).find((r) => r.id === payload?.id) ?? null });
+            break;
+          }
+
+          case 'DELETE_RUNS': {
+            // payload.id: one run; none: all of them
+            await editRunLogs((runs) => (payload?.id ? runs.filter((r) => r.id !== payload.id) : []));
+            sendResponse({ success: true });
+            break;
+          }
+
+          case 'OPEN_HISTORY': {
+            await openHistory(payload?.runId);
+            sendResponse({ success: true });
             break;
           }
 

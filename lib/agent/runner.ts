@@ -15,8 +15,10 @@ import type { ScreenshotMode } from '@/lib/agent/prefs';
 import { pickSkills, slugify, type Skill } from '@/lib/skills/skill';
 import { checkCode, wrapCode, formatCodeResult } from '@/lib/agent/customCode';
 import { canCommit, riskOf, labelOf, type Risk } from '@/lib/agent/confirm';
-import { criticStep, siteOf, type CriticStep, type Verdict } from '@/lib/agent/critic';
+import { criticStep, sensitiveKind, siteOf, type CriticStep, type Verdict } from '@/lib/agent/critic';
 import { urlStatus, type SiteRules } from '@/lib/agent/sites';
+import { capEntries, entryKindOf, maskSecrets, type RunLog, type TimelineEntry } from '@/lib/agent/timeline';
+import type { TokenUsage } from '@/lib/api/llmClient';
 import { isReplayed, describeStep, type Workflow, type WorkflowStep } from '@/lib/workflows/workflow';
 import type { ElementKey } from '@/lib/agent/domSnapshot';
 import { MAX_INVALID_RESPONSES, REPEAT_PAUSE, REPEAT_WARN, describeAction, formatHistory } from '@/lib/agent/history';
@@ -50,6 +52,8 @@ export interface RunView {
    * ('off-task', with the check's reason).
    */
   asking?: { action: string; risk: Risk | 'off-task' | 'unlisted'; reason?: string };
+  /** This run's timeline on the History page (lib/agent/timeline.ts); none while it waits for a slot. */
+  runId?: string;
 }
 
 export interface TabInfo {
@@ -74,6 +78,8 @@ export interface PlanReply {
   unavailable?: { label: string; reason: string }[];
   /** A screenshot was sent, but this model doesn't accept images, so it got text only. */
   imageDropped?: boolean;
+  /** Tokens the call used, if the provider reported them. */
+  usage?: TokenUsage;
 }
 
 export interface RunnerDeps {
@@ -94,6 +100,8 @@ export interface RunnerDeps {
   critic?(goal: string, step: CriticStep, sites: string[]): Promise<Verdict>;
   /** The user's block and allow lists (lib/agent/sites.ts), read before every step so a change applies at once. */
   siteRules?(): Promise<SiteRules>;
+  /** Keep this run's timeline (lib/agent/timeline.ts): called as it goes and when it ends. */
+  saveRun?(log: RunLog): void;
   /** A run is waiting for the user to allow an action (e.g. tell them if the tab is in the background). */
   onAsk?(tabId: number, view: RunView): void;
   /** Called once when a run ends, however it ends (e.g. to release the debugger). */
@@ -127,6 +135,17 @@ interface Run extends RunView {
   refused: Map<string, string>;
   /** Sites off the user's allow list that they let this task use. */
   sitesOk: Set<string>;
+  /** The timeline (lib/agent/timeline.ts), and its totals. */
+  id: string;
+  started: number;
+  timeline: TimelineEntry[];
+  calls: number;
+  checks: number;
+  tokens: number;
+  /** Passwords and card numbers typed: masked in the saved timeline. */
+  secrets: Set<string>;
+  /** The page the agent is on, for timeline entries. */
+  pageUrl?: string;
   /** Why the run stopped, when it wasn't the user's request. */
   stopReason?: string;
   /** A fast executor model is set up (see ModelRole). */
@@ -348,7 +367,7 @@ const runs = new Map<number, Run>();
 
 function view(run: Run): RunView {
   const { goal, status, message, loading, step, plan, model, updatedAt, replay, unrecordable, asking } = run;
-  return { goal, status, message, loading, step, plan, model, updatedAt, replay, unrecordable, asking, workflowName: run.workflow?.name };
+  return { goal, status, message, loading, step, plan, model, updatedAt, replay, unrecordable, asking, workflowName: run.workflow?.name, runId: run.id };
 }
 
 export function getRunView(tabId: number): RunView | null {
@@ -534,6 +553,7 @@ async function replayNext(deps: RunnerDeps, run: Run): Promise<'next' | 'finishe
   const n = run.replayIndex + 1;
   publish(deps, run, progressMessage(run, `*Replaying step ${n} of ${workflow.steps.length}: ${describeStep(step)}*`), true);
   const page = await waitForPage(deps, tabId);
+  run.pageUrl = page.url;
   if (!await pageAllowed(deps, run, page.url)) return 'next'; // the loop sees the stop
   run.startUrl ??= page.url;
 
@@ -547,7 +567,8 @@ async function replayNext(deps: RunnerDeps, run: Run): Promise<'next' | 'finishe
   const { result } = await runAction(deps, tabId, action, () => run.loads);
   // The executor echoes typed text; never a saved password
   const password = /type="password"/.test(step.target?.key ?? '') ? step.action.text : undefined;
-  run.history.push(`↻ ${describeStep(step)} → ${password ? result.split(password).join('••••') : result}`);
+  if (password) run.secrets.add(password);
+  addHistory(run, `↻ ${describeStep(step)} → ${password ? result.split(password).join('••••') : result}`);
   if (result.startsWith('❌')) return heal(run, n, step, result);
   record(run, action, step.target, page.url);
   run.lastPage = await deps.getTab(tabId).catch(() => run.lastPage);
@@ -560,7 +581,7 @@ function heal(run: Run, n: number, step: WorkflowStep, why: string): 'next' {
   run.replay = 'healed';
   run.needPlanner = true;
   const done = n > 1 ? `steps 1-${n - 1} worked, but step ${n}` : 'its first step';
-  run.history.push(`(note from Genesis) Replaying the saved workflow "${run.workflow!.name}": ${done} (${describeStep(step)}) didn't: ${why}. The page may have changed. Carry on with the task from here yourself.`);
+  addHistory(run, `(note from Genesis) Replaying the saved workflow "${run.workflow!.name}": ${done} (${describeStep(step)}) didn't: ${why}. The page may have changed. Carry on with the task from here yourself.`);
   return 'next';
 }
 
@@ -630,6 +651,21 @@ function notFoundResult(tab: TabInfo): string {
   return `❌ landed on "${tab.title}" (${tab.url}): that page doesn't exist. Don't guess URLs; use links you have seen.`;
 }
 
+/** Add a line to the history the model reads, and to the timeline. */
+function addHistory(run: Run, line: string): void {
+  run.history.push(line);
+  run.timeline.push({ at: Date.now(), kind: entryKindOf(line), text: line, url: run.pageUrl });
+}
+
+/** The run's timeline as saved: secrets masked, very long runs trimmed. */
+function runLog(run: Run): RunLog {
+  return maskSecrets({
+    id: run.id, goal: run.goal, started: run.started, ended: isRunning(run.tabId) && runs.get(run.tabId) === run ? undefined : run.updatedAt,
+    status: run.status, summary: run.summary ?? run.stopReason, workflow: run.workflow?.name,
+    calls: run.calls, checks: run.checks, tokens: run.tokens, entries: capEntries(run.timeline),
+  }, run.secrets);
+}
+
 /** Short fingerprint of a page snapshot (FNV-1a), so repeats are cheap to spot. */
 export function hashText(text: string): string {
   let h = 0x811c9dc5;
@@ -649,8 +685,21 @@ async function waitForUser(deps: RunnerDeps, run: Run, message: string): Promise
   const decision = new Promise<Answer>((resolve) => { run.decide = resolve; });
   publish(deps, run, message, false);
   if (run.asking) deps.onAsk?.(run.tabId, view(run));
+  deps.saveRun?.(runLog(run)); // a task waiting for an answer shows in the History page
+  const since = Date.now();
   const answer = await Promise.race([decision, deps.sleep(PAUSE_TIMEOUT_MS).then(() => null)]);
   run.decide = undefined;
+  // The timeline: what was asked, and the answer
+  const asking = run.asking;
+  const question = asking
+    ? `Asked to allow: ${asking.action}`
+    : message.split('\n\n')[1]?.trim() ?? 'Paused';
+  const why = asking ? (asking.reason ?? `it looks like ${asking.risk}, which can't be undone`) : undefined;
+  const reply = answer === null ? 'no answer for 10 minutes'
+    : answer === 'stop' ? 'you stopped the task'
+    : answer === 'decline' ? "you didn't allow it"
+    : asking ? 'you allowed it' : 'you said keep going';
+  run.timeline.push({ at: since, kind: asking ? 'ask' : 'pause', text: question, detail: why ? `${why.replace(/\.$/, '')}. Answer: ${reply}` : `Answer: ${reply}`, ms: Date.now() - since, url: run.pageUrl });
   if (answer === null) run.stopReason = 'Paused for 10 minutes without an answer, so the agent stopped.';
   if (answer === null || answer === 'stop') {
     run.stopRequested = true;
@@ -783,8 +832,14 @@ async function guard(deps: RunnerDeps, run: Run, action: AgentAction, pageUrl: s
   }
   if (critic && step && !run.cleared.has(step.key)) {
     publish(deps, run, progressMessage(run, `*Step ${run.step}: safety check of ${desc}...*`), true);
+    const checked = Date.now();
     const verdict: Verdict = await critic(run.goal, step, [...run.sites])
       .catch((err) => ({ ok: false, reason: `the safety check couldn't run (${String((err as Error)?.message ?? err).slice(0, 120)})` }));
+    run.checks++;
+    run.timeline.push({
+      at: checked, kind: 'check', text: `${verdict.ok ? 'Fits the task' : "Doesn't fit the task"}: ${step.text}`,
+      detail: verdict.ok ? `Checked because ${step.why}` : `${verdict.reason} (checked because ${step.why})`, ms: Date.now() - checked, url: pageUrl,
+    });
     if (!verdict.ok) {
       run.asking = { action: what, risk: 'off-task', reason: verdict.reason };
       const answer = await waitForUser(deps, run, `## ✋ Allow this?\n\nThe agent wants to **${what}**. A safety check, which can't see the page, `
@@ -845,6 +900,7 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
     const wantImage = run.screenshots === 'always' || (run.screenshots === 'planning' && planning);
 
     const page = await waitForPage(deps, tabId);
+    run.pageUrl = page.url;
     // Blocked, or off the allow list and not allowed: don't even read it
     if (!await pageAllowed(deps, run, page.url)) break;
     run.startUrl ??= page.url; // where a workflow of this run starts
@@ -866,20 +922,30 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
     run.lastSnapshot = { url: page.url, text: snapshotText };
     // Skills go with the goal: near the start, where they don't break the prompt cache
     const goal = run.goal + skillsSection(run.skills, run.goal, page.url, run.loadedSkills);
+    const asked = Date.now();
     const reply = await deps.plan(goal, snapshotText + changes + memorySection(run.visited, page.url), run.history, run.plan, role, image);
-    const { text: raw, model, unavailable, imageDropped } = typeof reply === 'string'
-      ? { text: reply, model: undefined, unavailable: undefined, imageDropped: false }
+    const { text: raw, model, unavailable, imageDropped, usage } = typeof reply === 'string'
+      ? { text: reply, model: undefined, unavailable: undefined, imageDropped: false, usage: undefined }
       : reply;
+    const tokens = usage ? usage.prompt + usage.completion : undefined;
+    run.calls++;
+    run.tokens += tokens ?? 0;
+    run.timeline.push({
+      at: asked, kind: 'model', text: `${role === 'executor' ? 'Fast model' : 'Model'} chose the next actions${planning && run.split ? ' (planning)' : ''}`,
+      model, ms: Date.now() - asked, tokens, url: page.url,
+      detail: [page.title ? `On "${page.title}"` : '', changes.trim().slice(0, 600)].filter(Boolean).join('\n') || undefined,
+    });
+    if (run.calls % 10 === 0) deps.saveRun?.(runLog(run)); // a long run shows up before it ends
     if (imageDropped && model && !run.noVision.has(model)) {
       run.noVision.add(model);
-      run.history.push(`(note from Genesis) Screenshots are on, but ${model} doesn't accept images, so it gets the page as text only.`);
+      addHistory(run, `(note from Genesis) Screenshots are on, but ${model} doesn't accept images, so it gets the page as text only.`);
     }
     // A different model in the same role means a backup took over; switching
     // between the planner and executor is routine and needs no note
     const before = run.roleModels[role];
     if (model && before && model !== before) {
       const reason = unavailable?.find((u) => u.label === before)?.reason;
-      run.history.push(handoffNote(before, model, reason));
+      addHistory(run, handoffNote(before, model, reason));
     }
     if (model) {
       run.model = model;
@@ -899,7 +965,7 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
       // Feed the error back through history so the model can correct itself
       invalidStreak++;
       run.needPlanner = true;
-      run.history.push(`(invalid response) → ❌ ${parsed.error}. Respond with valid JSON: {"plan": [...], "actions": [...]}.`);
+      addHistory(run, `(invalid response) → ❌ ${parsed.error}. Respond with valid JSON: {"plan": [...], "actions": [...]}.`);
       if (invalidStreak >= MAX_INVALID_RESPONSES) {
         throw new Error(`Model returned ${invalidStreak} invalid responses in a row. Last error: ${parsed.error}`);
       }
@@ -920,21 +986,21 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
       if (!await pause(deps, run, reason)) break;
       run.repeats.set(stateKey, REPEAT_WARN); // choosing it once more pauses again
       run.needPlanner = true;
-      run.history.push(`${what} → ⏸️ not run: you chose this ${seen} times on this unchanged page. Do something different.`);
+      addHistory(run, `${what} → ⏸️ not run: you chose this ${seen} times on this unchanged page. Do something different.`);
       continue;
     }
     const repeatWarning = seen >= REPEAT_WARN
       ? ' ⚠️ You already did exactly this on this same page. If nothing changed, do something different.'
       : '';
     if (repeatWarning || parsed.notes.length) run.needPlanner = true;
-    for (const note of parsed.notes) run.history.push(`(note from Genesis) ${note}`);
+    for (const note of parsed.notes) addHistory(run, `(note from Genesis) ${note}`);
 
     for (const [i, action] of actions.entries()) {
       if (run.stopRequested) break;
       if (action.action === 'done' && role === 'executor') {
         // The fast model may call it done too early; the planner confirms
         run.needPlanner = true;
-        run.history.push(`(note from Genesis) The fast model says the goal is complete: "${action.summary || 'Done'}". Check the page: if it really is, send "done"; if not, carry on.`);
+        addHistory(run, `(note from Genesis) The fast model says the goal is complete: "${action.summary || 'Done'}". Check the page: if it really is, send "done"; if not, carry on.`);
         break;
       }
       if (action.action === 'done') {
@@ -949,7 +1015,7 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
       if (guarded.answer === 'stop') break;
       if (guarded.answer === 'decline') {
         run.needPlanner = true;
-        run.history.push(`${desc} → ${guarded.declined}`);
+        addHistory(run, `${desc} → ${guarded.declined}`);
         break; // the rest of the batch counted on it
       }
       const allowed = guarded.answer === 'continue' ? ' (the user allowed it)' : '';
@@ -957,7 +1023,7 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
         // Run by the background through the debugger, not by the page's content script
         publish(deps, run, progressMessage(run, `*Step ${run.step}: ${desc}*`), true);
         const result = await runCodeAction(deps, run, action.text ?? '');
-        run.history.push(`${desc} → ${result}${allowed}`);
+        addHistory(run, `${desc} → ${result}${allowed}`);
         if (result.startsWith('❌')) run.needPlanner = true;
         continue;
       }
@@ -965,14 +1031,17 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
         // Handled here, not on the page: the skill joins the prompt from the next call
         const skill = run.skills.find((sk) => sk.name === slugify(action.text ?? ''));
         if (skill) run.loadedSkills.add(skill.name);
-        run.history.push(`${desc} → ${skill ? '✅ loaded: its instructions are now under SKILLS' : `❌ there is no skill named "${action.text}"`}`);
+        addHistory(run, `${desc} → ${skill ? '✅ loaded: its instructions are now under SKILLS' : `❌ there is no skill named "${action.text}"`}`);
         continue;
       }
       publish(deps, run, progressMessage(run, `*Step ${run.step}: ${desc}*`), true);
       // Workflows: describe the element before acting, while its ID is still valid
       const target = isReplayed(action) && action.elementId !== undefined ? await describeTarget(deps, run, action.elementId) : undefined;
+      if (action.text && (/type="password"/.test(target?.key ?? '') || sensitiveKind(action.text) === 'a card number')) run.secrets.add(action.text);
       const { result, pageChanged } = await runAction(deps, tabId, action, () => run.loads);
-      run.history.push(`${desc} → ${result}${allowed}${i === 0 ? repeatWarning : ''}`);
+      addHistory(run, `${desc} → ${result}${allowed}${i === 0 ? repeatWarning : ''}`);
+      const label = target ? labelOf(target.key) : '';
+      if (label) run.timeline[run.timeline.length - 1].target = label;
       if (isReplayed(action) && !result.startsWith('❌')) record(run, action, target, page.url);
       run.lastPage = await deps.getTab(tabId).catch(() => run.lastPage);
 
@@ -982,7 +1051,7 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
       if (failed) run.needPlanner = true;
       if (left > 0 && (pageChanged || failed)) {
         const why = pageChanged ? 'the page changed, so they may not fit it any more' : 'the action above failed';
-        run.history.push(`(note from Genesis) ${left} more action${left === 1 ? '' : 's'} not run: ${why}`);
+        addHistory(run, `(note from Genesis) ${left} more action${left === 1 ? '' : 's'} not run: ${why}`);
         break;
       }
     }
@@ -1008,6 +1077,7 @@ export async function startRun(deps: RunnerDeps, tabId: number, goal: string, op
     screenshots: options.screenshots ?? 'off', noVision: new Set(),
     skills: options.skills ?? [], loadedSkills: new Set(), customCode: !!options.customCode, confirm: !!options.confirm,
     critic: !!options.critic, sites: new Set(), cleared: new Set(), refused: new Map(), sitesOk: new Set(),
+    id: `${Date.now().toString(36)}-${tabId}`, started: Date.now(), timeline: [], calls: 0, checks: 0, tokens: 0, secrets: new Set(),
     trace: [], workflow: options.workflow, replayIndex: 0, ...(options.workflow ? { replay: 'replaying' as const } : {}),
   };
   runs.set(tabId, run);
@@ -1017,6 +1087,10 @@ export async function startRun(deps: RunnerDeps, tabId: number, goal: string, op
     run.status = 'error';
     publish(deps, run, `## ❌ Agent Error\n\n${(err as Error).message}\n\n**Steps completed:**\n${formatHistory(run.history) || 'None'}`, false);
   } finally {
+    const ending = run.message.split('\n').map((l) => l.trim()).find((l) => l && !l.startsWith('#') && !l.startsWith('---')) ?? run.status;
+    run.timeline.push({ at: Date.now(), kind: 'end', text: run.status === 'done' ? 'Finished' : run.status === 'error' ? 'Failed' : 'Stopped', detail: ending, url: run.pageUrl });
+    if (run.status === 'error') run.summary ??= ending;
+    deps.saveRun?.(runLog(run));
     await deps.onRunEnded(tabId);
   }
   return view(run);
