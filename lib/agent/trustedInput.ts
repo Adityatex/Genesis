@@ -93,7 +93,7 @@ export async function debuggerEvaluate(tabId: number, expression: string, timeou
   const { frameTree } = await send(tabId, 'Page.getFrameTree', {}) as { frameTree: { frame: { id: string } } };
   const { executionContextId } = await send(tabId, 'Page.createIsolatedWorld', {
     frameId: frameTree.frame.id,
-    worldName: 'genesis-run-code',
+    worldName: 'tabi-run-code',
     grantUniveralAccess: false,
   }) as { executionContextId: number };
   const response = await send(tabId, 'Runtime.evaluate', {

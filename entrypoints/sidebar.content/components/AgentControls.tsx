@@ -36,7 +36,7 @@ export default function AgentControls({ paused, queued, asking, onContinue, onAn
             {asking.risk === 'off-task'
               ? <>A safety check doesn't think this is part of your task: {asking.reason}</>
               : asking.risk === 'unlisted'
-                ? <>{asking.reason} (Genesis popup → Sites).</>
+                ? <>{asking.reason} (Tabi popup → Sites).</>
                 : <>It looks like {asking.risk}, which can't be undone.</>}
           </span>
         </span>

@@ -4,7 +4,7 @@
 
 import type { Skill } from '@/lib/skills/skill';
 
-export const SKILLS_KEY = 'genesis_skills';
+export const SKILLS_KEY = 'tabi_skills';
 /** Most skills kept; each is a few KB at most. */
 export const MAX_SKILLS = 100;
 

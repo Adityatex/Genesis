@@ -71,7 +71,7 @@ export default function SitesSection() {
     <div className="section">
       <label className="section-label">Sites</label>
       <p className="hint">
-        Your own rules for where the agent may act. They're checked by Genesis itself, not by a model, so no page can talk
+        Your own rules for where the agent may act. They're checked by Tabi itself, not by a model, so no page can talk
         its way past them. They apply to every task, schedule and workflow, and to AI apps connected through MCP.
       </p>
 

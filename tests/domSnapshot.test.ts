@@ -34,13 +34,13 @@ describe('createDOMSnapshot', () => {
     expect(elements[0].options!.at(-1)).toBe('…+25 more');
   });
 
-  it('tags elements with data-genesis-id matching their snapshot id', () => {
+  it('tags elements with data-tabi-id matching their snapshot id', () => {
     document.body.innerHTML = '<button>A</button><a href="/x">B</a>';
 
     const { elements } = createDOMSnapshot();
 
     for (const el of elements) {
-      expect(document.querySelector(`[data-genesis-id="${el.id}"]`)).not.toBeNull();
+      expect(document.querySelector(`[data-tabi-id="${el.id}"]`)).not.toBeNull();
     }
     expect(elements).toHaveLength(2);
   });
@@ -71,9 +71,9 @@ describe('shadow DOM', () => {
     expect(createDOMSnapshot().elements.map(e => e.label)).toEqual(['First', 'Middle', 'Last']);
   });
 
-  it("never includes Genesis's own sidebar", () => {
-    document.body.innerHTML = '<button>Page button</button><genesis-sidebar></genesis-sidebar>';
-    document.querySelector('genesis-sidebar')!.attachShadow({ mode: 'open' }).innerHTML = '<button>Send</button>';
+  it("never includes Tabi's own sidebar", () => {
+    document.body.innerHTML = '<button>Page button</button><tabi-sidebar></tabi-sidebar>';
+    document.querySelector('tabi-sidebar')!.attachShadow({ mode: 'open' }).innerHTML = '<button>Send</button>';
     expect(createDOMSnapshot().elements.map(e => e.label)).toEqual(['Page button']);
   });
 });
@@ -162,9 +162,9 @@ describe('page text from shadow roots', () => {
     expect(text).not.toContain('color: red'); // style text isn't page text
   });
 
-  it("keeps Genesis's own sidebar text out", () => {
-    document.body.innerHTML = '<p>Page</p><genesis-sidebar></genesis-sidebar>';
-    document.querySelector('genesis-sidebar')!.attachShadow({ mode: 'open' }).innerHTML = '<p>Agent Progress</p>';
+  it("keeps Tabi's own sidebar text out", () => {
+    document.body.innerHTML = '<p>Page</p><tabi-sidebar></tabi-sidebar>';
+    document.querySelector('tabi-sidebar')!.attachShadow({ mode: 'open' }).innerHTML = '<p>Agent Progress</p>';
     expect(pageText(2000)).not.toContain('Agent Progress');
   });
 });

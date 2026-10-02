@@ -1,10 +1,10 @@
-# Genesis — AI Browser Automation Assistant
+# Tabi
 
-[![CI](https://github.com/Adityatex/Genesis/actions/workflows/ci.yml/badge.svg)](https://github.com/Adityatex/Genesis/actions/workflows/ci.yml)
+[![CI](https://github.com/Adityatex/Tabi/actions/workflows/ci.yml/badge.svg)](https://github.com/Adityatex/Tabi/actions/workflows/ci.yml)
 
-Open-source Brave/Chrome extension (Manifest V3) that injects a floating AI-powered sidebar into every webpage. Built with **WXT + React + TypeScript**. BYOK-only — no bundled keys.
+Tabi is an open-source browser agent for Brave and Chrome (Manifest V3). It reads the page you're on, answers questions about it, and carries out tasks across your tabs for you. The name is *tab* plus *tabi* (旅), Japanese for a journey. Built with **WXT + React + TypeScript**. BYOK-only — no bundled keys.
 
-![Genesis Extension](public/icons/icon128.png)
+![Tabi Extension](public/icons/icon128.png)
 
 ## ✨ Features (v1: Agent + Autofill)
 
@@ -15,8 +15,8 @@ Open-source Brave/Chrome extension (Manifest V3) that injects a floating AI-powe
 | 🔍 **Element Detection** | Detect all interactive elements (inputs, buttons, dropdowns, etc.) |
 | ✏️ **Trustworthy Form Auto-Fill** | Fill forms with *your own* profile data (React/Angular compatible). Edit it in the popup — stored only in `chrome.storage.local`. No exam auto-solving. |
 | 📊 **Page Summarization** | AI-generated summaries of page content |
-| 💡 **Text Explanation** | Select text and get AI-powered explanations |
-| 💬 **Copilot Chat** | Free-form chat about the current page |
+| 💡 **Text Explanation** | Select text and get it explained in plain words |
+| 💬 **Chat** | Ask anything about the current page |
 
 ## 🛠️ Tech Stack
 
@@ -108,7 +108,7 @@ The suite has 10 standard tasks (forms, dropdowns, radios, multi-page flows, slo
 │   ├── sidebar.content/    # Content script with Shadow DOM sidebar
 │   │   ├── App.tsx         # Thin composition shell (~180 lines)
 │   │   ├── hooks/          # useChatMessages, useAgentLoop, useWorkspaceTools
-│   │   ├── components/     # GenesisLogo, FloatingFab, Header, ToolsGrid, MessageList, ChatInput
+│   │   ├── components/     # TabiLogo, FloatingFab, Header, ToolsGrid, MessageList, ChatInput
 │   │   └── sidebar.css     # Dark glassmorphic theme
 │   └── background.ts      # Service worker: runs the agent loop, LLM API proxy (BYOK-only)
 ├── lib/
@@ -134,7 +134,7 @@ Open the extension popup and pick a provider under **AI model**:
 | OpenAI | [platform.openai.com](https://platform.openai.com/api-keys) | |
 | OpenRouter | [openrouter.ai](https://openrouter.ai/keys) | Many models behind one key |
 | Kilo AI Gateway | [app.kilo.ai](https://app.kilo.ai) | Hundreds of models; free ones are listed first and cost nothing with a free account key. Some free models may train on your prompts, which include page content; **Load models** flags them |
-| OpenCode Zen | [opencode.ai](https://opencode.ai/auth) | Needs a key with credit. Zen's free models only work inside the OpenCode app (they return 403 elsewhere), and its Claude/GPT/Gemini/Grok models use APIs Genesis doesn't speak yet, so those are hidden |
+| OpenCode Zen | [opencode.ai](https://opencode.ai/auth) | Needs a key with credit. Zen's free models only work inside the OpenCode app (they return 403 elsewhere), and its Claude/GPT/Gemini/Grok models use APIs Tabi doesn't speak yet, so those are hidden |
 | Ollama (local) | none | Runs on your machine. Start Ollama with `OLLAMA_ORIGINS=chrome-extension://*` |
 | Custom | optional | Any OpenAI-compatible `/chat/completions` server |
 
@@ -175,7 +175,7 @@ In the popup, schedule any workflow or shortcut to run every hour, day or week. 
 
 ## ⧉ Parallel tasks
 
-The **Run in background** button next to Send starts a task (or a `/workflow` or `/shortcut`) in a new tab beside yours, in a purple **Genesis** tab group, and leaves you where you are. A notification says when it's done; click it to see the tab. At most 3 tasks use the model at once (set in the popup): more wait in line, since each running task sends requests and free tiers limit them per minute. Workflow replays don't count. The popup's Tasks list, and the sidebar's "running elsewhere" line, show every task with Open, Stop and Continue.
+The **Run in background** button next to Send starts a task (or a `/workflow` or `/shortcut`) in a new tab beside yours, in a purple **Tabi** tab group, and leaves you where you are. A notification says when it's done; click it to see the tab. At most 3 tasks use the model at once (set in the popup): more wait in line, since each running task sends requests and free tiers limit them per minute. Workflow replays don't count. The popup's Tasks list, and the sidebar's "running elsewhere" line, show every task with Open, Stop and Continue.
 
 ## ✋ Asks before it buys, sends or deletes
 
@@ -191,7 +191,7 @@ Ordinary steps (clicks, typing a search, moving around the same site) are never 
 
 ## 🚧 Sites the agent may (and may never) use
 
-In the popup's **Sites** section, you set your own rules. Genesis checks them in code, not with a model, so no page can argue its way past them:
+In the popup's **Sites** section, you set your own rules. Tabi checks them in code, not with a model, so no page can argue its way past them:
 
 - **Never act on**: the agent won't open, read or act on these sites or their subdomains (`mybank.com` covers `login.mybank.com`). It refuses to go there by link or address, and if a task lands on one anyway, it stops before reading the page. The popup has a one-click **Block** button for the site you're on.
 - **Only act on** (optional): once you list sites here, the agent asks before using any other site (once per site per task), and skips the safety check on the ones you listed.
@@ -211,15 +211,15 @@ Every run is saved step by step, so you can see what a background or scheduled t
 
 ## 🤝 Use it from Claude Code, Claude Desktop or Codex (MCP)
 
-`genesis-mcp` lets an AI app you already use drive your real browser through Genesis. The model runs inside that app, on your plan with it, so Genesis needs no API key for this. Genesis supplies what it's good at: page snapshots with numbered elements (including iframes and Shadow DOM), real mouse and keyboard input, and screenshots with those numbers drawn on.
+`tabi-mcp` lets an AI app you already use drive your real browser through Tabi. The model runs inside that app, on your plan with it, so Tabi needs no API key for this. Tabi supplies what it's good at: page snapshots with numbered elements (including iframes and Shadow DOM), real mouse and keyboard input, and screenshots with those numbers drawn on.
 
 ```bash
 npm run build:mcp                 # once: installs and builds mcp/
 node mcp/dist/server.js token     # prints your pairing token and the setup commands
-claude mcp add genesis -- node "<path to repo>/mcp/dist/server.js"   # Claude Code; Codex: codex mcp add ...
+claude mcp add tabi -- node "<path to repo>/mcp/dist/server.js"   # Claude Code; Codex: codex mcp add ...
 ```
 
-Then, in the Genesis popup under **AI apps (MCP)**, turn on **Let AI apps control this browser** and paste the token. The toolbar icon shows **MCP** while an app is connected.
+Then, in the Tabi popup under **AI apps (MCP)**, turn on **Let AI apps control this browser** and paste the token. The toolbar icon shows **MCP** while an app is connected.
 
 | Tool | What it does |
 |---|---|
@@ -227,9 +227,11 @@ Then, in the Genesis popup under **AI apps (MCP)**, turn on **Let AI apps contro
 | `browser_snapshot` | The page as text, every interactive element numbered |
 | `browser_act` | Up to 10 actions in order (click, type, select, navigate, keys, scroll, find, ...), stopping early if the page changes or one fails |
 | `browser_screenshot` | The visible page with each element's number drawn on |
-| `browser_run_task` | Hand a whole task to Genesis's own agent (uses the model set up in Genesis) |
+| `browser_run_task` | Hand a whole task to Tabi's own agent (uses the model set up in Tabi) |
 
-**Security.** The bridge is off until you turn it on. `genesis-mcp` listens on `127.0.0.1` only and refuses connections from web pages. Before any command, the extension and the server prove to each other that they hold the same pairing token (HMAC challenge and response, so the token never travels), which stops another program on the port from taking over the browser. Only `http(s)` URLs can be opened. `npm run eval:mcp` checks the whole chain end to end in CI.
+**Security.** The bridge is off until you turn it on. `tabi-mcp` listens on `127.0.0.1` only and refuses connections from web pages. Before any command, the extension and the server prove to each other that they hold the same pairing token (HMAC challenge and response, so the token never travels), which stops another program on the port from taking over the browser. Only `http(s)` URLs can be opened. `npm run eval:mcp` checks the whole chain end to end in CI.
+
+**Set up before the rename to Tabi?** It keeps working for one more release: the `genesis-mcp` command, the `GENESIS_MCP_TOKEN` and `GENESIS_MCP_PORT` variables, and your token (moved from `~/.genesis-mcp` to `~/.tabi-mcp`; it still pairs). To switch, run `claude mcp remove genesis`, then add it again as `tabi` with the command above.
 
 ## 🧰 Maintaining
 

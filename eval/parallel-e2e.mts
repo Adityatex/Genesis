@@ -3,7 +3,7 @@
 // three times with at most 2 tasks at once. A fake model answers each call
 // after 2 seconds, so the tasks overlap. Checks the limit holds (never more
 // than 2 model calls at once, the third waits), every task finishes in its own
-// background tab in a "Genesis" group, the user's tab stays in front, and each
+// background tab in a "Tabi" group, the user's tab stays in front, and each
 // task ends with a notification. No real model or API key is involved.
 //
 //   npm run build && npm run eval:parallel   (-- --headed to watch)
@@ -31,7 +31,7 @@ function check(name: string, ok: boolean, detail = ''): void {
 async function main(): Promise<void> {
   if (!fs.existsSync(path.join(EXTENSION_DIR, 'manifest.json'))) throw new Error('Build the extension first: npm run build');
   const fixtures = await startFixtureServer();
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'genesis-parallel-e2e-'));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tabi-parallel-e2e-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chromium',
     headless: !headed,
@@ -41,8 +41,8 @@ async function main(): Promise<void> {
   try {
     const worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker', { timeout: 15_000 });
     await worker.evaluate((base) => chrome.storage.local.set({
-      genesis_llm: { provider: 'custom', models: { custom: 'mock' }, keys: { custom: 'k' }, customBaseUrl: base },
-      genesis_prefs: { trustedInput: false, maxParallel: 2 },
+      tabi_llm: { provider: 'custom', models: { custom: 'mock' }, keys: { custom: 'k' }, customBaseUrl: base },
+      tabi_prefs: { trustedInput: false, maxParallel: 2 },
     }), MODEL);
 
     // The fake model: 2 seconds per answer, counting how many calls overlap
@@ -80,7 +80,7 @@ async function main(): Promise<void> {
     // The user's page, with the sidebar open
     const page = await context.newPage();
     await page.goto(`${fixtures.baseUrl}/search.html`);
-    await page.locator('[title="Open Genesis Copilot"]').click({ timeout: 15_000 });
+    await page.locator('[title="Open Tabi"]').click({ timeout: 15_000 });
     const box = page.locator('textarea[placeholder^="Describe action"]');
     for (const goal of ['Summarise this page', 'Find the search box', 'Read the page title']) {
       await box.fill(goal);
@@ -106,13 +106,13 @@ async function main(): Promise<void> {
 
     const groups: any[] = await worker.evaluate(() => chrome.tabGroups.query({}));
     const grouped: any[] = await worker.evaluate(() => chrome.tabs.query({ groupId: -1 }).then(() => chrome.tabs.query({})));
-    const genesis = groups.find((g) => g.title === 'Genesis');
-    const inGroup = grouped.filter((t) => genesis && t.groupId === genesis.id);
-    check('their tabs are grouped as "Genesis"', !!genesis && inGroup.length === 3, `groups ${JSON.stringify(groups)}, ${inGroup.length} tabs in it`);
+    const group = groups.find((g) => g.title === 'Tabi');
+    const inGroup = grouped.filter((t) => group && t.groupId === group.id);
+    check('their tabs are grouped as "Tabi"', !!group && inGroup.length === 3, `groups ${JSON.stringify(groups)}, ${inGroup.length} tabs in it`);
     const active: any[] = await worker.evaluate(() => chrome.tabs.query({ active: true, lastFocusedWindow: true }));
     check('the user stays on their own page', active[0]?.url?.includes('/search.html'), active[0]?.url);
     const notes: Record<string, unknown> = await worker.evaluate(() => new Promise((resolve) => chrome.notifications.getAll(resolve)));
-    check('each finished task notifies, linking to its timeline', Object.keys(notes).filter((k) => k.startsWith('genesis-run:')).length === 3, JSON.stringify(Object.keys(notes)));
+    check('each finished task notifies, linking to its timeline', Object.keys(notes).filter((k) => k.startsWith('tabi-run:')).length === 3, JSON.stringify(Object.keys(notes)));
   } finally {
     await context.close().catch(() => {});
     await fixtures.close();

@@ -21,7 +21,7 @@ export interface SchedulerDeps {
   notify(title: string, message: string, runId?: string): void;
 }
 
-const ALARM_PREFIX = 'genesis-schedule:';
+const ALARM_PREFIX = 'tabi-schedule:';
 /** A run more than this late counts as missed (the browser was closed or asleep). */
 const MISSED_AFTER_MS = 60_000;
 
@@ -105,7 +105,7 @@ export async function runSchedule(deps: SchedulerDeps, id: string): Promise<void
   }
   await update(deps, id, (s) => ({ ...s, lastRun: { at: started, ...result, summary: result.summary.slice(0, 300) } }));
   const icon = result.status === 'done' ? '✅' : result.status === 'paused' ? '⏸️' : '⚠️';
-  deps.notify(`${icon} Genesis: /${schedule.name}`, result.summary.slice(0, 250) || result.status, result.runId);
+  deps.notify(`${icon} Tabi: /${schedule.name}`, result.summary.slice(0, 250) || result.status, result.runId);
 }
 
 /** An alarm went off: run its schedule if it's still on. */

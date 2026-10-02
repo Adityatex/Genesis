@@ -41,7 +41,7 @@ const promptOf = (route: Route): string => String(route.request().postDataJSON()
 async function main(): Promise<void> {
   if (!fs.existsSync(path.join(EXTENSION_DIR, 'manifest.json'))) throw new Error('Build the extension first: npm run build');
   const fixtures = await startFixtureServer();
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'genesis-confirm-e2e-'));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tabi-confirm-e2e-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chromium',
     headless: !headed,
@@ -53,8 +53,8 @@ async function main(): Promise<void> {
     const worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker', { timeout: 15_000 });
     // Asking is on by default: nothing in the prefs turns it on
     await worker.evaluate((base) => chrome.storage.local.set({
-      genesis_llm: { provider: 'custom', models: { custom: 'mock' }, keys: { custom: 'k' }, customBaseUrl: base },
-      genesis_prefs: { trustedInput: false },
+      tabi_llm: { provider: 'custom', models: { custom: 'mock' }, keys: { custom: 'k' }, customBaseUrl: base },
+      tabi_prefs: { trustedInput: false },
     }), MODEL);
 
     // The fake model: type the message and click Send; once answered, finish
@@ -74,7 +74,7 @@ async function main(): Promise<void> {
     // 1. In the sidebar: Don't allow
     const page = await context.newPage();
     await page.goto(`${fixtures.baseUrl}/editor.html`);
-    await page.locator('[title="Open Genesis Copilot"]').click({ timeout: 15_000 });
+    await page.locator('[title="Open Tabi"]').click({ timeout: 15_000 });
     const input = page.locator('textarea[placeholder^="Describe action"]');
     await input.fill(GOAL);
     await page.keyboard.press('Enter');
@@ -106,11 +106,11 @@ async function main(): Promise<void> {
     check('the task list shows what a background task wants to do', task?.asking?.action === 'click "Send"', JSON.stringify(task));
     // The notification follows the task list by a moment (it checks the tab first)
     let notes: string[] = [];
-    for (let i = 0; i < 20 && !notes.includes(`genesis-task:${task?.tabId}`); i++) {
+    for (let i = 0; i < 20 && !notes.includes(`tabi-task:${task?.tabId}`); i++) {
       if (i) await popup.waitForTimeout(250);
       notes = Object.keys(await worker.evaluate(() => new Promise((resolve) => chrome.notifications.getAll(resolve))) as object);
     }
-    check('a notification asks for the OK', notes.includes(`genesis-task:${task?.tabId}`), JSON.stringify(notes));
+    check('a notification asks for the OK', notes.includes(`tabi-task:${task?.tabId}`), JSON.stringify(notes));
     check('nothing is sent before the answer', !sent());
     await popup.reload();
     await popup.getByRole('button', { name: 'Allow', exact: true }).click({ timeout: 10_000 });

@@ -4,7 +4,7 @@
   all: initial;
 }
 
-#genesis-sidebar-root {
+#tabi-sidebar-root {
   position: fixed !important;
   top: 0 !important;
   right: 0 !important;
@@ -14,7 +14,7 @@
   pointer-events: none;
 }
 
-#genesis-sidebar-root > * {
+#tabi-sidebar-root > * {
   pointer-events: auto;
 }
 

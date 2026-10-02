@@ -13,7 +13,7 @@ export interface AutofillProfile {
   country: string;
 }
 
-export const PROFILE_STORAGE_KEY = 'genesis_profile';
+export const PROFILE_STORAGE_KEY = 'tabi_profile';
 
 export const DEFAULT_PROFILE: AutofillProfile = {
   fullname: 'John Doe',

@@ -78,7 +78,7 @@ export function useWorkspaceTools(d: Deps) {
     try {
       const profile = await loadStoredProfile();
       if (isProfileEmpty(profile)) {
-        d.updateBotMessage(msgId, '## Form Auto-Fill\n\nYour autofill profile is empty. Open the Genesis popup and save your name, email, and address first — nothing was filled.');
+        d.updateBotMessage(msgId, '## Form Auto-Fill\n\nYour autofill profile is empty. Open the Tabi popup and save your name, email, and address first — nothing was filled.');
         return;
       }
       const { filled, skipped } = fillForm(profile);
@@ -180,7 +180,7 @@ export function useWorkspaceTools(d: Deps) {
         d.setStatus('ACTIVE');
       }
     } else {
-      const msgId = d.addBotMessage('*Genesis is thinking...*', true);
+      const msgId = d.addBotMessage('*Tabi is thinking...*', true);
       try {
         const context = d.pageText || extractVisibleText();
         d.setPageText(context);
@@ -195,7 +195,7 @@ export function useWorkspaceTools(d: Deps) {
     }
   }, [d]);
 
-  /** Run what's typed in a new background tab (Genesis group), leaving this page alone. */
+  /** Run what's typed in a new background tab (Tabi group), leaving this page alone. */
   const handleBackground = useCallback(async () => {
     const message = d.chatInput.trim();
     if (!message) return;
@@ -220,7 +220,7 @@ export function useWorkspaceTools(d: Deps) {
       const res: any = await browser.runtime.sendMessage({ action: 'START_BACKGROUND_TASK', payload });
       if (!res?.success) throw new Error(res?.error || 'Could not start it');
       d.pushUserMessage(`⧉ ${message}`);
-      d.addBotMessage('Started in a **background tab** (in the purple *Genesis* group). Carry on here; you\'ll get a notification when it\'s done, and the task list above shows how it\'s going.');
+      d.addBotMessage('Started in a **background tab** (in the purple *Tabi* group). Carry on here; you\'ll get a notification when it\'s done, and the task list above shows how it\'s going.');
     } catch (err: any) {
       d.setChatInput(message); // give it back to fix and retry
       d.addBotMessage(`**Couldn't start it:** ${err.message}`);

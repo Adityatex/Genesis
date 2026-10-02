@@ -1,12 +1,12 @@
 // @vitest-environment node
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import WebSocketNode from 'ws';
-// The SDK is installed with genesis-mcp (mcp/), not at the root
+// The SDK is installed with tabi-mcp (mcp/), not at the root
 import { Client } from '../mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
 import { InMemoryTransport } from '../mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js';
 import { ExtensionBridge, NOT_CONNECTED, allowedOrigin } from '@/mcp/src/bridgeServer';
 import { createServer } from '@/mcp/src/server';
-import { randomHex } from '@/mcp/src/protocol';
+import { randomHex, newToken, isValidToken, normalizeToken } from '@/mcp/src/protocol';
 import { BridgeClient, type BridgeStatus } from '@/lib/mcp/bridgeClient';
 import { createHandlers, type HandlerDeps } from '@/lib/mcp/handlers';
 
@@ -45,9 +45,26 @@ const until = async (check: () => boolean, ms = 3000) => {
   }
 };
 
-describe('genesis-mcp bridge', () => {
+describe('pairing tokens', () => {
+  it('are tbk_ and 64 hex characters', () => {
+    expect(newToken()).toMatch(/^tbk_[0-9a-f]{64}$/);
+    expect(isValidToken(newToken())).toBe(true);
+  });
+
+  it('accept pasted ones with stray whitespace, and ones from before the rename', () => {
+    const hex = randomHex(32);
+    expect(normalizeToken(`  TBK_${hex.toUpperCase()}
+`)).toBe(`tbk_${hex}`);
+    expect(isValidToken(hex)).toBe(true);
+    expect(normalizeToken(hex)).toBe(`tbk_${hex}`);
+    expect(isValidToken('tbk_1234')).toBe(false);
+    expect(isValidToken(`gbk_${hex}`)).toBe(false);
+  });
+});
+
+describe('tabi-mcp bridge', () => {
   it('pairs with the right token, then carries requests and answers', async () => {
-    const token = randomHex(32);
+    const token = newToken();
     const bridge = await startServer(token);
     const { client, handle } = startClient(bridge.address, token);
     await until(() => bridge.connected && client.current === 'connected');
@@ -63,11 +80,18 @@ describe('genesis-mcp bridge', () => {
     await expect(bridge.request('page_snapshot')).rejects.toThrow('No tab to work in');
   });
 
+  it('pairs a token made before the rename (no tbk_ prefix) with the same token prefixed', async () => {
+    const old = randomHex(32);
+    const bridge = await startServer(`tbk_${old}`);
+    const { client } = startClient(bridge.address, old);
+    await until(() => bridge.connected && client.current === 'connected');
+  });
+
   it('refuses to take commands from a server with a different token', async () => {
     const bridge = await startServer(randomHex(32)); // e.g. something else listening on the port
     const { client, statuses, handle } = startClient(bridge.address, randomHex(32));
     await until(() => client.current === 'rejected');
-    expect(statuses.at(-1)).toEqual({ status: 'rejected', detail: 'The genesis-mcp server has a different pairing token' });
+    expect(statuses.at(-1)).toEqual({ status: 'rejected', detail: 'The tabi-mcp server has a different pairing token' });
     expect(bridge.connected).toBe(false);
     expect(handle).not.toHaveBeenCalled();
   });
@@ -93,7 +117,7 @@ describe('genesis-mcp bridge', () => {
   });
 });
 
-describe('genesis-mcp tools', () => {
+describe('tabi-mcp tools', () => {
   async function connect(request: (method: string, params?: Record<string, unknown>) => Promise<unknown>) {
     const server = createServer({ request: request as any });
     const client = new Client({ name: 'test', version: '1.0.0' });
@@ -129,7 +153,7 @@ describe('genesis-mcp tools', () => {
     const client = await connect(async () => { throw new Error(NOT_CONNECTED); });
     const result: any = await client.callTool({ name: 'browser_snapshot', arguments: {} });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain('The Genesis extension is not connected');
+    expect(result.content[0].text).toContain('The Tabi extension is not connected');
   });
 });
 
@@ -186,9 +210,9 @@ describe('what the extension does for the bridge', () => {
     expect(deps.createTab).not.toHaveBeenCalled();
   });
 
-  it("stays out of the way while Genesis's own agent works in the tab", async () => {
+  it("stays out of the way while Tabi's own agent works in the tab", async () => {
     const { handle } = fakeDeps({ isBusy: () => true });
-    await expect(handle('page_act', { actions: [{ action: 'click', elementId: 1 }] })).rejects.toThrow("Genesis's own agent is working in tab 1");
+    await expect(handle('page_act', { actions: [{ action: 'click', elementId: 1 }] })).rejects.toThrow("Tabi's own agent is working in tab 1");
   });
 
   it('explains when a hidden tab cannot be captured', async () => {

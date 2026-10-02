@@ -52,7 +52,7 @@ export interface AgentPrefs {
 
 export type ScreenshotMode = 'off' | 'planning' | 'always';
 
-export const PREFS_KEY = 'genesis_prefs';
+export const PREFS_KEY = 'tabi_prefs';
 
 export const CHECKPOINT_CHOICES = [25, 50, 100, 0] as const;
 

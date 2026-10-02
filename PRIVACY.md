@@ -1,4 +1,4 @@
-# Privacy Policy — Genesis AI Browser Assistant
+# Privacy Policy — Tabi
 
 - No analytics, no tracking, no remote servers operated by us.
 - You choose the AI provider (Groq, Google AI Studio, Mistral, DeepSeek, OpenAI, OpenRouter, Kilo AI Gateway, OpenCode Zen, a local Ollama, or a custom OpenAI-compatible server) and bring your own API key.
@@ -7,12 +7,12 @@
 - Keys and page content are only ever sent over HTTPS, except to servers on your own machine (localhost).
 - The `debugger` permission is used only while the agent is working on a task in that tab (Chrome shows a banner while it is active): to send real mouse and keyboard input, which can be turned off in the popup; to take the screenshots, if you turn screenshots on; and, only if you turn on "Let the agent run its own code", to run the agent's read-only code on the page. It never records your browsing.
 - A small helper script runs inside each frame of a page so the agent can work in embedded forms (e.g. payment iframes). It stays idle and reads nothing unless the agent is working on that tab.
-- **AI apps (MCP), off by default.** If you turn on "Let AI apps control this browser" and run the `genesis-mcp` helper, an AI app on your computer (e.g. Claude Code, Claude Desktop, Codex) can read pages and act in your browser through Genesis. Page snapshots and screenshots then go to that app, and on to the AI provider it uses under that provider's policy. The connection stays on your machine (127.0.0.1) and requires the pairing token you set. The `alarms` permission keeps this connection alive, and runs your schedules.
+- **AI apps (MCP), off by default.** If you turn on "Let AI apps control this browser" and run the `tabi-mcp` helper, an AI app on your computer (e.g. Claude Code, Claude Desktop, Codex) can read pages and act in your browser through Tabi. Page snapshots and screenshots then go to that app, and on to the AI provider it uses under that provider's policy. The connection stays on your machine (127.0.0.1) and requires the pairing token you set. The `alarms` permission keeps this connection alive, and runs your schedules.
 - **Schedules**, only ones you create: a workflow or shortcut runs at the times you choose, in a background tab of your browser, and the `notifications` permission shows you how it went. A scheduled shortcut sends that page to your AI provider like any other task.
 - **Asking before irreversible actions**: when a task in a tab you aren't looking at wants to buy, send or delete something, the `notifications` permission asks you. Nothing is sent anywhere to decide this: the check runs in the extension, on the label of the button involved.
 - **Safety check against hijacking** (on by default): before a step that goes to a new site or types an email, phone or card number you didn't give, your request and a description of that step (including the text it would type) go to your own AI provider for a yes/no, like any other agent call. No page content is sent with it.
 - **Site lists**: the sites you block or allow are stored in `chrome.storage.local` on your device. On a blocked site the agent stops before reading the page, so nothing from it goes to your AI provider. The popup reads the address of the tab you open it on only to offer its **Block** button.
 - **Run history**: a record of each agent run (its steps, the addresses it visited, what the agent saw change on pages, model names and token counts) is kept in `chrome.storage.local` on your device for the History page: the last 50 runs, with typed passwords and card numbers masked. It never leaves your device unless you press Export, and Delete all removes it.
-- **Background tasks**: the `tabGroups` permission puts the tabs of tasks you run in the background into a group named Genesis. It doesn't read your other tabs or groups.
+- **Background tasks**: the `tabGroups` permission puts the tabs of tasks you run in the background into a group named Tabi. It doesn't read your other tabs or groups.
 - We never sell, share, or retain your browsing data. Your provider's own privacy policy applies to what you send it.
-- Contact: open a GitHub issue at https://github.com/Adityatex/Genesis/issues
+- Contact: open a GitHub issue at https://github.com/Adityatex/Tabi/issues

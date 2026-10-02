@@ -16,7 +16,7 @@ import { describeFrequency, type Frequency, type Schedule } from '@/lib/schedule
 
 const MCP_STATUS_TEXT: Record<BridgeStatus, string> = {
   off: 'Off',
-  waiting: 'On. Waiting for genesis-mcp: it starts when your AI app uses Genesis',
+  waiting: 'On. Waiting for tabi-mcp: it starts when your AI app uses Tabi',
   connected: 'Connected to your AI app',
   rejected: 'Not connected',
 };
@@ -29,7 +29,7 @@ export default function App() {
   // AI provider settings. Keys stay in the background worker; the popup only
   // ever receives masked versions.
   const [provider, setProvider] = useState<ProviderId>('groq');
-  // The provider Genesis uses (the dropdown may show another one being set up)
+  // The provider Tabi uses (the dropdown may show another one being set up)
   const [activeProvider, setActiveProvider] = useState<ProviderId>('groq');
   const [fallbacks, setFallbacks] = useState<ProviderId[]>([]);
   // Providers with a key and model saved
@@ -104,7 +104,7 @@ export default function App() {
       setCritic(res.data.critic);
     });
     loadStoredProfile().then(setProfile).catch(() => {});
-    // Connection status changes while the popup is open (an AI app starts genesis-mcp)
+    // Connection status changes while the popup is open (an AI app starts tabi-mcp)
     const refreshMcp = () => browser.runtime.sendMessage({ action: 'GET_MCP' }).then((res: any) => { if (res?.success) setMcp(res.data); }).catch(() => {});
     refreshMcp();
     // The task list follows what the agent is doing while the popup is open
@@ -329,7 +329,7 @@ export default function App() {
     if (res?.success) setFallbacks(res.data.fallbacks);
   };
 
-  /** Save the dropdown's provider, as the one Genesis uses or as a backup. */
+  /** Save the dropdown's provider, as the one Tabi uses or as a backup. */
   const handleSave = async (asBackup = false) => {
     if (preset.needsKey && !apiKey.trim() && !maskedKeys[provider]) {
       showMessage('error', `Enter your ${preset.label} API key`);
@@ -355,7 +355,7 @@ export default function App() {
       setApiKey('');
       showMessage('saved', asBackup
         ? `Saved. ${preset.label} · ${model.trim()} is backup #${res.data.fallbacks.indexOf(provider) + 1}.`
-        : `Saved. Genesis now uses ${preset.label} · ${model.trim()}`);
+        : `Saved. Tabi now uses ${preset.label} · ${model.trim()}`);
     } catch (err: any) {
       showMessage('error', err.message);
     }
@@ -392,8 +392,7 @@ export default function App() {
           </svg>
         </div>
         <div>
-          <h1 className="popup-title">Genesis</h1>
-          <p className="popup-subtitle">AI Browser Assistant</p>
+          <h1 className="popup-title">Tabi</h1>
         </div>
       </div>
 
@@ -543,7 +542,7 @@ export default function App() {
         ) : null}
         <p className="hint">
           {fallbacks.length
-            ? `When ${PROVIDERS[activeProvider].label} hits a rate limit or fails, the next backup takes over mid-task with the same plan and progress. Genesis goes back to ${PROVIDERS[activeProvider].label} when it's available again.`
+            ? `When ${PROVIDERS[activeProvider].label} hits a rate limit or fails, the next backup takes over mid-task with the same plan and progress. Tabi goes back to ${PROVIDERS[activeProvider].label} when it's available again.`
             : 'No backups. To add one, pick another provider above, enter its key and model, and press "Save as backup". When your main provider hits a rate limit, the backup takes over mid-task.'}
         </p>
 
@@ -728,7 +727,7 @@ export default function App() {
         </p>
         {customCode && (
           <p className="hint advisory">
-            ⚠️ The model writes this code, and a page it reads could try to trick it. Genesis refuses code that fetches,
+            ⚠️ The model writes this code, and a page it reads could try to trick it. Tabi refuses code that fetches,
             loads resources, reads cookies or storage, clicks or changes the page, and removes the network functions
             before running it. That lowers the risk but can't remove it. Turn this on only when you need it, not while
             the agent works on sites you're signed in to with sensitive data.
@@ -973,7 +972,7 @@ export default function App() {
         </label>
         <p className="hint">
           Claude Code, Claude Desktop, Codex or any MCP app on this computer can then read pages and click, type and
-          navigate through Genesis. The model runs in that app, on your plan with it; Genesis doesn't need its own key.
+          navigate through Tabi. The model runs in that app, on your plan with it; Tabi doesn't need its own key.
         </p>
         <div className="input-group">
           <input
@@ -992,7 +991,7 @@ export default function App() {
         </div>
         <p className="hint">
           Setup, once: build the helper (<code>cd mcp &amp;&amp; npm install &amp;&amp; npm run build</code>), run{' '}
-          <code>node mcp/dist/server.js token</code> for the pairing token and the command that adds Genesis to your AI
+          <code>node mcp/dist/server.js token</code> for the pairing token and the command that adds Tabi to your AI
           app, then paste the token here.
         </p>
         {mcp.enabled && (
@@ -1040,8 +1039,8 @@ export default function App() {
             { icon: '📝', text: 'Extract page text' },
             { icon: '🔍', text: 'Detect form elements' },
             { icon: '✏️', text: 'Trustworthy auto-fill' },
-            { icon: '📊', text: 'AI page summarization' },
-            { icon: '💬', text: 'Copilot chat' },
+            { icon: '📊', text: 'Page summaries' },
+            { icon: '💬', text: 'Chat about the page' },
             { icon: '🤖', text: 'Autonomous browser agent' },
           ].map((feature, i) => (
             <div key={i} className="feature-item">

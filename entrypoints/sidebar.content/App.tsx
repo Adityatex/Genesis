@@ -131,7 +131,7 @@ export default function App() {
     refreshPicker();
     chat.addBotMessage(`## ⚡ Shortcut saved: /${saved?.name}
 
-Type **/${saved?.name}** to ask for this again. To make part of it fill-in, edit it in the Genesis popup and write that part as a blank in braces, like {product}.`);
+Type **/${saved?.name}** to ask for this again. To make part of it fill-in, edit it in the Tabi popup and write that part as a blank in braces, like {product}.`);
   };
 
   const saveAsWorkflow = async () => {
@@ -147,7 +147,7 @@ Type **/${saved?.name}** to ask for this again. To make part of it fill-in, edit
     const w = res.data;
     chat.addBotMessage(
       `## 🔁 Workflow ${name ? 'updated' : 'saved'}: ${w.name}\n\n${w.steps.length} steps. Run it again any time with **/${w.name}** here, `
-      + 'or from the Genesis popup: it replays these exact steps with no model calls, and the agent takes over if the site has changed.'
+      + 'or from the Tabi popup: it replays these exact steps with no model calls, and the agent takes over if the site has changed.'
       + (w.hasPassword ? '\n\n🔒 It includes a password you typed, saved on this device only, like your API keys.' : ''),
     );
   };
@@ -163,7 +163,7 @@ Type **/${saved?.name}** to ask for this again. To make part of it fill-in, edit
     const fence = '```';
     chat.addBotMessage(
       `## 🧠 Skill saved: ${skill.name}\n\n${skill.description}\n\n`
-      + `The agent will use it for similar tasks. You can edit or delete it in the Genesis popup.\n\n${fence}markdown\n${markdown}${fence}`,
+      + `The agent will use it for similar tasks. You can edit or delete it in the Tabi popup.\n\n${fence}markdown\n${markdown}${fence}`,
     );
   };
 

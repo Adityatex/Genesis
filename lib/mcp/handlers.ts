@@ -1,7 +1,7 @@
 // lib/mcp/handlers.ts
-// What the extension does for genesis-mcp's requests (background only). The
+// What the extension does for tabi-mcp's requests (background only). The
 // AI app on the other end reads pages and acts through the same snapshot and
-// action code as Genesis's own agent. Chrome specifics are injected so this
+// action code as Tabi's own agent. Chrome specifics are injected so this
 // can be unit-tested.
 
 import type { BridgeMethod } from '@/mcp/src/protocol';
@@ -28,9 +28,9 @@ export interface HandlerDeps extends Pick<RunnerDeps, 'getTab' | 'send' | 'sleep
   /** Page loads seen in a tab so far. */
   loads(tabId: number): number;
   screenshot(tabId: number, visual: unknown): Promise<string | null>;
-  /** Run Genesis's own agent on a goal; resolves with its final message. */
+  /** Run Tabi's own agent on a goal; resolves with its final message. */
   runTask(tabId: number, goal: string): Promise<string>;
-  /** Genesis's own agent is running in this tab. */
+  /** Tabi's own agent is running in this tab. */
   isBusy(tabId: number): boolean;
   /** Drop the debugger (and Chrome's banner) once the AI app has gone quiet. */
   releaseInput(tabId: number): void;
@@ -75,7 +75,7 @@ export function createHandlers(deps: HandlerDeps) {
     try {
       return await waitForPage(deps, tabId);
     } catch {
-      throw new Error(`Tab ${tabId} isn't ready for Genesis. It may be a browser page (chrome://, the Web Store) where extensions can't run, or it opened before Genesis was installed: reload it.`);
+      throw new Error(`Tab ${tabId} isn't ready for Tabi. It may be a browser page (chrome://, the Web Store) where extensions can't run, or it opened before Tabi was installed: reload it.`);
     }
   }
 
@@ -87,8 +87,8 @@ export function createHandlers(deps: HandlerDeps) {
     const rules = await deps.siteRules?.().catch(() => undefined);
     if (!rules) return null;
     const { site, status } = urlStatus(url, rules);
-    if (status === 'blocked') return `${site} is on the user's block list in Genesis, so it can't be opened, read or used from here`;
-    if (status === 'unlisted') return `${site} isn't on the user's list of allowed sites in Genesis, so it can't be opened, read or used from here`;
+    if (status === 'blocked') return `${site} is on the user's block list in Tabi, so it can't be opened, read or used from here`;
+    if (status === 'unlisted') return `${site} isn't on the user's list of allowed sites in Tabi, so it can't be opened, read or used from here`;
     return null;
   }
 
@@ -147,7 +147,7 @@ export function createHandlers(deps: HandlerDeps) {
 
     async page_act(params) {
       const tabId = await tabFor(params);
-      if (deps.isBusy(tabId)) throw new Error(`Genesis's own agent is working in tab ${tabId}; wait for it to finish or stop it from the sidebar.`);
+      if (deps.isBusy(tabId)) throw new Error(`Tabi's own agent is working in tab ${tabId}; wait for it to finish or stop it from the sidebar.`);
       const raw = Array.isArray(params.actions) ? params.actions : [];
       if (raw.length === 0) throw new Error('No actions given');
       if (raw.length > MAX_ACTIONS) throw new Error(`At most ${MAX_ACTIONS} actions per call`);
@@ -155,7 +155,7 @@ export function createHandlers(deps: HandlerDeps) {
         const parsed = parseAgentAction(JSON.stringify(a));
         if (!parsed.ok) throw new Error(`Action ${i + 1}: ${parsed.error}`);
         if (parsed.action.action === 'done' || parsed.action.action === 'use_skill' || parsed.action.action === 'run_code') {
-          throw new Error(`Action ${i + 1}: "${parsed.action.action}" is only for Genesis's own agent`);
+          throw new Error(`Action ${i + 1}: "${parsed.action.action}" is only for Tabi's own agent`);
         }
         return parsed.action;
       });
@@ -194,7 +194,7 @@ export function createHandlers(deps: HandlerDeps) {
       const snapshot = await deps.send(tabId, { action: 'AGENT_SNAPSHOT', visual: true }, SNAPSHOT_TIMEOUT_MS);
       if (!snapshot?.visual) throw new Error('Could not measure the page for a screenshot');
       const image = await deps.screenshot(tabId, snapshot.visual);
-      if (!image) throw new Error(`Tab ${tabId} isn't visible, so it can't be captured. Bring it to the front with browser_select_tab, or turn on "Real mouse & keyboard input" in Genesis, which can capture background tabs.`);
+      if (!image) throw new Error(`Tab ${tabId} isn't visible, so it can't be captured. Bring it to the front with browser_select_tab, or turn on "Real mouse & keyboard input" in Tabi, which can capture background tabs.`);
       scheduleRelease(tabId);
       return image;
     },
@@ -203,7 +203,7 @@ export function createHandlers(deps: HandlerDeps) {
       const goal = String(params.goal ?? '').trim();
       if (!goal) throw new Error('No goal given');
       const tabId = await tabFor(params);
-      if (deps.isBusy(tabId)) throw new Error(`Genesis's own agent is already working in tab ${tabId}`);
+      if (deps.isBusy(tabId)) throw new Error(`Tabi's own agent is already working in tab ${tabId}`);
       await ready(tabId);
       return deps.runTask(tabId, goal);
     },

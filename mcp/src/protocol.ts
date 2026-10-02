@@ -1,5 +1,5 @@
 // mcp/src/protocol.ts
-// The bridge between the genesis-mcp server (Node) and the Genesis extension.
+// The bridge between the tabi-mcp server (Node) and the Tabi extension.
 // Shared by both sides; uses only WebCrypto, which Node 20+ and Chrome have.
 //
 // The server listens on 127.0.0.1; the extension connects to it. Anything on
@@ -62,14 +62,27 @@ export function sameString(a: string, b: string): boolean {
   return diff === 0;
 }
 
-export const serverProof = (token: string, nonce: string) => hmac(token, `server:${nonce}`);
-export const clientProof = (token: string, nonce: string) => hmac(token, `client:${nonce}`);
+/**
+ * Pairing tokens are "tbk_" and 64 hex characters. Tokens made before the
+ * rename have no prefix; they're accepted with or without one. Proofs use only
+ * the hex part, so an old token pairs with a new one and with older versions.
+ */
+export const TOKEN_PREFIX = 'tbk_';
 
-/** Tokens are 64 hex characters; accept pasted ones with stray whitespace. */
+export const serverProof = (token: string, nonce: string) => hmac(tokenSecret(token), `server:${nonce}`);
+export const clientProof = (token: string, nonce: string) => hmac(tokenSecret(token), `client:${nonce}`);
+
+/** A new pairing token. */
+export const newToken = () => TOKEN_PREFIX + randomHex(32);
+
+/** The token as "tbk_<hex>"; accepts pasted ones with stray whitespace or no prefix. */
 export function normalizeToken(token: string): string {
-  return token.trim().toLowerCase();
+  const t = token.trim().toLowerCase();
+  return t.startsWith(TOKEN_PREFIX) ? t : TOKEN_PREFIX + t;
 }
 
+const tokenSecret = (token: string) => normalizeToken(token).slice(TOKEN_PREFIX.length);
+
 export function isValidToken(token: string): boolean {
-  return /^[0-9a-f]{64}$/.test(normalizeToken(token));
+  return /^tbk_[0-9a-f]{64}$/.test(normalizeToken(token));
 }

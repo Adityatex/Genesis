@@ -1,10 +1,11 @@
 {
-  "name": "genesis-mcp",
+  "name": "tabi-mcp",
   "version": "0.1.0",
-  "description": "MCP server that lets Claude Code, Claude Desktop, Codex and other MCP apps drive your browser through the Genesis extension",
+  "description": "MCP server that lets Claude Code, Claude Desktop, Codex and other MCP apps drive your browser through the Tabi extension",
   "type": "module",
   "bin": {
-    "genesis-mcp": "dist/server.js"
+    "tabi-mcp": "dist/server.js",
+    "genesis-mcp": "dist/genesis-mcp.js"
   },
   "main": "dist/server.js",
   "files": [
@@ -19,7 +20,6 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",
-    "genesis-task-automator": "file:..",
     "ws": "^8.22.0",
     "zod": "^3.25.0"
   },

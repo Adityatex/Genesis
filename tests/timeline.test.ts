@@ -12,8 +12,9 @@ const log = (over: Partial<RunLog> = {}): RunLog => ({
 });
 
 describe('run timeline', () => {
-  it('tells Genesis notes from agent steps', () => {
-    expect(entryKindOf('(note from Genesis) 2 more actions not run')).toBe('note');
+  it('tells Tabi notes from agent steps', () => {
+    expect(entryKindOf('(note from Tabi) 2 more actions not run')).toBe('note');
+    expect(entryKindOf('(note from Genesis) 2 more actions not run')).toBe('note'); // saved before the rename
     expect(entryKindOf('(invalid response) → ❌ No JSON')).toBe('note');
     expect(entryKindOf('click [3] → ✅ Clicked')).toBe('step');
   });
@@ -45,7 +46,7 @@ describe('run timeline', () => {
 
   it('exports a run as Markdown', () => {
     const md = formatRunLog(maskSecrets(log(), ['hunter22']));
-    expect(md).toContain('# Genesis run: Log in with password ••••');
+    expect(md).toContain('# Tabi run: Log in with password ••••');
     expect(md).toContain('- **Took:** 42s · 2 model calls · 3,100 tokens');
     expect(md).toMatch(/\| \*\*Model:\*\* Asked the model \(planning\) \| Groq · qwen · 2\.3s · 1500 tokens \|/);
     expect(md).not.toContain('hunter22');

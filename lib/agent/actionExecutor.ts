@@ -414,7 +414,7 @@ async function typeText(elementId: number, text: string, clear: boolean): Promis
 }
 
 /**
- * Run an action on an element inside a cross-origin iframe, through Genesis's
+ * Run an action on an element inside a cross-origin iframe, through Tabi's
  * content script in that frame. Passes along where the frame sits on screen so
  * trusted clicks land in the right place.
  */

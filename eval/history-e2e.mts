@@ -41,8 +41,8 @@ const answer = (content: string) => ({
 async function main(): Promise<void> {
   if (!fs.existsSync(path.join(EXTENSION_DIR, 'manifest.json'))) throw new Error('Build the extension first: npm run build');
   const fixtures = await startFixtureServer();
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'genesis-history-e2e-'));
-  const downloads = fs.mkdtempSync(path.join(os.tmpdir(), 'genesis-history-dl-'));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tabi-history-e2e-'));
+  const downloads = fs.mkdtempSync(path.join(os.tmpdir(), 'tabi-history-dl-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chromium',
     headless: !headed,
@@ -54,8 +54,8 @@ async function main(): Promise<void> {
   try {
     const worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker', { timeout: 15_000 });
     await worker.evaluate((base) => chrome.storage.local.set({
-      genesis_llm: { provider: 'custom', models: { custom: 'mock' }, keys: { custom: 'k' }, customBaseUrl: base },
-      genesis_prefs: { trustedInput: false },
+      tabi_llm: { provider: 'custom', models: { custom: 'mock' }, keys: { custom: 'k' }, customBaseUrl: base },
+      tabi_prefs: { trustedInput: false },
     }), MODEL);
 
     // The fake model: fill the sign-in form, then finish
@@ -75,7 +75,7 @@ async function main(): Promise<void> {
     // 1. A run from the sidebar
     const page = await context.newPage();
     await page.goto(`${fixtures.baseUrl}/login.html`);
-    await page.locator('[title="Open Genesis Copilot"]').click({ timeout: 15_000 });
+    await page.locator('[title="Open Tabi"]').click({ timeout: 15_000 });
     await page.locator('textarea[placeholder^="Describe action"]').fill(GOAL);
     await page.keyboard.press('Enter');
     await page.locator('.markdown-body', { hasText: 'Task Complete' }).first().waitFor({ timeout: 30_000 });
@@ -84,7 +84,7 @@ async function main(): Promise<void> {
     let stored: any[] = [];
     for (let i = 0; i < 20 && !stored.some((r) => r.ended); i++) {
       if (i) await page.waitForTimeout(250);
-      stored = (await worker.evaluate(() => chrome.storage.local.get('genesis_runs')) as any).genesis_runs ?? [];
+      stored = (await worker.evaluate(() => chrome.storage.local.get('tabi_runs')) as any).tabi_runs ?? [];
     }
     const run = stored[0];
     check('the run is saved when it ends', stored.length === 1 && run?.goal === GOAL && run?.status === 'done' && !!run?.ended, JSON.stringify(stored).slice(0, 300));
@@ -120,12 +120,12 @@ async function main(): Promise<void> {
     await history.getByRole('button', { name: 'Export' }).click();
     const file = await (await download).path();
     const md = file ? fs.readFileSync(file, 'utf8') : '';
-    check('Export saves the run as Markdown, password masked', md.startsWith(`# Genesis run: ${GOAL}`) && md.includes('2 model calls') && !md.includes(PASSWORD), md.slice(0, 300));
+    check('Export saves the run as Markdown, password masked', md.startsWith(`# Tabi run: ${GOAL}`) && md.includes('2 model calls') && !md.includes(PASSWORD), md.slice(0, 300));
 
     // 5. Delete
     await history.getByRole('button', { name: 'Delete', exact: true }).click();
     await history.getByText('No runs yet.').waitFor({ timeout: 5_000 }).catch(() => {});
-    const left = (await worker.evaluate(() => chrome.storage.local.get('genesis_runs')) as any).genesis_runs ?? [];
+    const left = (await worker.evaluate(() => chrome.storage.local.get('tabi_runs')) as any).tabi_runs ?? [];
     check('Delete removes it', left.length === 0 && await history.getByText('No runs yet.').isVisible(), JSON.stringify(left).slice(0, 200));
   } finally {
     await context.close().catch(() => {});

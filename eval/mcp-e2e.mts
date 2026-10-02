@@ -1,6 +1,6 @@
 // eval/mcp-e2e.mts
-// End-to-end check of genesis-mcp, the way an AI app uses it: an MCP client
-// starts the genesis-mcp server over stdio, the real extension in real
+// End-to-end check of tabi-mcp, the way an AI app uses it: an MCP client
+// starts the tabi-mcp server over stdio, the real extension in real
 // Chromium pairs with it, and the tools log in on a fixture page. The script
 // plays the AI app, so no model or API key is involved.
 //
@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '../mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
 import { StdioClientTransport } from '../mcp/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js';
 import { startFixtureServer } from './server.mts';
-import { randomHex } from '../mcp/src/protocol.ts';
+import { newToken } from '../mcp/src/protocol.ts';
 
 declare const chrome: any;
 
@@ -44,21 +44,21 @@ async function main(): Promise<void> {
   for (const [file, hint] of [[path.join(EXTENSION_DIR, 'manifest.json'), 'npm run build'], [SERVER, 'npm run build:mcp']]) {
     if (!fs.existsSync(file)) throw new Error(`${file} is missing: run ${hint} first`);
   }
-  const token = randomHex(32);
+  const token = newToken();
   const port = await freePort();
   const fixtures = await startFixtureServer();
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'genesis-mcp-e2e-'));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tabi-mcp-e2e-'));
 
-  // 1. The "AI app" starts genesis-mcp, exactly as Claude Code would
-  const client = new Client({ name: 'genesis-e2e', version: '1.0.0' });
+  // 1. The "AI app" starts tabi-mcp, exactly as Claude Code would
+  const client = new Client({ name: 'tabi-e2e', version: '1.0.0' });
   await client.connect(new StdioClientTransport({
     command: process.execPath,
     args: [SERVER],
-    env: { ...process.env, GENESIS_MCP_TOKEN: token, GENESIS_MCP_PORT: String(port) } as Record<string, string>,
+    env: { ...process.env, TABI_MCP_TOKEN: token, TABI_MCP_PORT: String(port) } as Record<string, string>,
     stderr: 'pipe',
   }));
 
-  // 2. The browser with Genesis, paired with that token
+  // 2. The browser with Tabi, paired with that token
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chromium',
     headless: !headed,
@@ -67,7 +67,7 @@ async function main(): Promise<void> {
   });
   try {
     const worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker', { timeout: 15_000 });
-    await worker.evaluate(([t, p]) => chrome.storage.local.set({ genesis_mcp: { enabled: true, token: t, port: p } }), [token, port] as const);
+    await worker.evaluate(([t, p]) => chrome.storage.local.set({ tabi_mcp: { enabled: true, token: t, port: p } }), [token, port] as const);
 
     // 3. Wait for the extension to connect
     let tabs = '';
@@ -76,7 +76,7 @@ async function main(): Promise<void> {
       if (!res.isError) { tabs = textOf(res); break; }
       await new Promise((r) => setTimeout(r, 200));
     }
-    check('extension pairs with genesis-mcp', tabs.startsWith('['), 'never connected');
+    check('extension pairs with tabi-mcp', tabs.startsWith('['), 'never connected');
     if (!tabs) return;
 
     // 4. Log in through the tools, like a model would
@@ -118,7 +118,7 @@ async function main(): Promise<void> {
 
 main()
   .then(() => {
-    console.log(failures ? `\n${failures} check(s) failed.` : '\nAll genesis-mcp checks passed.');
+    console.log(failures ? `\n${failures} check(s) failed.` : '\nAll tabi-mcp checks passed.');
     process.exit(failures ? 1 : 0);
   })
   .catch((err) => {

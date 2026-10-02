@@ -79,7 +79,7 @@ describe('the scheduler', () => {
     expect(after.nextRun).toBe(at(2, 18, 0));
     expect(alarms.get(alarmName(s.id))).toBe(at(2, 18, 0));
     expect(after.lastRun).toEqual({ at: at(1, 18, 0), status: 'done', summary: 'Downloaded the report' });
-    expect(notes).toEqual([['✅ Genesis: /weekly-report', 'Downloaded the report']]);
+    expect(notes).toEqual([['✅ Tabi: /weekly-report', 'Downloaded the report']]);
   });
 
   it('records a run that failed, and still runs next time', async () => {
@@ -89,7 +89,7 @@ describe('the scheduler', () => {
     const [after] = await loadSchedules(storage);
     expect(after.lastRun).toMatchObject({ status: 'error', summary: 'The workflow /weekly-report no longer exists' });
     expect(after.nextRun).toBeGreaterThan(NOW);
-    expect(notes[0][0]).toBe('⚠️ Genesis: /weekly-report');
+    expect(notes[0][0]).toBe('⚠️ Tabi: /weekly-report');
   });
 
   it("doesn't start a schedule that is already running", async () => {

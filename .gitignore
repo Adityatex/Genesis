@@ -24,5 +24,5 @@ build_log.txt
 # Eval results (raw runs)
 eval/results/
 
-# genesis-mcp build output (npm run build:mcp)
+# tabi-mcp build output (npm run build:mcp)
 mcp/dist/

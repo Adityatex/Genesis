@@ -288,7 +288,7 @@ function mockPlanner(plan: (MockStep | MockStep[])[]) {
 
 /** The profile dir holds the API key in extension storage; delete it after use. */
 async function launch(apiKey: string, skills: unknown[] = [], workflows: unknown[] = [], shortcuts: unknown[] = []): Promise<{ context: BrowserContext; userDataDir: string }> {
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'genesis-eval-'));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tabi-eval-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chromium',
     headless: !args.headed,
@@ -307,9 +307,9 @@ async function launch(apiKey: string, skills: unknown[] = [], workflows: unknown
     ([key, value, prefsKey, prefs]) => chrome.storage.local.set({ [key]: value, [prefsKey]: prefs }),
     [SETTINGS_KEY, settings, PREFS_KEY, { trustedInput: !args['scripted-input'], stepCheckpoint: EVAL_CHECKPOINT, screenshots: args.screenshots, nativeTools: !!args.tools, customCode: !!args['custom-code'], critic: !args['no-critic'] }] as const,
   );
-  if (skills.length) await worker.evaluate((list) => chrome.storage.local.set({ genesis_skills: list }), skills);
-  if (shortcuts.length) await worker.evaluate((list) => chrome.storage.local.set({ genesis_shortcuts: list }), shortcuts);
-  if (workflows.length) await worker.evaluate((list) => chrome.storage.local.set({ genesis_workflows: list }), workflows);
+  if (skills.length) await worker.evaluate((list) => chrome.storage.local.set({ tabi_skills: list }), skills);
+  if (shortcuts.length) await worker.evaluate((list) => chrome.storage.local.set({ tabi_shortcuts: list }), shortcuts);
+  if (workflows.length) await worker.evaluate((list) => chrome.storage.local.set({ tabi_workflows: list }), workflows);
   return { context, userDataDir };
 }
 
@@ -413,12 +413,12 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
   server.reset();
   const started = Date.now();
   const log = (msg: string) => args.verbose && console.log(`    +${((Date.now() - started) / 1000).toFixed(2)}s ${msg}`);
-  context.on('console', m => { if (m.text().includes('[Genesis]')) log(`${new URL(m.page()?.url() || 'about:blank').pathname} ${m.text().slice(0, 160)}`); });
+  context.on('console', m => { if (m.text().includes('[Tabi]')) log(`${new URL(m.page()?.url() || 'about:blank').pathname} ${m.text().slice(0, 160)}`); });
   context.on('request', r => { if (r.url().includes('/api/')) log(`server <- ${r.method()} ${new URL(r.url()).pathname}`); });
   try {
     const page = await context.newPage();
     await page.goto(server.baseUrl + task.start);
-    await page.locator('[title="Open Genesis Copilot"]').click({ timeout: 15_000 });
+    await page.locator('[title="Open Tabi"]').click({ timeout: 15_000 });
     // --replay: later trials replay the saved workflow, typed as /name like a user would
     await page.locator('textarea[placeholder^="Describe action"]').fill(workflow ? `/${workflow[0].name}` : shortcut ? `/${shortcut.name.slice(0, 5)}` : task.goal);
     await page.keyboard.press('Enter');
@@ -495,7 +495,7 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
         const button = await page.getByRole('button', { name: 'Save as workflow' }).isVisible().catch(() => false);
         throw new Error(`no "Workflow saved" message (button still shown: ${button}; last messages: ${JSON.stringify(messages)}): ${(err as Error).message.split('\n')[0]}`);
       });
-      const all: any[] = await context.serviceWorkers()[0].evaluate(async () => (await chrome.storage.local.get('genesis_workflows')).genesis_workflows ?? []);
+      const all: any[] = await context.serviceWorkers()[0].evaluate(async () => (await chrome.storage.local.get('tabi_workflows')).tabi_workflows ?? []);
       if (all.length) {
         savedWorkflows.set(task.id, all);
         result.skill = `workflow ${all[0].name} (${all[0].steps.length} steps)`;
@@ -512,7 +512,7 @@ async function runTask(task: Task, trial: number, server: FixtureServer, apiKey:
       const saved = page.locator('.markdown-body', { hasText: /Skill saved:|Couldn't save a skill/ });
       await saved.first().waitFor({ timeout: 120_000 });
       learning = false;
-      const skills: any[] = await context.serviceWorkers()[0].evaluate(async () => (await chrome.storage.local.get('genesis_skills')).genesis_skills ?? []);
+      const skills: any[] = await context.serviceWorkers()[0].evaluate(async () => (await chrome.storage.local.get('tabi_skills')).tabi_skills ?? []);
       if (skills.length) {
         learnedSkills.set(task.id, skills);
         result.skill = skills[0].name;
@@ -553,7 +553,7 @@ function report(results: RunResult[], tasks: Task[], meta: Record<string, string
   const avg = (rs: RunResult[], f: (r: RunResult) => number) =>
     rs.length ? (rs.reduce((s, r) => s + f(r), 0) / rs.length) : 0;
 
-  lines.push(`# Genesis eval — ${meta.mode}`, '');
+  lines.push(`# Tabi eval — ${meta.mode}`, '');
   for (const [k, v] of Object.entries(meta)) lines.push(`- **${k}:** ${v}`);
   lines.push('');
 
@@ -623,7 +623,7 @@ async function main() {
 
   // A run that was killed can leave its browser profile behind, and profiles
   // hold the API key. Remove stale ones; profiles in use are locked and skipped.
-  for (const dir of fs.readdirSync(os.tmpdir()).filter(d => d.startsWith('genesis-eval-'))) {
+  for (const dir of fs.readdirSync(os.tmpdir()).filter(d => d.startsWith('tabi-eval-'))) {
     try { fs.rmSync(path.join(os.tmpdir(), dir), { recursive: true, force: true }); } catch { /* in use */ }
   }
 

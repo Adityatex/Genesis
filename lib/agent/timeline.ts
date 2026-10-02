@@ -7,14 +7,14 @@
 
 import type { RunStatus } from '@/lib/agent/runner';
 
-export const RUNS_KEY = 'genesis_runs';
+export const RUNS_KEY = 'tabi_runs';
 /** Runs kept; older ones are dropped. */
 export const MAX_RUNS = 50;
 /** Entries kept per run; a very long run keeps its first ones and its last ones. */
 export const MAX_ENTRIES = 400;
 
 /**
- * step: an action and what came of it. note: Genesis telling the model
+ * step: an action and what came of it. note: Tabi telling the model
  * something. model: a call to a model. check: the safety check. ask: the
  * agent asked the user to allow something. pause: a checkpoint or stuck pause.
  * end: how the run ended.
@@ -59,9 +59,9 @@ export interface RunLog {
   entries: TimelineEntry[];
 }
 
-/** History lines Genesis wrote to the model, rather than steps the agent took. */
+/** History lines Tabi wrote to the model, rather than steps the agent took. Runs saved before the rename say Genesis. */
 export function entryKindOf(line: string): 'step' | 'note' {
-  return /^\((note from Genesis|invalid response)\)/.test(line) ? 'note' : 'step';
+  return /^\((note from (Tabi|Genesis)|invalid response)\)/.test(line) ? 'note' : 'step';
 }
 
 /** A very long run: keep the start and the end, and say how many were left out between. */
@@ -130,7 +130,7 @@ const LABEL: Record<EntryKind, string> = {
 export function formatRunLog(log: RunLog): string {
   const took = log.ended ? formatDuration(log.ended - log.started) : 'still running';
   const lines = [
-    `# Genesis run: ${log.goal}`,
+    `# Tabi run: ${log.goal}`,
     '',
     `- **Started:** ${new Date(log.started).toLocaleString()}`,
     `- **Status:** ${log.status}${log.summary ? `: ${log.summary}` : ''}`,

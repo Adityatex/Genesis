@@ -1,6 +1,6 @@
 // lib/agent/screenshot.ts
 // Screenshots for vision models (background service worker only). The page is
-// captured, the Genesis sidebar cropped off, the image shrunk, and each
+// captured, the Tabi sidebar cropped off, the image shrunk, and each
 // numbered element outlined with its snapshot ID ("set of marks"), so the model
 // can match what it sees to the IDs it acts on. The marks are drawn on the
 // image, never on the page.

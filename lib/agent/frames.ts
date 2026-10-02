@@ -1,6 +1,6 @@
 // lib/agent/frames.ts
 // Page snapshots that include cross-origin iframes (e.g. Stripe-style payment
-// forms). The top page can't read those frames, but Genesis's frame content
+// forms). The top page can't read those frames, but Tabi's frame content
 // script runs inside every frame (entrypoints/frame.content.ts) and can.
 //
 // Pairing an <iframe> element with Chrome's frame id: post a random token into
@@ -12,7 +12,7 @@ import {
   type FrameSnapshot, type OpaqueFrame, type SnapshotElement, type SnapshotParts,
 } from '@/lib/agent/domSnapshot';
 
-export const FRAME_TOKEN_MESSAGE = 'genesis-frame-token';
+export const FRAME_TOKEN_MESSAGE = 'tabi-frame-token';
 /** Time for the frames' content scripts to receive their tokens. */
 const HANDSHAKE_WAIT_MS = 80;
 
@@ -46,7 +46,7 @@ async function addCrossOriginFrames(parts: SnapshotParts): Promise<void> {
 
 /**
  * Snapshot of the whole page for the agent: this document, its shadow roots
- * and same-origin iframes, plus any cross-origin iframes Genesis can reach.
+ * and same-origin iframes, plus any cross-origin iframes Tabi can reach.
  */
 export async function createPageSnapshot(): Promise<{ text: string; elements: SnapshotElement[] }> {
   const parts = collectLocalElements();
@@ -55,7 +55,7 @@ export async function createPageSnapshot(): Promise<{ text: string; elements: Sn
       await addCrossOriginFrames(parts);
     } catch (err) {
       // Still give the model the rest of the page
-      console.warn('[Genesis] Could not read cross-origin frames:', err);
+      console.warn('[Tabi] Could not read cross-origin frames:', err);
     }
   }
   return renderSnapshot(parts);

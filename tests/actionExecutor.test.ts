@@ -9,7 +9,7 @@ beforeEach(() => {
 
 describe('click', () => {
   it('fires exactly one click event', async () => {
-    document.body.innerHTML = '<button data-genesis-id="0">Go</button>';
+    document.body.innerHTML = '<button data-tabi-id="0">Go</button>';
     const onClick = vi.fn();
     document.querySelector('button')!.addEventListener('click', onClick);
 
@@ -19,13 +19,13 @@ describe('click', () => {
   });
 
   it('toggles a checkbox exactly once', async () => {
-    document.body.innerHTML = '<input type="checkbox" data-genesis-id="0">';
+    document.body.innerHTML = '<input type="checkbox" data-tabi-id="0">';
     await executeAction({ action: 'click', elementId: 0 });
     expect(document.querySelector<HTMLInputElement>('input')!.checked).toBe(true);
   });
 
   it('fires mousedown before click for custom widgets', async () => {
-    document.body.innerHTML = '<div role="button" data-genesis-id="0">Menu</div>';
+    document.body.innerHTML = '<div role="button" data-tabi-id="0">Menu</div>';
     const events: string[] = [];
     const el = document.querySelector('div')!;
     for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
@@ -38,7 +38,7 @@ describe('click', () => {
 
 describe('press_key Enter', () => {
   it('submits the enclosing form via requestSubmit', async () => {
-    document.body.innerHTML = '<form><input name="q" data-genesis-id="0"></form>';
+    document.body.innerHTML = '<form><input name="q" data-tabi-id="0"></form>';
     const onSubmit = vi.fn((e: Event) => e.preventDefault());
     document.querySelector('form')!.addEventListener('submit', onSubmit);
 
@@ -49,7 +49,7 @@ describe('press_key Enter', () => {
   });
 
   it('does not submit when the page handled the keydown itself', async () => {
-    document.body.innerHTML = '<form><input name="q" data-genesis-id="0"></form>';
+    document.body.innerHTML = '<form><input name="q" data-tabi-id="0"></form>';
     const onSubmit = vi.fn((e: Event) => e.preventDefault());
     document.querySelector('form')!.addEventListener('submit', onSubmit);
     document.querySelector('input')!.addEventListener('keydown', e => e.preventDefault());
@@ -60,7 +60,7 @@ describe('press_key Enter', () => {
   });
 
   it('does not submit from a textarea', async () => {
-    document.body.innerHTML = '<form><textarea data-genesis-id="0"></textarea></form>';
+    document.body.innerHTML = '<form><textarea data-tabi-id="0"></textarea></form>';
     const onSubmit = vi.fn((e: Event) => e.preventDefault());
     document.querySelector('form')!.addEventListener('submit', onSubmit);
 
@@ -70,7 +70,7 @@ describe('press_key Enter', () => {
   });
 
   it('sets legacy keyCode for sites that check e.keyCode === 13', async () => {
-    document.body.innerHTML = '<input data-genesis-id="0">';
+    document.body.innerHTML = '<input data-tabi-id="0">';
     let keyCode = -1;
     document.querySelector('input')!.addEventListener('keydown', e => { keyCode = e.keyCode; });
     await executeAction({ action: 'press_key', key: 'Enter', elementId: 0 });
@@ -80,7 +80,7 @@ describe('press_key Enter', () => {
 
 describe('select', () => {
   const html = `
-    <select data-genesis-id="0">
+    <select data-tabi-id="0">
       <option value="">Choose…</option>
       <option value="IN">India</option>
       <option value="US">United States</option>
@@ -118,14 +118,14 @@ describe('select', () => {
 
 describe('type / clear_and_type', () => {
   it('appends to an input and confirms the value', async () => {
-    document.body.innerHTML = '<input data-genesis-id="0" value="foo">';
+    document.body.innerHTML = '<input data-tabi-id="0" value="foo">';
     const result = await executeAction({ action: 'type', elementId: 0, text: 'bar' });
     expect(document.querySelector('input')!.value).toBe('foobar');
     expect(result).toMatch(/^✅ Typed "bar"/);
   });
 
   it('reports failure when the page rejects the input instead of claiming success', async () => {
-    document.body.innerHTML = '<input data-genesis-id="0">';
+    document.body.innerHTML = '<input data-tabi-id="0">';
     const input = document.querySelector('input')!;
     input.addEventListener('input', () => { input.value = ''; }); // e.g. a validator that clears it
     const result = await executeAction({ action: 'type', elementId: 0, text: 'hello' });
@@ -133,7 +133,7 @@ describe('type / clear_and_type', () => {
   });
 
   it('types into a contenteditable editor', async () => {
-    document.body.innerHTML = '<div contenteditable="true" data-genesis-id="0"></div>';
+    document.body.innerHTML = '<div contenteditable="true" data-tabi-id="0"></div>';
     const onInput = vi.fn();
     const editor = document.querySelector('div')!;
     editor.addEventListener('input', onInput);
@@ -146,13 +146,13 @@ describe('type / clear_and_type', () => {
   });
 
   it('clear_and_type replaces an editor\'s content', async () => {
-    document.body.innerHTML = '<div contenteditable="true" data-genesis-id="0">old draft</div>';
+    document.body.innerHTML = '<div contenteditable="true" data-tabi-id="0">old draft</div>';
     await executeAction({ action: 'clear_and_type', elementId: 0, text: 'new text' });
     expect(document.querySelector('div')!.textContent).toBe('new text');
   });
 
   it('refuses to "type" into something that is not a text field', async () => {
-    document.body.innerHTML = '<button data-genesis-id="0">Send</button>';
+    document.body.innerHTML = '<button data-tabi-id="0">Send</button>';
     const result = await executeAction({ action: 'type', elementId: 0, text: 'hi' });
     expect(result).toMatch(/^❌ Element \[0\] <button> is not a text field/);
   });
@@ -168,7 +168,7 @@ describe('select on custom (ARIA) dropdowns', () => {
 
   function mountCombobox() {
     document.body.innerHTML = `
-      <div id="combo" role="combobox" aria-controls="plans" aria-expanded="false" data-genesis-id="0">Select a plan</div>
+      <div id="combo" role="combobox" aria-controls="plans" aria-expanded="false" data-tabi-id="0">Select a plan</div>
       <ul id="plans" role="listbox" style="display:none">
         <li role="option" data-value="free">Free</li>
         <li role="option" data-value="pro">Pro</li>
@@ -199,7 +199,7 @@ describe('select on custom (ARIA) dropdowns', () => {
   });
 
   it('says so when the element opens no list', async () => {
-    document.body.innerHTML = '<button data-genesis-id="0">Continue</button>';
+    document.body.innerHTML = '<button data-tabi-id="0">Continue</button>';
     const result = await executeAction({ action: 'select', elementId: 0, value: 'Pro' });
     expect(result).toMatch(/^❌ Element \[0\] is not a dropdown/);
   });

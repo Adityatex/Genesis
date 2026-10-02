@@ -14,7 +14,7 @@ export interface Shortcut {
   createdAt?: number;
 }
 
-export const SHORTCUTS_KEY = 'genesis_shortcuts';
+export const SHORTCUTS_KEY = 'tabi_shortcuts';
 export const MAX_SHORTCUTS = 200;
 export const MAX_PROMPT_CHARS = 2000;
 

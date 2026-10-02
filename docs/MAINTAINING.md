@@ -1,4 +1,4 @@
-# Maintaining Genesis
+# Maintaining Tabi
 
 Notes for whoever owns the GitHub repository. None of this affects building or using the extension.
 

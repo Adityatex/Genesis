@@ -38,7 +38,7 @@ async function main(): Promise<void> {
   if (!fs.existsSync(path.join(EXTENSION_DIR, 'manifest.json'))) throw new Error('Build the extension first: npm run build');
   const fixtures = await startFixtureServer();
   const other = fixtures.baseUrl.replace('127.0.0.1', 'localhost');
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'genesis-sites-e2e-'));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tabi-sites-e2e-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chromium',
     headless: !headed,
@@ -48,8 +48,8 @@ async function main(): Promise<void> {
   try {
     const worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker', { timeout: 15_000 });
     await worker.evaluate((base) => chrome.storage.local.set({
-      genesis_llm: { provider: 'custom', models: { custom: 'mock' }, keys: { custom: 'k' }, customBaseUrl: base },
-      genesis_prefs: { trustedInput: false },
+      tabi_llm: { provider: 'custom', models: { custom: 'mock' }, keys: { custom: 'k' }, customBaseUrl: base },
+      tabi_prefs: { trustedInput: false },
     }), MODEL);
 
     // The fake model: go to the other site; once refused, finish
@@ -74,13 +74,13 @@ async function main(): Promise<void> {
     await blockInput.fill(`${other}/anything`);
     await blockInput.press('Enter');
     await popup.getByText('localhost', { exact: true }).waitFor({ timeout: 5_000 }).catch(() => {});
-    const stored: any = await worker.evaluate(() => chrome.storage.local.get('genesis_sites'));
-    check('the popup blocks a site typed as a full address', JSON.stringify(stored.genesis_sites?.blocked) === '["localhost"]', JSON.stringify(stored));
+    const stored: any = await worker.evaluate(() => chrome.storage.local.get('tabi_sites'));
+    check('the popup blocks a site typed as a full address', JSON.stringify(stored.tabi_sites?.blocked) === '["localhost"]', JSON.stringify(stored));
 
     // 2. The agent won't go to the blocked site
     const page = await context.newPage();
     const run = async (p: Page, goal: string) => {
-      await p.locator('[title="Open Genesis Copilot"]').click({ timeout: 15_000 });
+      await p.locator('[title="Open Tabi"]').click({ timeout: 15_000 });
       await p.locator('textarea[placeholder^="Describe action"]').fill(goal);
       await p.keyboard.press('Enter');
     };
@@ -102,7 +102,7 @@ async function main(): Promise<void> {
     check('and the model never sees that page', prompts.length === before, `${prompts.length - before} model calls`);
 
     // 4. With an allow list that doesn't have this site, the agent asks first
-    await worker.evaluate(() => chrome.storage.local.set({ genesis_sites: { blocked: [], allowed: ['example.com'] } }));
+    await worker.evaluate(() => chrome.storage.local.set({ tabi_sites: { blocked: [], allowed: ['example.com'] } }));
     const unlisted = await context.newPage();
     await unlisted.goto(`${fixtures.baseUrl}/search.html`);
     await run(unlisted, 'Search for headphones');

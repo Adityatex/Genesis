@@ -12,9 +12,9 @@ export interface ProviderPreset {
   needsKey: boolean;
   keyUrl?: string;
   /**
-   * Which of the provider's models Genesis can use. Some providers also serve
+   * Which of the provider's models Tabi can use. Some providers also serve
    * models through non-chat-completions APIs (Anthropic messages, OpenAI
-   * responses) that Genesis doesn't speak yet.
+   * responses) that Tabi doesn't speak yet.
    */
   modelFilter?: (id: string) => boolean;
   /** Free models the provider's /models list doesn't mark as free. */
@@ -142,7 +142,7 @@ export interface StoredLLMSettings {
   executor?: { provider: ProviderId; model: string };
 }
 
-export const SETTINGS_KEY = 'genesis_llm';
+export const SETTINGS_KEY = 'tabi_llm';
 /** Storage keys from before multi-provider support (Groq only). */
 export const LEGACY_KEYS = ['groqApiKey', 'groqModel'] as const;
 
@@ -234,11 +234,11 @@ export function validateBaseUrl(raw: string): string | null {
 /** Why this config can't make requests yet, or null if it's ready. */
 export function configProblem(config: LLMConfig): string | null {
   const preset = PROVIDERS[config.provider];
-  if (!config.baseUrl) return `Set the server URL for ${config.label} in the Genesis popup.`;
+  if (!config.baseUrl) return `Set the server URL for ${config.label} in the Tabi popup.`;
   const urlError = validateBaseUrl(config.baseUrl);
   if (urlError) return `${config.label} URL: ${urlError}.`;
-  if (preset.needsKey && !config.apiKey) return `No API key for ${config.label}. Add one in the Genesis popup.`;
-  if (!config.model) return `Choose a ${config.label} model in the Genesis popup ("Load models" lists what your key can use).`;
+  if (preset.needsKey && !config.apiKey) return `No API key for ${config.label}. Add one in the Tabi popup.`;
+  if (!config.model) return `Choose a ${config.label} model in the Tabi popup ("Load models" lists what your key can use).`;
   return null;
 }
 

@@ -13,9 +13,11 @@ export default defineConfig({
     },
   }),
   manifest: {
-    name: 'Genesis - AI Browser Automation',
+    name: 'Tabi',
+    short_name: 'Tabi',
     version: '1.0.0',
-    description: 'AI-powered browser automation assistant for text extraction, trustworthy form filling, and intelligent page summarization.',
+    description: 'Tabi works across your tabs for you: it reads pages, fills in forms and carries out tasks, using your own AI provider key.',
+    action: { default_title: 'Tabi' },
     permissions: ['activeTab', 'scripting', 'storage', 'debugger', 'alarms', 'notifications', 'tabGroups'],
     // <all_urls> covers every LLM provider, including a local Ollama
     host_permissions: ['<all_urls>'],

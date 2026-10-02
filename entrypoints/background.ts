@@ -37,12 +37,13 @@ const skillStorage: KeyValueStorage = {
   set: (items) => browser.storage.local.set(items),
 };
 import { createHandlers } from '@/lib/mcp/handlers';
+import { migrateFromGenesis } from '@/lib/utils/renameMigration';
 import { DEFAULT_PORT, isValidToken, normalizeToken } from '@/mcp/src/protocol';
 
-/** genesis-mcp bridge settings (chrome.storage.local); only this worker reads the token. */
-const MCP_KEY = 'genesis_mcp';
+/** tabi-mcp bridge settings (chrome.storage.local); only this worker reads the token. */
+const MCP_KEY = 'tabi_mcp';
 interface McpSettings { enabled: boolean; token: string; port: number }
-const MCP_ALARM = 'genesis-mcp';
+const MCP_ALARM = 'tabi-mcp';
 
 declare var chrome: any;
 
@@ -65,8 +66,17 @@ function releaseKeepAlive(): void {
 }
 
 export default defineBackground(() => {
-  console.log('[Genesis] Background service worker started');
+  console.log('[Tabi] Background service worker started');
   watchDetach();
+
+  // Data saved before the rename moves to its new keys first; everything that reads storage waits for this
+  const migrated = migrateFromGenesis({
+    get: (keys) => browser.storage.local.get(keys) as Promise<Record<string, unknown>>,
+    set: (items) => browser.storage.local.set(items),
+    remove: (keys) => browser.storage.local.remove(keys),
+    alarmNames: async () => ((await chrome.alarms.getAll()) as { name: string }[]).map((a) => a.name),
+    clearAlarm: (name) => { chrome.alarms.clear(name); },
+  }).catch((err) => console.error('[Tabi] Moving data saved by Genesis:', err));
 
   // ---- Run timelines (lib/agent/timeline.ts), for the History page
   async function loadRunLogs(): Promise<RunLog[]> {
@@ -78,7 +88,7 @@ export default defineBackground(() => {
   function saveRunLog(log: RunLog): void {
     runLogWrites = runLogWrites
       .then(async () => { await browser.storage.local.set({ [RUNS_KEY]: upsertRun(await loadRunLogs(), log) }); })
-      .catch((err) => console.error('[Genesis] Saving the run timeline:', err));
+      .catch((err) => console.error('[Tabi] Saving the run timeline:', err));
   }
   function editRunLogs(change: (runs: RunLog[]) => RunLog[]): Promise<void> {
     runLogWrites = runLogWrites.then(async () => { await browser.storage.local.set({ [RUNS_KEY]: change(await loadRunLogs()) }); });
@@ -152,9 +162,9 @@ export default defineBackground(() => {
       const tab = await chrome.tabs.get(tabId).catch(() => null);
       const focused = tab?.active && (await chrome.windows.get(tab.windowId).catch(() => null))?.focused;
       if (!tab || focused) return;
-      chrome.notifications.create(`genesis-task:${tabId}`, {
+      chrome.notifications.create(`tabi-task:${tabId}`, {
         type: 'basic', iconUrl: browser.runtime.getURL('/icons/icon128.png'), requireInteraction: true,
-        title: `✋ Genesis needs your OK: ${view.goal.slice(0, 50)}`,
+        title: `✋ Tabi needs your OK: ${view.goal.slice(0, 50)}`,
         message: `It wants to ${view.asking?.action}: ${view.asking?.risk === 'off-task' ? "a safety check doesn't think that's part of the task"
           : view.asking?.risk === 'unlisted' ? `${view.asking.reason}` : "that can't be undone"}.\nClick to open the tab and answer.`,
       });
@@ -183,8 +193,8 @@ export default defineBackground(() => {
         goal: pendingGoals.get(tabId) ?? '',
         status: 'queued',
         message: `⏳ **Waiting to start** (${position === 1 ? 'next' : `#${position}`} in line)\n\n`
-          + `${taskQueue.active} task${taskQueue.active === 1 ? ' is' : 's are'} running, and Genesis runs at most ${limit} at a time `
-          + '(Genesis popup → Agent) so free-tier rate limits hold. This one starts when a slot frees up.',
+          + `${taskQueue.active} task${taskQueue.active === 1 ? ' is' : 's are'} running, and Tabi runs at most ${limit} at a time `
+          + '(Tabi popup → Agent) so free-tier rate limits hold. This one starts when a slot frees up.',
         loading: true,
         step: 0,
         plan: [],
@@ -227,24 +237,24 @@ export default defineBackground(() => {
       backgroundTabs.delete(tabId);
       const icon = view?.status === 'done' ? '✅' : view?.status === 'paused' ? '⏸️' : '⚠️';
       const line = view ? view.message.split('\n').map((l) => l.trim()).find((l) => l && !l.startsWith('#')) ?? view.status : 'Stopped before it started';
-      chrome.notifications.clear(`genesis-task:${tabId}`); // a question it asked is over
+      chrome.notifications.clear(`tabi-task:${tabId}`); // a question it asked is over
       // Clicking it opens the run's timeline (or, if it never started, its tab)
-      chrome.notifications.create(view?.runId ? `genesis-run:${view.runId}` : `genesis-task:${tabId}`, {
+      chrome.notifications.create(view?.runId ? `tabi-run:${view.runId}` : `tabi-task:${tabId}`, {
         type: 'basic', iconUrl: browser.runtime.getURL('/icons/icon128.png'),
-        title: `${icon} Genesis: ${goal.slice(0, 60)}`, message: `${line.slice(0, 200)}\nClick to see what it did.`,
+        title: `${icon} Tabi: ${goal.slice(0, 60)}`, message: `${line.slice(0, 200)}\nClick to see what it did.`,
       });
     }
     return view;
   }
 
-  /** "Genesis" tab group per window, for background tasks. */
+  /** "Tabi" tab group per window, for background tasks. */
   const taskGroups = new Map<number, number>();
   async function groupTab(tabId: number, windowId: number): Promise<void> {
     const existing = taskGroups.get(windowId);
     try {
       const groupId = await chrome.tabs.group({ tabIds: [tabId], ...(existing !== undefined ? { groupId: existing } : { createProperties: { windowId } }) });
       taskGroups.set(windowId, groupId);
-      if (existing === undefined) await chrome.tabGroups.update(groupId, { title: 'Genesis', color: 'purple', collapsed: false });
+      if (existing === undefined) await chrome.tabGroups.update(groupId, { title: 'Tabi', color: 'purple', collapsed: false });
     } catch {
       // The group was closed: start a new one
       if (existing === undefined) return;
@@ -254,13 +264,13 @@ export default defineBackground(() => {
   }
 
   chrome.notifications.onClicked.addListener(async (id: string) => {
-    if (id.startsWith('genesis-run:')) {
+    if (id.startsWith('tabi-run:')) {
       chrome.notifications.clear(id);
-      await openHistory(id.slice('genesis-run:'.length));
+      await openHistory(id.slice('tabi-run:'.length));
       return;
     }
-    if (!id.startsWith('genesis-task:')) return;
-    const tabId = Number(id.slice('genesis-task:'.length));
+    if (!id.startsWith('tabi-task:')) return;
+    const tabId = Number(id.slice('tabi-task:'.length));
     chrome.notifications.clear(id);
     const tab = await chrome.tabs.update(tabId, { active: true }).catch(() => null);
     if (tab) chrome.windows.update(tab.windowId, { focused: true });
@@ -272,7 +282,7 @@ export default defineBackground(() => {
   });
 
   function runAgent(tabId: number, goal: string, options: RunOptions): void {
-    executeRun(tabId, goal, options).catch((err) => console.error('[Genesis] Agent run failed:', err));
+    executeRun(tabId, goal, options).catch((err) => console.error('[Tabi] Agent run failed:', err));
   }
 
   // The runner needs to know when a page starts loading (clicks and form submits navigate)
@@ -283,8 +293,8 @@ export default defineBackground(() => {
   });
   chrome.tabs.onRemoved.addListener((tabId: number) => tabLoads.delete(tabId));
 
-  // ---- genesis-mcp bridge: an AI app on this computer (Claude Code, Claude
-  // Desktop, Codex, ...) drives the browser through Genesis (lib/mcp/)
+  // ---- tabi-mcp bridge: an AI app on this computer (Claude Code, Claude
+  // Desktop, Codex, ...) drives the browser through Tabi (lib/mcp/)
   /** Page loads per tab, so actions from the bridge can tell when a page changed. */
   const tabLoads = new Map<number, number>();
   let mcpStatus: { status: BridgeStatus; detail?: string } = { status: 'off' };
@@ -306,7 +316,7 @@ export default defineBackground(() => {
         const prefs = await loadPrefs();
         const settings = await loadSettings();
         const problem = configProblem(resolveConfig(settings));
-        if (problem) throw new Error(`Genesis's own agent isn't set up: ${problem}`);
+        if (problem) throw new Error(`Tabi's own agent isn't set up: ${problem}`);
         const view = await executeRun(tabId, goal, {
           checkpoint: 0, split: hasExecutor(settings), screenshots: prefs.screenshots, skills: await loadSkills(skillStorage),
           customCode: prefs.customCode, confirm: prefs.confirmRisky, critic: prefs.critic,
@@ -342,9 +352,9 @@ export default defineBackground(() => {
   }
   chrome.alarms.onAlarm.addListener((alarm: { name: string }) => {
     if (alarm.name === MCP_ALARM) bridge.ensureConnected();
-    else onScheduleAlarm(schedulerDeps, alarm.name).catch((err) => console.error('[Genesis] Schedule:', err));
+    else migrated.then(() => onScheduleAlarm(schedulerDeps, alarm.name)).catch((err) => console.error('[Tabi] Schedule:', err));
   });
-  applyMcp().catch((err) => console.error('[Genesis] MCP bridge:', err));
+  migrated.then(applyMcp).catch((err) => console.error('[Tabi] MCP bridge:', err));
   // ---- Schedules: run a workflow or shortcut automatically (lib/schedules/)
   /** The first line of a run's final message after its heading, for a notification. */
   const resultLine = (message: string) =>
@@ -357,7 +367,7 @@ export default defineBackground(() => {
     clearAlarm: (name) => { chrome.alarms.clear(name); },
     notify: (title, message, runId) => {
       const options = { type: 'basic', iconUrl: browser.runtime.getURL('/icons/icon128.png'), title, message: runId ? `${message}\nClick to see what it did.` : message };
-      if (runId) chrome.notifications.create(`genesis-run:${runId}`, options);
+      if (runId) chrome.notifications.create(`tabi-run:${runId}`, options);
       else chrome.notifications.create(options);
     },
     run: async (schedule) => {
@@ -393,17 +403,17 @@ export default defineBackground(() => {
       return { status: view.status, summary: resultLine(view.message), runId: view.runId };
     },
   };
-  syncSchedules(schedulerDeps).catch((err) => console.error('[Genesis] Schedules:', err));
+  migrated.then(() => syncSchedules(schedulerDeps)).catch((err) => console.error('[Tabi] Schedules:', err));
 
   // Settings can change from elsewhere too (another popup window, tests)
   browser.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes[MCP_KEY]) applyMcp().catch((err) => console.error('[Genesis] MCP bridge:', err));
+    if (area === 'local' && changes[MCP_KEY]) applyMcp().catch((err) => console.error('[Tabi] MCP bridge:', err));
   });
   chrome.tabs.onRemoved.addListener((tabId: number) => forgetRun(tabId));
 
   // Store the default API key on install
   browser.runtime.onInstalled.addListener(async () => {
-    console.log('[Genesis] Installed — BYOK mode, no default key stored');
+    console.log('[Tabi] Installed — BYOK mode, no default key stored');
   });
 
   // Provider settings (BYOK: keys are never hardcoded, and only this worker reads them)
@@ -449,6 +459,7 @@ export default defineBackground(() => {
 
     // Handle async operations
     (async () => {
+      await migrated;
       try {
         switch (action) {
           case 'GET_LLM_SETTINGS': {
@@ -576,7 +587,7 @@ export default defineBackground(() => {
           }
 
           case 'START_BACKGROUND_TASK': {
-            // "Run in background": a new tab beside this one, in the Genesis group, from this page
+            // "Run in background": a new tab beside this one, in the Tabi group, from this page
             // (or payload.url). payload.workflow replays one; otherwise payload.goal goes to the agent.
             const from = _sender.tab;
             const url = String(payload?.url ?? from?.url ?? '');
@@ -699,7 +710,7 @@ export default defineBackground(() => {
             const tokens: string[] = Array.isArray(payload?.tokens) ? payload.tokens : [];
             const probes = await chrome.scripting.executeScript({
               target: { tabId, allFrames: true },
-              func: () => (globalThis as any).__genesisFrameToken ?? null,
+              func: () => (globalThis as any).__tabiFrameToken ?? null,
             });
             const frames = probes.filter((p: any) => p.frameId !== 0 && tokens.includes(p.result));
             const data = await Promise.all(frames.map(async (p: any) => {
@@ -773,7 +784,7 @@ export default defineBackground(() => {
 
           case 'RUN_SCHEDULE_NOW': {
             // Runs in the background like a scheduled run; a notification says how it went
-            runSchedule(schedulerDeps, String(payload?.id ?? '')).catch((err) => console.error('[Genesis] Schedule:', err));
+            runSchedule(schedulerDeps, String(payload?.id ?? '')).catch((err) => console.error('[Tabi] Schedule:', err));
             sendResponse({ success: true });
             break;
           }
@@ -881,12 +892,12 @@ export default defineBackground(() => {
             const mcp = await loadMcp();
             const { enabled, token, port } = payload ?? {};
             if (typeof token === 'string' && token.trim()) {
-              if (!isValidToken(token)) throw new Error("That isn't a Genesis pairing token: it should be 64 letters and digits. Run \"genesis-mcp token\" to see yours.");
+              if (!isValidToken(token)) throw new Error("That isn't a Tabi pairing token: it starts with tbk_, followed by 64 letters and digits. Run \"tabi-mcp token\" to see yours.");
               mcp.token = normalizeToken(token);
             }
             if (typeof port === 'number' && Number.isInteger(port) && port > 1023 && port < 65536) mcp.port = port;
             if (typeof enabled === 'boolean') mcp.enabled = enabled;
-            if (mcp.enabled && !isValidToken(mcp.token)) throw new Error('Paste the pairing token first (run "genesis-mcp token" to see it)');
+            if (mcp.enabled && !isValidToken(mcp.token)) throw new Error('Paste the pairing token first (run "tabi-mcp token" to see it)');
             await browser.storage.local.set({ [MCP_KEY]: mcp });
             await applyMcp();
             sendResponse({ success: true, data: { enabled: mcp.enabled, port: mcp.port, hasToken: isValidToken(mcp.token), ...mcpStatus } });
@@ -955,7 +966,7 @@ export default defineBackground(() => {
             sendResponse({ success: false, error: `Unknown action: ${action}` });
         }
       } catch (error) {
-        console.error('[Genesis] Background error:', error);
+        console.error('[Tabi] Background error:', error);
         sendResponse({ success: false, error: formatError(error) });
       }
     })();

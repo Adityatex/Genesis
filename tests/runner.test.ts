@@ -241,7 +241,7 @@ describe('several actions per response', () => {
     await startRun(deps, 21, 'Go on');
     expect(prompts[1]).toEqual([
       'click [1] → ✅ ran click; page changed, now on "Next" (https://shop.test/next)',
-      '(note from Genesis) 2 more actions not run: the page changed, so they may not fit it any more',
+      '(note from Tabi) 2 more actions not run: the page changed, so they may not fit it any more',
     ]);
   });
 
@@ -251,7 +251,7 @@ describe('several actions per response', () => {
       '{"action":"done","summary":"ok"}',
     ], { onExecute: (_tab, action) => (action.elementId === 9 ? '❌ Element [9] not found' : '✅ ok') });
     await startRun(deps, 22, 'Click');
-    expect(prompts[1]).toEqual(['click [9] → ❌ Element [9] not found', '(note from Genesis) 1 more action not run: the action above failed']);
+    expect(prompts[1]).toEqual(['click [9] → ❌ Element [9] not found', '(note from Tabi) 1 more action not run: the action above failed']);
   });
 
   it('keeps the latest plan, sends it back to the model and shows it', async () => {
@@ -365,7 +365,7 @@ describe('planner and fast executor models', () => {
     const { result, calls, order } = await roles(['{"action":"click","elementId":1}', '{"action":"done","summary":"Ordered"}']);
     // planner clicks; executor says done; planner is asked and confirms
     expect(order).toEqual(['planner', 'executor', 'planner']);
-    expect(calls[2].history.at(-1)).toBe('(note from Genesis) The fast model says the goal is complete: "Ordered". Check the page: if it really is, send "done"; if not, carry on.');
+    expect(calls[2].history.at(-1)).toBe('(note from Tabi) The fast model says the goal is complete: "Ordered". Check the page: if it really is, send "done"; if not, carry on.');
     expect(result.status).toBe('done');
   });
 
@@ -436,7 +436,7 @@ describe('screenshots', () => {
   it('says once when a model can\'t read the screenshots', async () => {
     const { prompts } = await shots('always', [...typing(2), '{"action":"done","summary":"ok"}'], { dropped: true });
     const notes = prompts.at(-1)!.filter((h) => h.includes("doesn't accept images"));
-    expect(notes).toEqual(["(note from Genesis) Screenshots are on, but Gemini · flash doesn't accept images, so it gets the page as text only."]);
+    expect(notes).toEqual(["(note from Tabi) Screenshots are on, but Gemini · flash doesn't accept images, so it gets the page as text only."]);
   });
 });
 
@@ -516,7 +516,7 @@ describe('missing pages', () => {
     await startRun(deps, 95, 'Check out');
     expect(prompts[1]).toEqual([
       'navigate https://shop.test/cart → ❌ landed on "Page not found" (https://shop.test/cart): that page doesn\'t exist. Don\'t guess URLs; use links you have seen.',
-      '(note from Genesis) 1 more action not run: the page changed, so they may not fit it any more',
+      '(note from Tabi) 1 more action not run: the page changed, so they may not fit it any more',
     ]);
   });
 });

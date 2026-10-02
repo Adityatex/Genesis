@@ -581,7 +581,7 @@ function heal(run: Run, n: number, step: WorkflowStep, why: string): 'next' {
   run.replay = 'healed';
   run.needPlanner = true;
   const done = n > 1 ? `steps 1-${n - 1} worked, but step ${n}` : 'its first step';
-  addHistory(run, `(note from Genesis) Replaying the saved workflow "${run.workflow!.name}": ${done} (${describeStep(step)}) didn't: ${why}. The page may have changed. Carry on with the task from here yourself.`);
+  addHistory(run, `(note from Tabi) Replaying the saved workflow "${run.workflow!.name}": ${done} (${describeStep(step)}) didn't: ${why}. The page may have changed. Carry on with the task from here yourself.`);
   return 'next';
 }
 
@@ -627,7 +627,7 @@ function record(run: Run, action: AgentAction, target: ElementKey | undefined, u
 /** run_code: check the code, run it if allowed, and say what happened. */
 async function runCodeAction(deps: RunnerDeps, run: Run, code: string): Promise<string> {
   if (!run.customCode || !deps.runCode) {
-    return '❌ Running your own code is turned off (the user can allow it in the Genesis popup). Use extract, read or find instead.';
+    return '❌ Running your own code is turned off (the user can allow it in the Tabi popup). Use extract, read or find instead.';
   }
   const refused = checkCode(code);
   if (refused) return `❌ Not run: ${refused}. The code may only read this page and return data.`;
@@ -764,7 +764,7 @@ async function pageAllowed(deps: RunnerDeps, run: Run, url: string | undefined):
   }
   if (status !== 'unlisted' || run.sitesOk.has(site)) return true;
   run.asking = { action: `work on ${site}`, risk: 'unlisted', reason: `${site} isn't on your list of allowed sites` };
-  const answer = await waitForUser(deps, run, `## ✋ Allow this?\n\nThe agent is on **${site}**, which isn't on your list of allowed sites (Genesis popup → Sites). `
+  const answer = await waitForUser(deps, run, `## ✋ Allow this?\n\nThe agent is on **${site}**, which isn't on your list of allowed sites (Tabi popup → Sites). `
     + `**Allow** to let it work here for this task, or **Don't allow** to stop.\n\n**Steps so far:**\n${formatHistory(run.history) || 'None'}`);
   run.asking = undefined;
   if (answer === 'continue') {
@@ -810,7 +810,7 @@ async function guard(deps: RunnerDeps, run: Run, action: AgentAction, pageUrl: s
       const no = `⛔ not run: ${site} isn't on the user's list of allowed sites, and they didn't allow it. Don't go there by any route; finish the task without it, and say so if it can't be done.`;
       if (run.refused.has(`site:${site}`)) return { answer: 'decline', declined: no };
       run.asking = { action: what, risk: 'unlisted', reason: `${site} isn't on your list of allowed sites` };
-      const answer = await waitForUser(deps, run, `## ✋ Allow this?\n\nThe agent wants to **${what}**, but ${site} isn't on your list of allowed sites (Genesis popup → Sites). `
+      const answer = await waitForUser(deps, run, `## ✋ Allow this?\n\nThe agent wants to **${what}**, but ${site} isn't on your list of allowed sites (Tabi popup → Sites). `
         + `**Allow** to let it use ${site} for this task, or **Don't allow**.\n\n${steps}`);
       run.asking = undefined;
       if (answer === 'continue') run.sitesOk.add(site);
@@ -863,7 +863,7 @@ async function guard(deps: RunnerDeps, run: Run, action: AgentAction, pageUrl: s
 
   if (!risk) return { answer: 'safe' };
   run.asking = { action: what, risk };
-  const answer = await waitForUser(deps, run, `## ✋ Allow this?\n\nThe agent wants to **${what}**. That looks like ${risk}, which can't be undone, so Genesis asks first.\n\n`
+  const answer = await waitForUser(deps, run, `## ✋ Allow this?\n\nThe agent wants to **${what}**. That looks like ${risk}, which can't be undone, so Tabi asks first.\n\n`
     + `**Allow** to let it, or **Don't allow** and it will finish without it.\n\n${steps}`);
   run.asking = undefined;
   return {
@@ -938,7 +938,7 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
     if (run.calls % 10 === 0) deps.saveRun?.(runLog(run)); // a long run shows up before it ends
     if (imageDropped && model && !run.noVision.has(model)) {
       run.noVision.add(model);
-      addHistory(run, `(note from Genesis) Screenshots are on, but ${model} doesn't accept images, so it gets the page as text only.`);
+      addHistory(run, `(note from Tabi) Screenshots are on, but ${model} doesn't accept images, so it gets the page as text only.`);
     }
     // A different model in the same role means a backup took over; switching
     // between the planner and executor is routine and needs no note
@@ -993,14 +993,14 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
       ? ' ⚠️ You already did exactly this on this same page. If nothing changed, do something different.'
       : '';
     if (repeatWarning || parsed.notes.length) run.needPlanner = true;
-    for (const note of parsed.notes) addHistory(run, `(note from Genesis) ${note}`);
+    for (const note of parsed.notes) addHistory(run, `(note from Tabi) ${note}`);
 
     for (const [i, action] of actions.entries()) {
       if (run.stopRequested) break;
       if (action.action === 'done' && role === 'executor') {
         // The fast model may call it done too early; the planner confirms
         run.needPlanner = true;
-        addHistory(run, `(note from Genesis) The fast model says the goal is complete: "${action.summary || 'Done'}". Check the page: if it really is, send "done"; if not, carry on.`);
+        addHistory(run, `(note from Tabi) The fast model says the goal is complete: "${action.summary || 'Done'}". Check the page: if it really is, send "done"; if not, carry on.`);
         break;
       }
       if (action.action === 'done') {
@@ -1051,7 +1051,7 @@ async function loop(deps: RunnerDeps, run: Run): Promise<void> {
       if (failed) run.needPlanner = true;
       if (left > 0 && (pageChanged || failed)) {
         const why = pageChanged ? 'the page changed, so they may not fit it any more' : 'the action above failed';
-        addHistory(run, `(note from Genesis) ${left} more action${left === 1 ? '' : 's'} not run: ${why}`);
+        addHistory(run, `(note from Tabi) ${left} more action${left === 1 ? '' : 's'} not run: ${why}`);
         break;
       }
     }

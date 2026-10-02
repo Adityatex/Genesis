@@ -58,7 +58,7 @@ Found along the way: names cut from the goal could end in a hyphen and then not 
 
 ## Structured extraction (2026-10-01)
 
-A new `extract` action: the model names the fields it wants ("laptops: name, price, RAM") and Genesis's own code finds them. No model-written code runs. It reads table rows by column header, repeating items (lists, cards) and label/value pairs (spec tables, `<dl>`, "Label: value"), matching fields by label, synonym ("RAM" = "Memory (RAM)", "price" = "cost"), class name or kind of value. With `follow`, it reads each listed item's own page for fields the list doesn't show: same site only, GET, parsed without running the page's scripts, at most 10 pages, and never links that act (log out, delete, add to cart).
+A new `extract` action: the model names the fields it wants ("laptops: name, price, RAM") and Tabi's own code finds them. No model-written code runs. It reads table rows by column header, repeating items (lists, cards) and label/value pairs (spec tables, `<dl>`, "Label: value"), matching fields by label, synonym ("RAM" = "Memory (RAM)", "price" = "cost"), class name or kind of value. With `follow`, it reads each listed item's own page for fields the list doesn't show: same site only, GET, parsed without running the page's scripts, at most 10 pages, and never links that act (log out, delete, add to cart).
 
 On `compare-and-buy` one step returns every laptop's price and RAM, which took five page visits before. CI runs this in real Chromium: the mock plan now starts with the extract.
 
@@ -71,7 +71,7 @@ Both models used `extract` first and picked the Kite 14 right away. deepseek-fla
 
 ## Why compare-and-buy dropped, and the fix (2026-10-01)
 
-`deepseek-flash` on `compare-and-buy` went from 2/3 (2026-09-27) to 1/5. Full transcripts (`--transcripts`) showed that in every failure the model had solved the task: it checked the laptops, picked the Kite 14 and clicked "Add to cart". Then it would not stop. The goal says "Buy" and this shop has no checkout, so it guessed URLs (`/cart.html`, `/cart`, `/checkout.html`, `/`), landed on "Page not found", went back, added the laptop again, and repeated until the 40-step check-in. Three things in Genesis made this worse:
+`deepseek-flash` on `compare-and-buy` went from 2/3 (2026-09-27) to 1/5. Full transcripts (`--transcripts`) showed that in every failure the model had solved the task: it checked the laptops, picked the Kite 14 and clicked "Add to cart". Then it would not stop. The goal says "Buy" and this shop has no checkout, so it guessed URLs (`/cart.html`, `/cart`, `/checkout.html`, `/`), landed on "Page not found", went back, added the laptop again, and repeated until the 40-step check-in. Three things in Tabi made this worse:
 
 1. **A 404 counted as a success.** The model read `navigate /cart.html → ✅ now on "Page not found"`, so nothing told it the guessing was failing. A page titled 404 / "not found" is now a failure: "that page doesn't exist. Don't guess URLs; use links you have seen."
 2. **"What changed" hid the confirmation.** Page text often arrives as one long line, and the diff compared lines, so it reported the whole page as new text and cut it off before the one new sentence, "Kite 14 added to your cart." It is now a word-level diff, so it reports `New text: "Kite 14 added to your cart."` (and text that went away).

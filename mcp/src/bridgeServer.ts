@@ -1,6 +1,6 @@
 // mcp/src/bridgeServer.ts
 // The server end of the bridge: a WebSocket server on 127.0.0.1 that the
-// Genesis extension connects to. See protocol.ts for the handshake.
+// Tabi extension connects to. See protocol.ts for the handshake.
 
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { IncomingMessage } from 'node:http';
@@ -15,8 +15,8 @@ const REQUEST_TIMEOUT_MS = 120_000;
 const HANDSHAKE_TIMEOUT_MS = 10_000;
 
 export const NOT_CONNECTED =
-  'The Genesis extension is not connected. In Chrome, open the Genesis popup, turn on "Let AI apps control this browser" '
-  + 'and paste the pairing token (run `genesis-mcp token` to see it).';
+  'The Tabi extension is not connected. In Chrome, open the Tabi popup, turn on "Let AI apps control this browser" '
+  + 'and paste the pairing token (run `tabi-mcp token` to see it).';
 
 /** Only browser extensions may connect: web pages can open WebSockets to localhost too. */
 export function allowedOrigin(origin: string | undefined): boolean {
@@ -56,7 +56,7 @@ export class ExtensionBridge {
       });
       wss.once('error', (err: NodeJS.ErrnoException) => {
         reject(err.code === 'EADDRINUSE'
-          ? new Error(`Port ${this.port} is in use: another genesis-mcp may be running (only one AI app can use Genesis at a time), or set GENESIS_MCP_PORT.`)
+          ? new Error(`Port ${this.port} is in use: another tabi-mcp may be running (only one AI app can use Tabi at a time), or set TABI_MCP_PORT.`)
           : err);
       });
       wss.on('connection', (socket) => this.accept(socket));
@@ -98,7 +98,7 @@ export class ExtensionBridge {
       if (!authed) {
         if (msg.type === 'hello') {
           if (msg.version !== PROTOCOL_VERSION) {
-            this.send(socket, { type: 'denied', reason: `Protocol version ${msg.version} isn't supported; update Genesis or genesis-mcp` });
+            this.send(socket, { type: 'denied', reason: `Protocol version ${msg.version} isn't supported; update Tabi or tabi-mcp` });
             socket.close();
             return;
           }
@@ -117,7 +117,7 @@ export class ExtensionBridge {
           if (this.socket && this.socket !== socket) this.socket.close();
           this.socket = socket;
           this.send(socket, { type: 'ready' });
-          this.log('Genesis extension connected.');
+          this.log('Tabi extension connected.');
         }
         return;
       }
@@ -136,10 +136,10 @@ export class ExtensionBridge {
       clearTimeout(timer);
       if (this.socket !== socket) return;
       this.socket = undefined;
-      this.log('Genesis extension disconnected.');
+      this.log('Tabi extension disconnected.');
       for (const [id, p] of this.pending) {
         clearTimeout(p.timer);
-        p.reject(new Error('The Genesis extension disconnected before answering'));
+        p.reject(new Error('The Tabi extension disconnected before answering'));
         this.pending.delete(id);
       }
     });

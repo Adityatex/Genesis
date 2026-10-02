@@ -21,7 +21,7 @@ export default defineContentScript({
     window.addEventListener('message', (event) => {
       const data = event.data;
       if (event.source !== window.parent || data?.type !== FRAME_TOKEN_MESSAGE || typeof data.token !== 'string') return;
-      (globalThis as any).__genesisFrameToken = data.token;
+      (globalThis as any).__tabiFrameToken = data.token;
     });
 
     browser.runtime.onMessage.addListener((message: any, _sender, sendResponse) => {

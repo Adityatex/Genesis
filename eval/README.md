@@ -1,4 +1,4 @@
-# Genesis eval harness
+# Tabi eval harness
 
 End-to-end benchmark for the agent. Each run loads the **built extension** into Chromium with Playwright, opens a local test page, types the task's goal into the real sidebar, and waits for the agent to finish.
 
@@ -12,7 +12,7 @@ npm run eval                  # live run, Groq by default (GROQ_API_KEY in env o
 # options (after --)
 npm run eval -- --task login,todo-enter   # subset
 npm run eval -- --trials 3                # repeat each task (live results vary)
-npm run eval -- --headed --verbose        # watch it, stream [Genesis] logs + timings
+npm run eval -- --headed --verbose        # watch it, stream [Tabi] logs + timings
 npm run eval -- --scripted-input          # turn off trusted (DevTools Protocol) input to compare
 npm run eval -- --dump-prompts            # print the page snapshot the model gets at each step
 npm run eval -- --provider deepseek --model <id>              # other providers: key from DEEPSEEK_API_KEY etc.

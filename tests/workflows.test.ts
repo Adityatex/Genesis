@@ -156,7 +156,7 @@ describe('replaying a workflow', () => {
     expect(deps.plan).toHaveBeenCalledTimes(1);
     expect(histories[0]).toEqual([
       '↻ type <input> "Username" "demo" → ✅ ran type',
-      '(note from Genesis) Replaying the saved workflow "sign-in": steps 1-1 worked, but step 2 (click <button> "Sign in") didn\'t: its element (<button> "Sign in") isn\'t on the page any more. The page may have changed. Carry on with the task from here yourself.',
+      '(note from Tabi) Replaying the saved workflow "sign-in": steps 1-1 worked, but step 2 (click <button> "Sign in") didn\'t: its element (<button> "Sign in") isn\'t on the page any more. The page may have changed. Carry on with the task from here yourself.',
     ]);
     expect(view).toMatchObject({ status: 'done', replay: 'healed' });
   });

@@ -1,6 +1,6 @@
 // lib/skills/skill.ts
 // Skills: saved instructions for a kind of task, in SKILL.md form (the open
-// Agent Skills format: YAML front matter, then Markdown). Genesis adds one
+// Agent Skills format: YAML front matter, then Markdown). Tabi adds one
 // optional field, `sites`, the hosts a skill is for.
 //
 //   ---
@@ -54,7 +54,7 @@ function listOf(value: string, following: string[]): string[] {
 
 export type SkillParse = { ok: true; skill: Skill } | { ok: false; error: string };
 
-/** Read a SKILL.md. Only the fields Genesis uses are read from the front matter; others are ignored. */
+/** Read a SKILL.md. Only the fields Tabi uses are read from the front matter; others are ignored. */
 export function parseSkill(text: string): SkillParse {
   const src = text.replace(/^﻿/, '').replace(/\r\n/g, '\n').trim();
   const m = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(src);

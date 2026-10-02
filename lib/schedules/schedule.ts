@@ -33,7 +33,7 @@ export interface Schedule {
   lastRun?: ScheduleResult;
 }
 
-export const SCHEDULES_KEY = 'genesis_schedules';
+export const SCHEDULES_KEY = 'tabi_schedules';
 export const MAX_SCHEDULES = 50;
 
 function parseTime(time: string): { h: number; m: number } {

@@ -22,7 +22,7 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Install genesis-mcp
+      - name: Install tabi-mcp
         run: npm --prefix mcp ci
 
       - name: Typecheck
@@ -34,13 +34,13 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Build genesis-mcp
+      - name: Build tabi-mcp
         run: npm --prefix mcp run build
 
       - name: Upload unpacked extension
         uses: actions/upload-artifact@v4
         with:
-          name: genesis-chrome-mv3
+          name: tabi-chrome-mv3
           path: .output/chrome-mv3
 
   eval-mock:
@@ -93,7 +93,7 @@ jobs:
       - name: Save as skill, then reuse it (mock)
         run: npm run eval:mock -- --task login --trials 2 --learn --timeout 45
 
-      - name: genesis-mcp end to end (MCP client, real extension, real Chromium)
+      - name: tabi-mcp end to end (MCP client, real extension, real Chromium)
         run: |
           npm --prefix mcp ci
           npm --prefix mcp run build

@@ -77,7 +77,7 @@ export default function App() {
     const blob = new Blob([formatRunLog(run)], { type: 'text/markdown' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `genesis-run-${new Date(run.started).toISOString().slice(0, 16).replace(/[:T]/g, '-')}.md`;
+    link.download = `tabi-run-${new Date(run.started).toISOString().slice(0, 16).replace(/[:T]/g, '-')}.md`;
     link.click();
     URL.revokeObjectURL(link.href);
   };

@@ -1,7 +1,7 @@
 {
-  "name": "genesis-task-automator",
+  "name": "tabi",
   "version": "1.0.0",
-  "description": "Genesis - AI Browser Automation Assistant",
+  "description": "Tabi: an open-source, bring-your-own-key browser agent",
   "scripts": {
     "dev": "wxt",
     "dev:firefox": "wxt -b firefox",
@@ -16,7 +16,7 @@
     "eval:mock": "tsx eval/run.mts --mock",
     "fixtures": "tsx eval/serve.mts",
     "postinstall": "wxt prepare",
-    "build:mcp": "npm --prefix mcp install && npm --prefix mcp run build",
+    "build:mcp": "cd mcp && npm install && npm run build",
     "eval:mcp": "tsx eval/mcp-e2e.mts",
     "eval:schedule": "tsx eval/schedule-e2e.mts",
     "eval:parallel": "tsx eval/parallel-e2e.mts",

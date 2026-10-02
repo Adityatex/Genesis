@@ -38,8 +38,8 @@ const SKIP_TAGS = new Set([
   'SCRIPT', 'STYLE', 'NOSCRIPT', 'SVG', 'CANVAS', 'TEMPLATE', 'HEAD',
 ]);
 
-// Genesis's own sidebar is a shadow-root UI on the page; never show it to the agent
-const OWN_UI_TAG = 'GENESIS-SIDEBAR';
+// Tabi's own sidebar is a shadow-root UI on the page; never show it to the agent
+const OWN_UI_TAG = 'TABI-SIDEBAR';
 
 // ---------------------------------------------------------------- element registry
 // Maps snapshot IDs to live elements. A querySelector on a data attribute can't
@@ -47,7 +47,7 @@ const OWN_UI_TAG = 'GENESIS-SIDEBAR';
 
 /**
  * An element inside a cross-origin iframe. This page can't touch it, so actions
- * on it are forwarded to Genesis's content script inside that frame.
+ * on it are forwarded to Tabi's content script inside that frame.
  */
 export interface RemoteRef {
   /** Chrome's frame id, for messaging the frame's content script. */
@@ -70,7 +70,7 @@ export function getElementById(id: number): HTMLElement | null {
   if (isElement(entry) && entry.isConnected) return entry as HTMLElement;
   if (entry) return null; // a remote element: see getRemoteRef
   // Fallback for elements tagged outside a snapshot (e.g. unit tests)
-  return document.querySelector(`[data-genesis-id="${id}"]`) as HTMLElement | null;
+  return document.querySelector(`[data-tabi-id="${id}"]`) as HTMLElement | null;
 }
 
 /** Where an element with a snapshot ID is on screen, in CSS pixels of the top-level viewport. */
@@ -384,7 +384,7 @@ function describe(el: Element, id: number, frame: string | undefined): SnapshotE
     states: getAriaStates(el),
     options: getSelectOptions(el),
     frame,
-    selector: `[data-genesis-id="${id}"]`,
+    selector: `[data-tabi-id="${id}"]`,
   };
 }
 
@@ -538,7 +538,7 @@ export interface FrameSnapshot {
  */
 export function collectLocalElements(): SnapshotParts {
   // Clean up the previous snapshot's IDs, wherever those elements live
-  for (const entry of registry.values()) if (isElement(entry)) entry.removeAttribute('data-genesis-id');
+  for (const entry of registry.values()) if (isElement(entry)) entry.removeAttribute('data-tabi-id');
   registry.clear();
   remoteBoxes.clear();
 
@@ -552,7 +552,7 @@ export function collectLocalElements(): SnapshotParts {
     if (!isVisible(el)) continue;
     const id = elements.length;
     registry.set(id, el);
-    el.setAttribute('data-genesis-id', String(id));
+    el.setAttribute('data-tabi-id', String(id));
     elements.push(describe(el, id, frame));
     distance.set(id, viewportDistance(el, frameTop));
   }
@@ -579,7 +579,7 @@ export function addRemoteElements(parts: SnapshotParts, frame: OpaqueFrame, fram
 /**
  * Create a compact snapshot of the page for the LLM.
  * Registers each interactive element under a numeric ID (and tags it with
- * data-genesis-id for debugging). Returns a text representation + the elements.
+ * data-tabi-id for debugging). Returns a text representation + the elements.
  * Local only; lib/agent/frames.ts adds cross-origin iframes.
  */
 export function createDOMSnapshot(): { text: string; elements: SnapshotElement[] } {

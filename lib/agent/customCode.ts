@@ -2,7 +2,7 @@
 // run_code: the model's own JavaScript for reading a page, for what `extract`
 // can't do. Opt-in (prefs.customCode). The background runs it through the
 // debugger in an isolated world: it sees the page's DOM but not its scripts,
-// and the page can't see it. Before running, Genesis refuses code that looks
+// and the page can't see it. Before running, Tabi refuses code that looks
 // like it sends data out, reads cookies or storage, or acts on the page, and
 // removes the network functions from that world. That lowers the risk; it
 // can't make code from a model steered by page content fully safe, which is
@@ -49,10 +49,10 @@ export function wrapCode(code: string): string {
     try { Object.defineProperty(globalThis, name, { value: undefined, configurable: false }); } catch (e) {}
   }
   try { Object.defineProperty(Navigator.prototype, 'sendBeacon', { value: undefined, configurable: false }); } catch (e) {}
-  const __genesisResult = await (async () => {
+  const __tabiResult = await (async () => {
 ${code}
   })();
-  return JSON.stringify(__genesisResult === undefined ? null : __genesisResult, (key, value) =>
+  return JSON.stringify(__tabiResult === undefined ? null : __tabiResult, (key, value) =>
     value instanceof Element ? (value.innerText ?? value.textContent ?? '').trim().slice(0, 300) : value);
 })()`;
 }

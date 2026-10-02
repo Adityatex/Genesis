@@ -1,5 +1,5 @@
 // entrypoints/sidebar.content/index.tsx
-// Content script entry — injects the Genesis sidebar via Shadow DOM
+// Content script entry — injects the Tabi sidebar via Shadow DOM
 
 import ReactDOM from 'react-dom/client';
 import App from './App';
@@ -17,7 +17,7 @@ export default defineContentScript({
 
     /** Left edge of the open sidebar (CSS px), so screenshots can leave it out. */
     const sidebarLeft = (): number | null => {
-      const panel = ui?.shadow?.querySelector('#genesis-app')?.firstElementChild;
+      const panel = ui?.shadow?.querySelector('#tabi-app')?.firstElementChild;
       const rect = panel?.getBoundingClientRect();
       return rect && rect.width > 200 && rect.right >= window.innerWidth - 2 ? rect.left : null;
     };
@@ -64,13 +64,13 @@ export default defineContentScript({
     });
 
     ui = await createShadowRootUi(ctx, {
-      name: 'genesis-sidebar',
+      name: 'tabi-sidebar',
       position: 'overlay',
       zIndex: 2147483647,
       onMount: (container) => {
-        container.id = 'genesis-sidebar-root';
+        container.id = 'tabi-sidebar-root';
         const app = document.createElement('div');
-        app.id = 'genesis-app';
+        app.id = 'tabi-app';
         container.append(app);
         const root = ReactDOM.createRoot(app);
         root.render(<App />);

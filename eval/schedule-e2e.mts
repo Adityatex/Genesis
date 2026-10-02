@@ -38,7 +38,7 @@ async function until<T>(get: () => Promise<T>, ok: (v: T) => boolean, ms: number
 async function main(): Promise<void> {
   if (!fs.existsSync(path.join(EXTENSION_DIR, 'manifest.json'))) throw new Error('Build the extension first: npm run build');
   const fixtures = await startFixtureServer();
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'genesis-schedule-e2e-'));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tabi-schedule-e2e-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chromium',
     headless: !headed,
@@ -60,7 +60,7 @@ async function main(): Promise<void> {
       ],
       hasPassword: true,
     };
-    await worker.evaluate((w) => chrome.storage.local.set({ genesis_workflows: [w] }), workflow);
+    await worker.evaluate((w) => chrome.storage.local.set({ tabi_workflows: [w] }), workflow);
 
     // The popup schedules it, as a user would
     const popup = await context.newPage();
@@ -71,17 +71,17 @@ async function main(): Promise<void> {
     }));
     const schedule = saved?.data?.[0];
     check('the popup saves a schedule', saved?.success === true && schedule?.nextRun > Date.now(), JSON.stringify(saved));
-    const alarm: any = await worker.evaluate((id) => chrome.alarms.get(`genesis-schedule:${id}`), schedule.id);
+    const alarm: any = await worker.evaluate((id) => chrome.alarms.get(`tabi-schedule:${id}`), schedule.id);
     check('its Chrome alarm is set for the next run', alarm?.scheduledTime === schedule.nextRun, JSON.stringify(alarm));
     const tabsBefore = context.pages().length;
 
     // Make the alarm go off now, as it would at 03:00
-    await worker.evaluate((id) => chrome.alarms.create(`genesis-schedule:${id}`, { when: Date.now() + 1000 }), schedule.id);
+    await worker.evaluate((id) => chrome.alarms.create(`tabi-schedule:${id}`, { when: Date.now() + 1000 }), schedule.id);
     const login = await until(async () => fixtures.events.find((e) => e.path === '/api/login'), Boolean, 30_000);
     check('the alarm replays the workflow in a background tab', login?.data?.username === 'demo' && login?.data?.password === 'hunter2', 'no login reached the server');
 
     const after: any = await until(
-      () => worker.evaluate(async () => (await chrome.storage.local.get('genesis_schedules')).genesis_schedules?.[0]),
+      () => worker.evaluate(async () => (await chrome.storage.local.get('tabi_schedules')).tabi_schedules?.[0]),
       (s: any) => !!s?.lastRun,
       30_000,
     );

@@ -1,5 +1,5 @@
-// entrypoints/sidebar.content/components/GenesisLogo.tsx
-export default function GenesisLogo({ size = 28 }: { size?: number }) {
+// entrypoints/sidebar.content/components/TabiLogo.tsx
+export default function TabiLogo({ size = 28 }: { size?: number }) {
   return (
     <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" width={size} height={size}>
       <defs>

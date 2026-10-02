@@ -228,7 +228,7 @@ export function recoverFailedGeneration(errorBody: string): string | null {
       // A whole action wrapped in a made-up tool ("assistant", "json", ...)
       const first = argsOf(calls[0]);
       if (calls.length === 1 && first && typeof first === 'object' && 'action' in first) return JSON.stringify(first);
-      // Calls to Genesis's own tools that the provider couldn't validate
+      // Calls to Tabi's own tools that the provider couldn't validate
       if (calls.every((c) => typeof c?.name === 'string')) {
         return toolCallsToResponse(calls.map((c) => ({ function: { name: c.name, arguments: JSON.stringify(argsOf(c) ?? {}) } })));
       }
@@ -303,11 +303,11 @@ export async function callLLM(messages: ChatMessage[], config: LLMConfig, opts: 
         }
 
         if (response.status === 401 || response.status === 403) {
-          throw new LLMError(`${config.label} rejected the API key (${response.status}): ${errorMessage(errorBody)}. Update it in the Genesis popup.`, 'auth');
+          throw new LLMError(`${config.label} rejected the API key (${response.status}): ${errorMessage(errorBody)}. Update it in the Tabi popup.`, 'auth');
         }
 
         if (isModelNotFound(response.status, errorBody)) {
-          throw new LLMError(`${config.label} doesn't offer the model "${config.model}" to this key. Pick another with "Load models" in the Genesis popup.`, 'model');
+          throw new LLMError(`${config.label} doesn't offer the model "${config.model}" to this key. Pick another with "Load models" in the Tabi popup.`, 'model');
         }
 
         if (response.status === 429) {
@@ -363,7 +363,7 @@ export interface ModelInfo {
 
 /**
  * Models this config's key can use, from the provider's /models endpoint:
- * free ones first, without models Genesis can't use (non-text output, or an
+ * free ones first, without models Tabi can't use (non-text output, or an
  * API other than chat completions).
  */
 export async function listModels(config: LLMConfig): Promise<ModelInfo[]> {
@@ -446,7 +446,7 @@ export async function chatWithPage(message: string, pageContext: string, config:
   return callLLM([
     {
       role: 'system',
-      content: `You are Genesis, an AI browser assistant. You have access to the current webpage's content. Answer the user's questions about the page clearly and helpfully. If the question isn't about the page, still try your best to help. Use markdown formatting.\n\nWebpage content:\n${pageContext.substring(0, 10000)}`,
+      content: `You are Tabi, an AI browser assistant. You have access to the current webpage's content. Answer the user's questions about the page clearly and helpfully. If the question isn't about the page, still try your best to help. Use markdown formatting.\n\nWebpage content:\n${pageContext.substring(0, 10000)}`,
     },
     {
       role: 'user',
@@ -544,7 +544,7 @@ export async function planAgentStep(
   const messages: ChatMessage[] = [
     {
       role: 'system',
-      content: `You are a browser automation agent called Genesis. You control a web browser to reach the user's goal, quickly and reliably.
+      content: `You are a browser automation agent called Tabi. You control a web browser to reach the user's goal, quickly and reliably.
 
 ${useTools ? toolsFormat(customCode) : jsonFormat(customCode)}
 

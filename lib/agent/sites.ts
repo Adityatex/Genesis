@@ -3,11 +3,11 @@
 // on these sites) and an optional allow list (only these, ask about others).
 // Checked in code, not by a model, so no page can argue its way past them.
 // Applies to every run (sidebar, background, schedules, workflow replays) and
-// to AI apps driving the browser through genesis-mcp.
+// to AI apps driving the browser through tabi-mcp.
 
 import { siteOf } from '@/lib/agent/critic';
 
-export const SITES_KEY = 'genesis_sites';
+export const SITES_KEY = 'tabi_sites';
 
 export interface SiteRules {
   /** Never act on these sites (or their subdomains). */

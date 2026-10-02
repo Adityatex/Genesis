@@ -135,8 +135,7 @@ export default function ChatInput({ value, onChange, onSubmit, disabled, pickerI
           </button>
         </div>
       </form>
-      <div className="mt-2 flex items-center justify-between px-1">
-        <span className="text-[9px] text-slate-600 font-bold uppercase tracking-widest">Instance #8842-A</span>
+      <div className="mt-2 flex items-center justify-end px-1">
         <div className="flex items-center gap-2">
           <button className="text-[10px] text-slate-500 hover:text-blue-400 font-medium transition-colors">Documentation</button>
         </div>

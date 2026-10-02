@@ -71,7 +71,7 @@ export function workflowName(goal: string, steps: WorkflowStep[]): string {
   return slugify(slugify(words.slice(0, 6).join(' ')).slice(0, 40)) || 'workflow';
 }
 
-export const WORKFLOWS_KEY = 'genesis_workflows';
+export const WORKFLOWS_KEY = 'tabi_workflows';
 export const MAX_WORKFLOWS = 100;
 
 export async function loadWorkflows(storage: KeyValueStorage): Promise<Workflow[]> {

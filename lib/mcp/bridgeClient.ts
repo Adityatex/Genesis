@@ -1,6 +1,6 @@
 // lib/mcp/bridgeClient.ts
-// The extension end of the genesis-mcp bridge (background service worker).
-// It connects to the genesis-mcp server on 127.0.0.1, checks the server knows
+// The extension end of the tabi-mcp bridge (background service worker).
+// It connects to the tabi-mcp server on 127.0.0.1, checks the server knows
 // the pairing token before accepting any command, then runs the requests it
 // gets (see mcp/src/protocol.ts).
 
@@ -10,7 +10,7 @@ import {
 } from '@/mcp/src/protocol';
 
 /**
- * off: turned off. waiting: genesis-mcp isn't running (no AI app has started
+ * off: turned off. waiting: tabi-mcp isn't running (no AI app has started
  * it). connected: ready. rejected: a server answered but the tokens don't match.
  */
 export type BridgeStatus = 'off' | 'waiting' | 'connected' | 'rejected';
@@ -110,7 +110,7 @@ export class BridgeClient {
           // The server must show it knows the token before we act on anything it says
           if (!sameString(msg.proof, await serverProof(config.token, nonce))) {
             rejected = true;
-            this.setStatus('rejected', 'The genesis-mcp server has a different pairing token');
+            this.setStatus('rejected', 'The tabi-mcp server has a different pairing token');
             socket.close();
             return;
           }
