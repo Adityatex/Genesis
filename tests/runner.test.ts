@@ -788,7 +788,7 @@ describe('the run timeline', () => {
       ? '{"actions":[{"action":"type","elementId":2,"text":"s3cret-pass"},{"action":"click","elementId":7}]}'
       : '{"action":"done","summary":"Ordered"}', model: 'Groq · qwen', usage: { prompt: 900, completion: 100 } }));
     deps.saveRun = (log) => saved.push(log);
-    const result = await startRun(deps, 60, 'Buy it', { confirm: true });
+    const result = await startRun(deps, 60, 'Buy it', { confirm: true, source: 'panel' });
 
     const log = saved.at(-1);
     expect(log.id).toBe(result.runId);
@@ -801,6 +801,10 @@ describe('the run timeline', () => {
     expect(JSON.stringify(log)).not.toContain('s3cret-pass');
     expect(log.entries[1].text).toContain('"••••"');
     expect(saved.length).toBeGreaterThanOrEqual(2); // saved when it asked, and at the end
+    // The History page gets where it came from, and each step in plain words
+    expect(log.source).toBe('panel');
+    expect(log.entries[1].step).toMatchObject({ n: 1, status: 'ok', action: 'Typed a password into “Password”' });
+    expect(log.entries[3].step).toMatchObject({ n: 2, status: 'ok', action: 'Clicked “Place order”', element: '<button> "Place order"' });
   });
 
   it('records safety checks and pauses', async () => {

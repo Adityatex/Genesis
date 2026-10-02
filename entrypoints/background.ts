@@ -379,7 +379,7 @@ export default defineBackground(() => {
         if (problem) throw new Error(`Tabi's own agent isn't set up: ${problem}`);
         const view = await executeRun(tabId, goal, {
           checkpoint: 0, split: hasExecutor(settings), screenshots: prefs.screenshots, skills: await loadSkills(skillStorage),
-          customCode: prefs.customCode, confirm: prefs.confirmRisky, critic: prefs.critic,
+          customCode: prefs.customCode, confirm: prefs.confirmRisky, critic: prefs.critic, source: 'mcp',
         });
         return view?.message ?? 'Stopped before it started';
       },
@@ -455,7 +455,7 @@ export default defineBackground(() => {
       // Waits its turn like any task that calls the model (a workflow doesn't)
       const view = await executeRun(tab.id, goal, {
         checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
-        skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, critic: prefs.critic, workflow,
+        skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, critic: prefs.critic, workflow, source: 'schedule',
       });
       if (!view) return { status: 'stopped', summary: 'Stopped before it started' };
       // Close it if it worked; keep it open to look at if it didn't
@@ -654,7 +654,7 @@ export default defineBackground(() => {
             const prefs = await loadPrefs();
             runAgent(tabId, goal, {
               checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
-              skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, critic: prefs.critic,
+              skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, critic: prefs.critic, source: 'panel',
             });
             sendResponse({ success: true });
             break;
@@ -685,7 +685,7 @@ export default defineBackground(() => {
             const prefs = await loadPrefs();
             runAgent(tab.id, goal, {
               checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
-              skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, critic: prefs.critic, workflow,
+              skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, critic: prefs.critic, workflow, source: 'background',
             });
             sendResponse({ success: true, data: { tabId: tab.id } });
             break;
@@ -941,7 +941,7 @@ export default defineBackground(() => {
             const prefs = await loadPrefs();
             runAgent(tabId, workflow.goal, {
               checkpoint: prefs.stepCheckpoint, split: hasExecutor(await loadSettings()), screenshots: prefs.screenshots,
-              skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, critic: prefs.critic, workflow,
+              skills: await loadSkills(skillStorage), customCode: prefs.customCode, confirm: prefs.confirmRisky, critic: prefs.critic, workflow, ...(senderTab !== undefined ? { source: 'panel' as const } : {}),
             });
             sendResponse({ success: true, data: { name: workflow.name, steps: workflow.steps.length } });
             break;

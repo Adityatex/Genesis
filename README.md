@@ -201,14 +201,14 @@ The rules cover every task, background task, schedule and workflow replay, and A
 
 ## 🕘 Run history
 
-Every run is saved step by step, so you can see what a background or scheduled task did after its tab is gone. Open it with the History button in the side panel, **See the full timeline** when a task finishes, or by clicking a finished task's notification. Each run shows:
+Every run is saved step by step, so you can see what a background or scheduled task did after its tab is gone. Open it with the History button in the side panel, **See the full timeline** when a task finishes, or by clicking a finished task's notification. Runs are listed by day, with a search box and filters (done, failed, scheduled, from AI apps). Each run shows:
 
-- every step and what came of it, with the element it acted on by its label;
+- the plan, and every step in plain words with the element it acted on; stretches of steps that worked fold into one row;
 - each model call: which model (including a switch to a backup provider), how long it took, the tokens it used, and what the agent saw change on the page;
 - safety checks, questions it asked you and your answers, pauses, and how it ended;
 - totals: time, model calls, tokens and safety checks.
 
-**Export** saves a run as Markdown (handy for bug reports). Runs are kept only in this browser, the last 50, with typed passwords and card numbers masked. **Delete** and **Delete all** remove them.
+**Export Markdown** saves a run as Markdown (handy for bug reports). Runs are kept only in this browser, the last 50, with typed passwords and card numbers masked. **Delete** and **Delete all** remove them.
 
 ## 🤝 Use it from Claude Code, Claude Desktop or Codex (MCP)
 

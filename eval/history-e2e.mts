@@ -2,7 +2,7 @@
 // End-to-end check of the run timeline (lib/agent/timeline.ts) and the
 // History page. A fake model signs in on a test page (typing a password),
 // then says done. The run must be saved, listed, and shown step by step
-// with its model calls and token counts, the password masked everywhere,
+// with its model calls and token counts, searchable and filterable, the password masked everywhere,
 // including the Markdown export and the side panel's steps. "See the full
 // timeline" in the panel must open the page at that run, and Delete must
 // remove it. No real model or API key is involved.
@@ -101,15 +101,32 @@ async function main(): Promise<void> {
     const history = await opened;
     await history.waitForLoadState();
     check('it opens at that run', history.url().endsWith(`/history.html#${run?.id}`), history.url());
-    await history.locator('.detail h2').waitFor({ timeout: 10_000 });
-    check('the run is listed and shown', (await history.locator('.run-item').count()) === 1 && (await history.locator('.detail h2').innerText()) === GOAL);
-    const text = await history.locator('.timeline').innerText();
+    const title = history.getByRole('heading', { level: 1 });
+    await title.waitFor({ timeout: 10_000 });
+    const rows = history.getByRole('navigation', { name: 'Runs' }).locator('button[data-run-id]');
+    check('the run is listed and shown', (await rows.count()) === 1 && (await title.innerText()) === GOAL
+      && (await history.locator('article').getAttribute('data-run-status')) === 'done');
+    check('its source and totals show', (await history.locator('article').innerText()).includes('started from the side panel')
+      && (await history.locator('dl').innerText()).includes('2.6k'));
+    // The steps that worked fold into one row; open it
+    const timeline = history.getByRole('list', { name: 'Timeline' });
+    for (const fold of await timeline.locator('button[aria-expanded="false"]').all()) await fold.click();
+    const text = await timeline.innerText();
     check('the timeline shows the model calls, the steps and the end',
-      (await history.locator('.entry.kind-model').count()) === 2 && (await history.locator('.entry.kind-step').count()) >= 3
-        && text.includes('1,280 tokens') && text.includes('Finished'),
+      (await timeline.locator('[data-kind="model"]').count()) === 2 && (await timeline.locator('[data-kind="step"]').count()) >= 3
+        && text.includes('1.3k tokens') && (await timeline.locator('[data-kind="end"]').innerText()).includes('Done'),
       text.slice(0, 600));
-    check('steps say what they acted on, by its label', text.includes('on "Password"') && text.includes('on "Sign in"'), text.slice(0, 600));
-    check('the page never shows the password',!(await history.content()).includes(PASSWORD));
+    check('steps are in plain words, by the label of what they acted on', text.includes('Typed a password into “Password”') && text.includes('Clicked “Sign in”'), text.slice(0, 600));
+    check('the page never shows the password', !(await history.content()).includes(PASSWORD));
+
+    // Search and the filter chips
+    await history.getByRole('searchbox', { name: 'Search runs' }).fill('no such run');
+    const none = await rows.count() === 0 && await history.getByText('No runs match.').isVisible();
+    await history.getByRole('searchbox', { name: 'Search runs' }).fill('');
+    await history.getByRole('button', { name: 'Failed' }).click();
+    const noFailed = await rows.count() === 0;
+    await history.getByRole('button', { name: 'Done', exact: true }).click();
+    check('search and the filter chips narrow the list', none && noFailed && await rows.count() === 1);
 
     // --screenshot: save what the page looks like (eval/results/history.png)
     if (process.argv.includes('--screenshot')) {
@@ -119,16 +136,16 @@ async function main(): Promise<void> {
 
     // 4. Export as Markdown
     const download = history.waitForEvent('download');
-    await history.getByRole('button', { name: 'Export' }).click();
+    await history.getByRole('button', { name: 'Export Markdown' }).click();
     const file = await (await download).path();
     const md = file ? fs.readFileSync(file, 'utf8') : '';
     check('Export saves the run as Markdown, password masked', md.startsWith(`# Tabi run: ${GOAL}`) && md.includes('2 model calls') && !md.includes(PASSWORD), md.slice(0, 300));
 
     // 5. Delete
-    await history.getByRole('button', { name: 'Delete', exact: true }).click();
-    await history.getByText('No runs yet.').waitFor({ timeout: 5_000 }).catch(() => {});
+    await history.getByRole('button', { name: 'Delete this run' }).click();
+    await history.getByText('No runs yet.').first().waitFor({ timeout: 5_000 }).catch(() => {});
     const left = (await worker.evaluate(() => chrome.storage.local.get('tabi_runs')) as any).tabi_runs ?? [];
-    check('Delete removes it', left.length === 0 && await history.getByText('No runs yet.').isVisible(), JSON.stringify(left).slice(0, 200));
+    check('Delete removes it', left.length === 0 && await history.getByText('No runs yet.').first().isVisible(), JSON.stringify(left).slice(0, 200));
   } finally {
     await context.close().catch(() => {});
     await fixtures.close();

@@ -6,6 +6,7 @@
 // passwords and card numbers masked.
 
 import type { RunStatus } from '@/lib/agent/runner';
+import type { StepStatus } from '@/lib/agent/stepView';
 
 export const RUNS_KEY = 'tabi_runs';
 /** Runs kept; older ones are dropped. */
@@ -38,7 +39,12 @@ export interface TimelineEntry {
   tokens?: number;
   /** Steps: the element acted on, by its visible label ("Sign in"), since its [number] means nothing later. */
   target?: string;
+  /** Steps: the step in plain words, as the side panel showed it (lib/agent/stepView.ts). Runs saved before have only `text`. */
+  step?: { n: number; status: StepStatus; action: string; result: string; element?: string };
 }
+
+/** Where a task came from: the side panel, a background tab, a schedule, or an AI app through MCP. */
+export type RunSource = 'panel' | 'background' | 'schedule' | 'mcp';
 
 export interface RunLog {
   id: string;
@@ -50,6 +56,10 @@ export interface RunLog {
   summary?: string;
   /** The saved workflow it replayed, if it did. */
   workflow?: string;
+  /** Where it came from (runs saved before this was kept have none). */
+  source?: RunSource;
+  /** The plan as it ended, items ticked [x] when done. */
+  plan?: string[];
   /** Model calls the agent made (safety checks not included). */
   calls: number;
   /** Safety checks made. */
@@ -88,7 +98,11 @@ export function maskSecrets(log: RunLog, secrets: Iterable<string>): RunLog {
     ...log,
     goal: mask(log.goal)!,
     summary: mask(log.summary),
-    entries: log.entries.map((e) => ({ ...e, text: mask(e.text)!, detail: mask(e.detail) })),
+    plan: log.plan?.map((item) => mask(item)!),
+    entries: log.entries.map((e) => ({
+      ...e, text: mask(e.text)!, detail: mask(e.detail),
+      ...(e.step ? { step: { ...e.step, action: mask(e.step.action)!, result: mask(e.step.result)!, element: mask(e.step.element) } } : {}),
+    })),
   };
 }
 

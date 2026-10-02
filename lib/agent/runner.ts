@@ -17,7 +17,7 @@ import { checkCode, wrapCode, formatCodeResult } from '@/lib/agent/customCode';
 import { canCommit, riskOf, labelOf, type Risk } from '@/lib/agent/confirm';
 import { criticStep, sensitiveKind, siteOf, type CriticStep, type Verdict } from '@/lib/agent/critic';
 import { urlStatus, type SiteRules } from '@/lib/agent/sites';
-import { capEntries, entryKindOf, maskSecrets, type RunLog, type TimelineEntry } from '@/lib/agent/timeline';
+import { capEntries, entryKindOf, maskSecrets, type RunLog, type RunSource, type TimelineEntry } from '@/lib/agent/timeline';
 import type { TokenUsage } from '@/lib/api/llmClient';
 import { isReplayed, describeStep, type Workflow, type WorkflowStep } from '@/lib/workflows/workflow';
 import type { ElementKey } from '@/lib/agent/domSnapshot';
@@ -160,6 +160,7 @@ interface Run extends RunView {
   tokens: number;
   /** Passwords and card numbers typed: masked in the saved timeline. */
   secrets: Set<string>;
+  source?: RunSource;
   /** The page the agent is on, for timeline entries. */
   pageUrl?: string;
   /** Why the run stopped, when it wasn't the user's request. */
@@ -225,6 +226,8 @@ export interface RunOptions {
    * the user. Workflow replays skip it, like confirmations.
    */
   critic?: boolean;
+  /** Where the task came from, for the History page: the side panel, a background tab, a schedule or an AI app. */
+  source?: RunSource;
 }
 
 /** A paused run's answer: carry on (allowing the action, if one was asked about), don't allow it, or stop. */
@@ -426,6 +429,11 @@ function addStep(run: Run, action: AgentAction, result: string, opts: { label?: 
   const item = currentPlanItem(run.plan);
   if (item) step.planItem = item;
   run.steps.push(step);
+  // The timeline keeps the step in the same plain words
+  const entry = run.timeline[run.timeline.length - 1];
+  if (entry?.kind === 'step' && !entry.step) {
+    entry.step = { n: step.n, status: step.status, action: step.action, result: step.result, ...(step.element ? { element: step.element } : {}) };
+  }
 }
 
 export function getRunView(tabId: number): RunView | null {
@@ -749,6 +757,7 @@ function runLog(run: Run): RunLog {
   return maskSecrets({
     id: run.id, goal: run.goal, started: run.started, ended: isRunning(run.tabId) && runs.get(run.tabId) === run ? undefined : run.updatedAt,
     status: run.status, summary: run.summary ?? run.stopReason, workflow: run.workflow?.name,
+    ...(run.source ? { source: run.source } : {}), ...(run.plan.length ? { plan: run.plan } : {}),
     calls: run.calls, checks: run.checks, tokens: run.tokens, entries: capEntries(run.timeline),
   }, run.secrets);
 }
@@ -1197,7 +1206,7 @@ export async function startRun(deps: RunnerDeps, tabId: number, goal: string, op
     screenshots: options.screenshots ?? 'off', noVision: new Set(),
     skills: options.skills ?? [], loadedSkills: new Set(), customCode: !!options.customCode, confirm: !!options.confirm,
     critic: !!options.critic, sites: new Set(), cleared: new Set(), refused: new Map(), sitesOk: new Set(),
-    id: `${Date.now().toString(36)}-${tabId}`, started: Date.now(), timeline: [], calls: 0, checks: 0, tokens: 0, secrets: new Set(),
+    id: `${Date.now().toString(36)}-${tabId}`, started: Date.now(), timeline: [], calls: 0, checks: 0, tokens: 0, secrets: new Set(), source: options.source,
     trace: [], steps: [], workflow: options.workflow, replayIndex: 0, ...(options.workflow ? { replay: 'replaying' as const } : {}),
   };
   runs.set(tabId, run);
